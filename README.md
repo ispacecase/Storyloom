@@ -10,7 +10,7 @@ Developed and tested against SillyTavern 1.19.0, local revision `06bde939f`. Oth
 
 ## Installation
 
-To install from a local copy, extract the extension into `data/<user-handle>/extensions/storyloom/` inside SillyTavern, with `manifest.json` directly inside that folder, and reload SillyTavern. Once this project is available as a Git repository, you can instead use **Extensions → Install extension** and enter its repository URL.
+In SillyTavern, open **Extensions → Install extension**, enter `https://github.com/ispacecase/Storyloom`, and install it. Reload SillyTavern if prompted.
 
 ## Starting a novel
 
