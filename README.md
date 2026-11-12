@@ -9,7 +9,7 @@ Designed for SillyTavern 1.19.0. In **Extensions → Install extension**, use `h
 ## Start a novel
 
 1. Open the SillyTavern chat you want to use for your book, then click the feather beside the message box to open Storyloom.
-2. The lorebook picker shows which book Storyloom is using and whether it is linked to this chat. If none exists, starting an interview creates and links one. Choosing a different book asks before replacing a chat's existing lorebook.
+2. The lorebook picker shows which book Storyloom is using and whether it is linked to this chat. If none exists, starting an interview creates and links one. If the chat already has a Storyloom writing directive, open a different chat before choosing another novel. Otherwise, replacing an existing chat lorebook requires confirmation.
 3. Choose **Simple** to answer or skip a sequence of questions, or **Deep** to explore each topic together. In Deep mode use **Next topic** when you're ready. At the end, Storyloom creates a chapter-by-chapter outline and saves the plan in the lorebook. You can keep talking afterward.
 4. In **Settings**, use the current AI connection, a supported Connection Manager profile, or choose another provider and model. A manually entered session key is not saved. Supported direct providers depend on SillyTavern's backend and your available credentials; individual providers and models may behave differently.
 5. Turn on **Follow the main chat** to capture established developments as the story progresses. The **Writing desk** can generate draft segments, draft one chapter toward an approximate word target, and download the saved prose as text. Chapter targets are approximate and you can stop a run at any time. If a continuity update fails, retry it in **More options**.
