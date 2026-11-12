@@ -1,0 +1,27 @@
+#na-panel {
+  position: fixed; z-index: 10001; inset: 3rem 0 0 auto;
+  width: min(440px, 100vw); box-sizing: border-box; padding: 1rem;
+  display: flex; flex-direction: column; gap: .65rem;
+  color: var(--SmartThemeBodyColor, #eee);
+  background: var(--SmartThemeBlurTintColor, #222);
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  box-shadow: 0 0 24px #0008;
+}
+#na-panel[hidden] { display: none; }
+#na-panel .storyloom-header { display:flex; justify-content:space-between; align-items:center; gap:.75rem; }
+#na-panel .storyloom-header strong { display:block; font-size:1.15rem; }
+#na-panel .storyloom-header small { opacity:.72; }
+#na-panel .storyloom-settings { flex:0 1 auto; overflow:auto; border:1px solid var(--SmartThemeBorderColor,#555); border-radius:8px; padding:.6rem; }
+#na-panel summary { cursor:pointer; font-weight:600; }
+#na-panel .storyloom-settings label { display:flex; flex-direction:column; gap:.25rem; margin:.65rem 0; }
+#na-panel .storyloom-settings .storyloom-check { flex-direction:row; align-items:center; }
+#na-panel .storyloom-row { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
+#na-panel .storyloom-row .menu_button { flex:1 1 auto; }
+#na-panel select, #na-panel textarea { width:100%; box-sizing:border-box; }
+#na-messages { overflow:auto; flex:1 1 10rem; min-height:5rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+#na-messages p { padding:.75rem; margin:.5rem 0; border-radius:8px; background:#7772; }
+#na-input { min-height:4.5rem; max-height:30vh; resize:vertical; }
+#na-panel .storyloom-count { display:flex; align-items:center; gap:.4rem; }
+#na-count { width:4rem; }
+#na-status { min-height:1.3em; overflow-wrap:anywhere; }
+@media (max-width: 600px) { #na-panel { inset:2.5rem 0 0; width:100%; } }
