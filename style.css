@@ -1,27 +1,90 @@
-#na-panel {
-  position: fixed; z-index: 10001; inset: 3rem 0 0 auto;
-  width: min(440px, 100vw); box-sizing: border-box; padding: 1rem;
-  display: flex; flex-direction: column; gap: .65rem;
-  color: var(--SmartThemeBodyColor, #eee);
-  background: var(--SmartThemeBlurTintColor, #222);
-  border: 1px solid var(--SmartThemeBorderColor, #555);
-  box-shadow: 0 0 24px #0008;
+#storyloom-chat-shortcut {
+  display: inline-grid; place-items: center; width: 2.1rem; height: 2.1rem;
+  padding: 0; margin: 0 .18rem; border: 0; border-radius: .65rem;
+  color: #f3e8dc; background: #725047; cursor: pointer;
+  font-size: .95rem; transition: background .16s ease, transform .16s ease;
 }
-#na-panel[hidden] { display: none; }
-#na-panel .storyloom-header { display:flex; justify-content:space-between; align-items:center; gap:.75rem; }
-#na-panel .storyloom-header strong { display:block; font-size:1.15rem; }
-#na-panel .storyloom-header small { opacity:.72; }
-#na-panel .storyloom-settings { flex:0 1 auto; overflow:auto; border:1px solid var(--SmartThemeBorderColor,#555); border-radius:8px; padding:.6rem; }
-#na-panel summary { cursor:pointer; font-weight:600; }
-#na-panel .storyloom-settings label { display:flex; flex-direction:column; gap:.25rem; margin:.65rem 0; }
-#na-panel .storyloom-settings .storyloom-check { flex-direction:row; align-items:center; }
-#na-panel .storyloom-row { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
-#na-panel .storyloom-row .menu_button { flex:1 1 auto; }
-#na-panel select, #na-panel textarea { width:100%; box-sizing:border-box; }
-#na-messages { overflow:auto; flex:1 1 10rem; min-height:5rem; white-space:pre-wrap; overflow-wrap:anywhere; }
-#na-messages p { padding:.75rem; margin:.5rem 0; border-radius:8px; background:#7772; }
-#na-input { min-height:4.5rem; max-height:30vh; resize:vertical; }
-#na-panel .storyloom-count { display:flex; align-items:center; gap:.4rem; }
-#na-count { width:4rem; }
-#na-status { min-height:1.3em; overflow-wrap:anywhere; }
-@media (max-width: 600px) { #na-panel { inset:2.5rem 0 0; width:100%; } }
+#storyloom-chat-shortcut:hover { background: #9a6250; transform: translateY(-1px); }
+#storyloom-chat-shortcut:focus-visible { outline: 3px solid #e6aa88; outline-offset: 2px; }
+#na-panel {
+  --sl-ink: #342b2a; --sl-muted: #756660; --sl-paper: #f8f4ee;
+  --sl-line: #e6dcd2; --sl-accent: #855143; --sl-accent-dark: #694033;
+  position: fixed; z-index: 10001; inset: 2.75rem 0 0 auto;
+  width: min(480px, 44vw); height: calc(100dvh - 2.75rem); box-sizing: border-box; padding: 0 1.35rem 1rem;
+  display: flex; flex-direction: column; gap: .85rem; overflow: hidden;
+  background: var(--sl-paper); color: var(--sl-ink); border-left: 1px solid #e0d4c7;
+  box-shadow: -14px 0 42px #231b1730; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px; line-height: 1.5;
+}
+#na-panel[hidden], #na-panel [hidden] { display: none !important; }
+#na-panel * { box-sizing: border-box; }
+#na-panel button, #na-panel select, #na-panel input, #na-panel textarea { font: inherit; }
+#na-panel button:focus-visible, #na-panel select:focus-visible, #na-panel textarea:focus-visible, #na-panel input:focus-visible, #na-panel summary:focus-visible { outline: 3px solid #ba7b5d; outline-offset: 2px; }
+#na-panel button { cursor: pointer; }
+#na-panel .storyloom-header { display:flex; justify-content:space-between; align-items:center; gap:.75rem; padding:1.1rem 0 .95rem; border-bottom:1px solid var(--sl-line); flex:none; }
+#na-panel .storyloom-brand { display:flex; align-items:center; gap:.7rem; }
+#na-panel .storyloom-brand strong { display:block; font: 600 1.45rem/1.05 Georgia, serif; letter-spacing:-.035em; color:var(--sl-ink); }
+#na-panel .storyloom-brand small { display:block; margin-top:.25rem; font-size:.55rem; font-weight:700; letter-spacing:.14em; color:var(--sl-muted); }
+#na-panel .storyloom-mark { display:grid; place-items:center; width:2.4rem; height:2.4rem; border-radius:50%; background:#ead8ca; color:#825143; font-size:1.05rem; }
+#na-panel .storyloom-close { width:2rem; height:2rem; padding:0; border:0; border-radius:50%; background:transparent; color:var(--sl-muted); font-size:1.65rem; line-height:1; }
+#na-panel .storyloom-close:hover { background:#eee5db; color:var(--sl-ink); }
+#na-panel .storyloom-settings, #na-panel .storyloom-writing { flex:0 1 auto; min-height:0; overflow:auto; border:1px solid var(--sl-line); border-radius:12px; background:#fffaf5; }
+#na-panel summary { list-style:none; display:flex; align-items:center; justify-content:space-between; gap:.5rem; cursor:pointer; padding:.65rem .85rem; color:#665650; font-size:.76rem; font-weight:700; }
+#na-panel summary::-webkit-details-marker { display:none; }
+#na-panel .storyloom-settings-body, #na-panel .storyloom-writing > p, #na-panel .storyloom-writing > .storyloom-row { padding:0 .85rem .75rem; }
+#na-panel .storyloom-settings label { display:flex; flex-direction:column; gap:.3rem; margin:.65rem 0; font-size:.75rem; color:#665650; font-weight:650; }
+#na-panel .storyloom-settings .storyloom-check { flex-direction:row; align-items:center; gap:.5rem; }
+#na-panel .storyloom-advanced { margin-top:.6rem; border-top:1px solid var(--sl-line); }
+#na-panel .storyloom-advanced summary { padding-left:0; }
+#na-panel .storyloom-row { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+#na-panel .storyloom-settings button, #na-panel .storyloom-writing button { border:1px solid #dfd1c3; border-radius:8px; padding:.45rem .6rem; background:#fffaf5; color:#604b43; font-size:.72rem; }
+#na-panel .storyloom-settings button:hover, #na-panel .storyloom-writing button:hover { background:#f2e8df; }
+#na-panel select, #na-panel .storyloom-settings input:not([type=checkbox]) { width:100%; min-width:0; padding:.55rem; border:1px solid #d9cbbf; border-radius:8px; background:#fff; color:var(--sl-ink); }
+#na-panel input[type=checkbox] { accent-color:var(--sl-accent); }
+#na-panel .storyloom-welcome { padding:1.2rem .1rem .1rem; flex:none; }
+#na-panel .storyloom-eyebrow, #na-panel .storyloom-choice-label { color:#a16b56; font-size:.61rem; font-weight:750; letter-spacing:.14em; }
+#na-panel .storyloom-welcome h2 { margin:.8rem 0 .65rem; color:var(--sl-ink); font: 400 clamp(1.75rem, 2.3vw, 2.25rem)/1.1 Georgia, serif; letter-spacing:-.04em; }
+#na-panel .storyloom-welcome h2 em { color:#996755; font-weight:400; }
+#na-panel .storyloom-welcome p { max-width:27rem; margin:0; color:var(--sl-muted); font-size:.9rem; line-height:1.6; }
+#na-panel .storyloom-rule { height:1px; background:var(--sl-line); margin:1.35rem 0 .8rem; }
+#na-panel .storyloom-mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:.7rem; flex:none; }
+#na-panel .storyloom-mode { position:relative; display:flex; min-height:9.3rem; flex-direction:column; align-items:flex-start; text-align:left; gap:.4rem; padding:1rem; border:1px solid #e1d3c7; border-radius:13px; background:#fffdf9; color:var(--sl-ink); transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+#na-panel .storyloom-mode:hover { transform:translateY(-2px); border-color:#bd8974; box-shadow:0 8px 24px #60433614; }
+#na-panel .storyloom-mode-icon { color:#a56b52; font-size:1.1rem; }
+#na-panel .storyloom-mode strong { font:600 1.12rem Georgia,serif; }
+#na-panel .storyloom-mode small { color:var(--sl-muted); font-size:.74rem; line-height:1.45; }
+#na-panel .storyloom-arrow { position:absolute; right:.9rem; top:.8rem; color:#a67b68; }
+#na-panel .storyloom-question { flex:none; padding:1rem 1.05rem; border-left:3px solid #b5775c; border-radius:0 10px 10px 0; background:#eee4d9; }
+#na-panel .storyloom-question p { margin:.4rem 0 0; font:400 1.08rem/1.45 Georgia,serif; color:#40332e; }
+#na-messages { overflow:auto; flex:1 1 2rem; min-height:0; padding-right:.15rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+#na-panel .storyloom-message { margin:.55rem 0 .85rem; padding:.8rem .9rem; border-radius:12px; background:#fffdf9; border:1px solid #eee4da; }
+#na-panel .storyloom-message.is-user { background:#efe3d9; border-color:transparent; margin-left:1.2rem; }
+#na-panel .storyloom-message strong { display:block; margin-bottom:.35rem; color:#a16b56; font-size:.59rem; letter-spacing:.13em; }
+#na-panel .storyloom-message div { font-size:.84rem; line-height:1.6; }
+#na-panel .storyloom-flow { display:flex; justify-content:flex-end; flex:none; }
+#na-panel .storyloom-flow button { border:0; background:transparent; color:var(--sl-accent); font-weight:700; font-size:.78rem; padding:.25rem; }
+#na-panel .storyloom-flow button:hover { color:var(--sl-accent-dark); text-decoration:underline; }
+#na-panel .storyloom-composer { flex:none; border:1px solid #dfd2c6; border-radius:13px; background:#fffdfa; padding:.65rem .7rem .55rem; }
+#na-panel .storyloom-composer:focus-within { border-color:#b8836d; box-shadow:0 0 0 3px #b8836d24; }
+#na-input { width:100%; min-height:3.5rem; max-height:22vh; resize:vertical; border:0; outline:0 !important; background:transparent; color:var(--sl-ink); font-size:.86rem; }
+#na-input::placeholder { color:#a3958b; }
+#na-panel .storyloom-compose-footer { display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
+#na-panel .storyloom-compose-footer > span { color:#a7988d; font-size:.55rem; font-weight:700; letter-spacing:.12em; }
+#na-panel #na-send { border:0; border-radius:8px; background:var(--sl-accent); color:white; padding:.5rem .9rem; font-size:.76rem; font-weight:700; }
+#na-panel #na-send:hover { background:var(--sl-accent-dark); }
+#na-panel .storyloom-writing p { margin:0; color:var(--sl-muted); font-size:.75rem; }
+#na-panel .storyloom-count { display:flex; align-items:center; gap:.35rem; color:#665650; font-size:.75rem; }
+#na-count { width:3.5rem; padding:.3rem; color:var(--sl-ink); background:white; border:1px solid #d9cbbf; border-radius:6px; }
+#na-status { flex:none; min-height:1em; color:#875744; font-size:.72rem; overflow-wrap:anywhere; }
+#na-panel .storyloom-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+@media (min-width: 700px) { body:has(#na-panel:not([hidden])) #sheld { right:min(480px,44vw); width:min(var(--sheldWidth),calc(100vw - min(480px,44vw) - 2rem)) !important; } }
+@media (max-width: 699px) { #na-panel { inset:2.5rem 0 auto; width:100%; height:calc(100dvh - 2.5rem); border-left:0; } }
+@media (prefers-reduced-motion: reduce) { #na-panel *, #storyloom-chat-shortcut { transition:none !important; } }
+
+#na-panel .storyloom-direct { margin:.65rem 0; padding:.75rem; border:1px solid #e9dbcf; border-radius:10px; background:#fff; }
+#na-panel .storyloom-direct[hidden] { display:none !important; }
+#na-panel .storyloom-hint { margin:.65rem 0 0; color:#756660; font-size:.7rem; line-height:1.5; }
+
+#na-panel .storyloom-book { flex:none; display:grid; gap:.35rem; padding:.8rem 0; }
+#na-panel .storyloom-book label { color:#80685b; font-size:.65rem; font-weight:700; letter-spacing:.09em; }
+#na-panel .storyloom-book small { color:#705e54; font-size:.72rem; }

@@ -45,3 +45,19 @@ test('missing or comma-separated keywords are repaired without changing content'
 test('malformed update errors identify the missing field',()=>{
  assert.throws(()=>parseAssistant(JSON.stringify({reply:'Noted',updates:[{title:'Mara',keys:[]}]})),/content/i);
 });
+
+test('a collaborative interview can accept plain prose as a reply without invented updates', () => {
+  assert.deepEqual(parseAssistant('That gives Mara a compelling dilemma. What does she fear losing?', { allowProse: true }), {reply:'That gives Mara a compelling dilemma. What does she fear losing?',updates:[]});
+  assert.throws(() => parseAssistant('That gives Mara a compelling dilemma. What does she fear losing?'));
+  assert.throws(() => parseAssistant('{broken json', { allowProse: true }));
+});
+
+test('accepts model JSON containing unescaped line breaks inside strings', () => {
+  const parsed=parseAssistant('{"reply":"A line\nA second line?","updates":[]}');
+  assert.equal(parsed.reply,'A line\nA second line?');
+});
+
+test('extracts structured reply when a model prefixes it with prose', () => {
+  const value=parseAssistant('Here is my answer.\n\n{"reply":"Here is my answer.","updates":[]}');
+  assert.equal(value.reply,'Here is my answer.');
+});

@@ -2,7 +2,7 @@ function words(value) {return [...new Set(String(value||'').toLocaleLowerCase().
 export function selectLore(entries,query,budget=12000) {
  const terms=words(query),ranked=entries.map((entry,index)=>{
   const text=`${entry.title} ${(entry.keys||[]).join(' ')} ${entry.content}`.toLocaleLowerCase();
-  return {entry,index,score:(entry.title==='Novel Foundation'?100000:0)+terms.reduce((n,w)=>n+(text.includes(w)?1:0),0)};
+  return {entry,index,score:(entry.title==='Novel Foundation'?100000:entry.title==='Current Writing Directive'?90000:0)+terms.reduce((n,w)=>n+(text.includes(w)?1:0),0)};
  }).sort((a,b)=>b.score-a.score || a.index-b.index);
  const selected=[],incomplete=[];let used=0,truncated=0;
  for(const {entry} of ranked) {

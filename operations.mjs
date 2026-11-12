@@ -1,7 +1,27 @@
 import {validFoundation} from './template.mjs';
-export function parseAssistant(text) {
+function escapeStringControls(text) {
+  let quoted=false, escaped=false, out='';
+  for(const ch of text) {
+    if(quoted && !escaped && ch.charCodeAt(0)<32) {out+=JSON.stringify(ch).slice(1,-1);continue;}
+    out+=ch;
+    if(escaped) {escaped=false;continue;}
+    if(quoted && ch==='\\') {escaped=true;continue;}
+    if(ch==='"') quoted=!quoted;
+  }
+  return out;
+}
+export function parseAssistant(text, {allowProse=false} = {}) {
   const clean = String(text).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const result = JSON.parse(clean);
+  let result;
+  try { result = JSON.parse(escapeStringControls(clean)); }
+  catch (error) {
+    const marker=clean.lastIndexOf('{"reply"');
+    if(marker>0) {
+      try {return parseAssistant(clean.slice(marker),{allowProse:false});} catch {}
+    }
+    if (!allowProse || !clean || clean.length>30000 || /^[\[{]/.test(clean)) throw error;
+    result={reply:clean,updates:[]};
+  }
   if (typeof result.reply !== 'string' || !result.reply.trim() || result.reply.length > 30000 || !Array.isArray(result.updates) || result.updates.length > 20) throw new Error('Invalid assistant response');
   for (const [i,u] of result.updates.entries()) {
     if (!u || typeof u !== 'object' || typeof u.title !== 'string' || !u.title.trim() || u.title.length>200) throw Error(`Entry ${i+1} has an invalid title.`);

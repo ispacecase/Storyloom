@@ -29,3 +29,8 @@ test('existing entries outside full context cannot be rewritten',async()=>{
  assert.throws(()=>ensureCompleteUpdates([{uid:7,update:{title:'Mara'}}],{incomplete:['Mara']}),/too large|not fully/i);
  assert.doesNotThrow(()=>ensureCompleteUpdates([{uid:null,update:{title:'New'}}],{incomplete:['Mara']}));
 });
+
+test('the current writing directive remains in planning context',()=>{
+ const entries=[{title:'Unrelated',content:'x'.repeat(900),keys:[]},{title:'Current Writing Directive',content:'POV: Third-person limited',keys:[]}];
+ const result=selectLore(entries,'unrelated',500);assert.ok(result.entries.some(e=>e.title==='Current Writing Directive'));
+});

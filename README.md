@@ -1,34 +1,32 @@
 # Storyloom
 
-Storyloom is a standalone SillyTavern UI extension for developing a novel in a separate conversation, maintaining a World Info book, linking a writing directive to Author's Note, and writing draft segments.
+Storyloom is a standalone SillyTavern extension for planning a novel in a separate side conversation, maintaining its lorebook and writing directive, and drafting story segments.
 
-**Initial release (0.1.0).** Tested in a disposable SillyTavern instance with a local dummy model and the configured Venice model. The real-model test covered planning, a draft, and a continuity retry; other providers and long-running writing sessions have not been verified. Keep a backup of your story before enabling automatic updates.
+## Compatibility and installation
 
-## Compatibility
+Designed for SillyTavern 1.19.0. In **Extensions → Install extension**, use `https://github.com/ispacecase/Storyloom`, then reload SillyTavern. Storyloom does not require the reference extensions.
 
-Developed and tested against SillyTavern 1.19.0, local revision `06bde939f`. Other versions and models have not been verified. Storyloom is original code and does not require any of the three reference extensions.
+## Start a novel
 
-## Installation
+1. Open the SillyTavern chat you want to use for your book, then click the feather beside the message box to open Storyloom.
+2. The lorebook picker shows which book Storyloom is using and whether it is linked to this chat. If none exists, starting an interview creates and links one. Choosing a different book asks before replacing a chat's existing lorebook.
+3. Choose **Simple** to answer or skip a sequence of questions, or **Deep** to explore each topic together. In Deep mode use **Next topic** when you're ready. At the end, Storyloom creates a chapter-by-chapter outline and saves the plan in the lorebook. You can keep talking afterward.
+4. In **Settings**, use the current AI connection, a supported Connection Manager profile, or choose another provider and model. A manually entered session key is not saved. Supported direct providers depend on SillyTavern's backend and your available credentials; individual providers and models may behave differently.
+5. Turn on **Follow the main chat** to capture established developments as the story progresses. The **Writing desk** can generate draft segments, draft one chapter toward an approximate word target, and download the saved prose as text. Chapter targets are approximate and you can stop a run at any time. If a continuity update fails, retry it in **More options**.
 
-In SillyTavern, open **Extensions → Install extension**, enter `https://github.com/ispacecase/Storyloom`, and install it. Reload SillyTavern if prompted.
+## Reuse a character
 
-## Starting a novel
+Select a previous book under **Use another book for reference**, then choose **Bring a character into this book** and enter the character's name. Storyloom creates a character entry in the current novel and a separate character lorebook, preserving the source as a reference. The two copies are independent: later edits are not automatically synchronized. Review the imported facts and any marked suggestions.
 
-1. Open the main chat for the novel. Open **Extensions → Storyloom**.
-2. In **Novel and connection settings**, choose **Create lorebook**. Storyloom creates the basic foundation and writing directive and, when the chat does not already have a chat lorebook, links the new book to it. For an existing lorebook, choose it, use **Set up foundation and directive**, and use **Link to this chat** if desired.
-3. Talk with Storyloom. It can update the foundation and add separate lore entries. Select **Follow the main chat** to let it process new story messages as well.
-4. Select the current connection or a saved Connection Manager profile. Storyloom's separate profile requests do not change the main chat's selected API. Connection Manager profiles are limited to API types supported by SillyTavern's request service; other active API types use SillyTavern's raw generation and configured response length. For supported connections the default response budget is 6,000 tokens and can be changed in Storyloom settings if your provider has a lower output limit.
-5. Optionally select a linked reference book and tell Storyloom which details to carry into the new novel. The reference book is read, not edited by Storyloom.
-6. **Write** generates a bounded number of consecutive draft segments. **Stop** cancels supported requests or discards the current segment after it returns. Download the saved draft as text. If continuity processing fails after saving a segment, use **Retry pending updates** before writing more.
+To attach a reference lorebook to the currently open SillyTavern character card, choose **Link reference to character card** and confirm the card and book names. Character-card links can apply to that character's other chats; a novel character does not have to be a SillyTavern character card.
 
 ## Notes and recovery
 
-- The directive is stored in World Info and in a marked portion of the current chat's Author's Note. Changes sync in either direction. If both change independently, use the directive version buttons after reviewing them. Other Author's Note text is preserved. Author's Note insertion frequency and character-note settings still control what reaches the model.
-- Recent lore updates can be inspected in settings and undone one at a time. Undo refuses to replace an entry that has since changed. Storyloom checks for conflicts before a save, but SillyTavern's World Info interface does not provide an atomic compare-and-swap; simultaneous writers can still race. Keep backups and avoid editing the same book from multiple clients at once.
-- Chat edits, deletions, or swipes affecting tracked messages pause automatic tracking for review. Review the affected lore before using **Resume after reviewing changes**. This is not automatic reconciliation.
-- Context sent to a model includes selected novel and linked-reference excerpts, recent side conversation, and the current source message or draft. Large books are ranked and bounded; an existing entry that was not fully included cannot be automatically rewritten in that request. The selected model/provider's own privacy terms and costs apply.
-- Model-generated content can be mistaken or inconsistent. The extension cannot guarantee literary quality, fact extraction, or continuity. Review work and export backups.
+- The writing directive is stored in the lorebook and in a marked part of the chat's Author's Note. Edits synchronize in either direction; if both changed independently, resolve the conflict in **More options**. Other Author's Note text is preserved.
+- Storyloom records changes and can undo the last update if its entries have not changed since. SillyTavern does not offer an atomic compare-and-swap for lorebooks, so simultaneous edits from different clients can still race.
+- Edited, deleted, or swiped tracked chat messages can require review before tracking resumes. Context is bounded; a partially supplied entry is not automatically rewritten.
+- Model output can be incomplete, inconsistent, or misattribute suggestions. Review the plan and memories, keep backups, and check your provider's privacy and pricing terms.
 
 ## Development checks
 
-Run `node --test tests/*.test.mjs` and `node --check index.js`. Test with a disposable SillyTavern instance and fictional data. Do not copy real lorebooks or credentials into a test fixture or commit them.
+Run `node --test tests/*.test.mjs` and `node --check index.js`. Test with a separate SillyTavern data directory and fictional material. Do not commit real lorebooks or credentials.
