@@ -21,3 +21,16 @@ test('reads markdown headings and preserves fields omitted by the model', async 
   assert.match(normalized, /GENRE: Mystery/);
   assert.equal(validFoundation(normalizeFoundation('A chat reply with no fields.')), false);
 });
+
+test('extra headings the writer asked for are kept as their own sections', async () => {
+  const {normalizeFoundation, FOUNDATION_FIELDS} = await import('../template.mjs');
+  const proposed = FOUNDATION_FIELDS.map(f => `${f}: value for ${f}`).join('\n') + '\nTHEMES: grief and salt\nRECURRING MOTIFS: tide tables';
+  const out = normalizeFoundation(proposed, '');
+  assert.match(out, /^THEMES: grief and salt$/m);
+  assert.match(out, /^RECURRING MOTIFS: tide tables$/m);
+  assert.match(out, /^ENDING DIRECTION: value for ENDING DIRECTION$/m, 'last template field is not swallowed into');
+  const later = normalizeFoundation(FOUNDATION_FIELDS.map(f => `${f}: new ${f}`).join('\n'), out);
+  assert.match(later, /^THEMES: grief and salt$/m, 'an earlier added heading survives a later update');
+  const mixed = normalizeFoundation(FOUNDATION_FIELDS.map(f => `${f}: v`).join('\n') + '\nNote: just a sentence.', '');
+  assert.doesNotMatch(mixed, /^NOTE:/m, 'ordinary sentences with a colon are not headings');
+});

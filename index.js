@@ -20,6 +20,7 @@ import { castNames, characterProfilesInstruction, validateCharacters } from './c
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate } from './templates.mjs';
+import { requiredTitles } from './interview.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
 
 const KEY = 'novelArchitect';
@@ -498,7 +499,10 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if(interview?.requiredCharacterTitle) result.updates=[requiredCharacterUpdate(result,interview.requiredCharacterTitle)];
     if(interview?.collaborative && d.interview?.phase==='asking') {
       const prior=[...d.messages].reverse().find(m=>m.role==='assistant')?.content || '';
-      result.updates=[deepNotesUpdate(before,d.interview,input,prior)];
+      // Writer-stated facts that fit no planned entry may become their own entry; proposals stay in the notes.
+      const reserved=new Set([...requiredTitles(tpl(d)),'Storyloom Interview Notes','Current Chapter'].map(x=>x.toLocaleLowerCase()));
+      const extras=(result.updates||[]).filter(u=>u?.title && !reserved.has(u.title.trim().toLocaleLowerCase())).slice(0,3);
+      result.updates=[deepNotesUpdate(before,d.interview,input,prior),...extras];
     }
     if (context().chatId !== chatId || context().chatMetadata.world_info!==bookName || data().book !== bookName || d.profile!==profile || d.reference!==referenceName || !sameDirect(d,direct)) throw new Error('Chat or lorebook changed while generating; nothing saved.');
     if (guard && !guard()) throw Error('The source message changed; nothing was saved.');

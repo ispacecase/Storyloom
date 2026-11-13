@@ -25,7 +25,9 @@ function foundationSections(text,fields=FOUNDATION_FIELDS) {
     }
     const heading = line.match(/^\s*(?:#{1,6}\s+)?(?:[-*]\s+)?[*_]*([A-Z][A-Z ]*?)[*_]*\s*:[*_]*\s*(.*)$/i);
     const field = heading?.[1].trim().toUpperCase();
-    if (fields.includes(field)) {
+    // A heading written in capitals that the template doesn't have is the writer's own addition: keep it as its own section.
+    const extra = heading && !fields.includes(field) && /^[A-Z][A-Z &/'-]{2,39}$/.test(heading[1].trim());
+    if (fields.includes(field) || extra) {
       active = field;
       sections.set(field, [heading[2]]);
     } else if (active) {
@@ -43,6 +45,12 @@ export function normalizeFoundation(content, previous = '', fields = FOUNDATION_
     const value = proposed.get(field) || prior.get(field);
     return value ? field + ': ' + value : field + ':';
   });
+  // Extra headings the writer asked for: new ones from this update, then earlier ones it didn't repeat.
+  const extras = [...new Set([...proposed.keys(), ...prior.keys()])].filter(field => !fields.includes(field));
+  for (const field of extras) {
+    const value = proposed.get(field) || prior.get(field);
+    if (value) lines.push(field + ': ' + value);
+  }
   return lines.join('\n') + '\n\n' + consistency;
 }
 
