@@ -343,13 +343,19 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct) {
   try {
     return await requestModel(async requestSignal=>{
       try {
-        const text=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct);
-        if(!String(text||'').trim())throw Error('the model sent back an empty reply');
-        return text;
+        try {return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct);}
+        catch(error) {
+          if(!error?.emptyReply || requestSignal.aborted)throw error;
+          // Empty answers are usually a one-off from the provider; ask once more before failing.
+          console.warn('Storyloom: empty model reply, retrying once:',error.message);
+          const el=document.getElementById('na-status'); if(el)el.textContent=`The model answered with nothing (${error.message.replace(/^the model /,'')}); asking once more…`;
+          return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct);
+        }
       } catch(error) {
         if(requestSignal.aborted)throw requestSignal.reason;
         if(/^Choose |^Enter |^Select |^Response budget/.test(error?.message))throw error;
         const detail=String(error?.message||error||'').trim().slice(0,200);
+        if(error?.emptyReply)throw Error(`The model answered twice with nothing: ${detail}. This is the model, not your connection — try again, or raise the response budget in Settings if it keeps happening.`);
         throw Error(`The AI connection failed${detail?` (${detail})`:''}. Check AI connection in Settings and try again.`);
       }
     },signal,MODEL_TIMEOUT_MS);

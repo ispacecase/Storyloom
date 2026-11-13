@@ -66,3 +66,10 @@ test('stopping or timing out releases the caller even if the transport hangs',as
  await assert.rejects(pending,/Stopped/);
  await assert.rejects(requestModel(stalled,undefined,5),/too long/);
 });
+
+test('empty replies raise a specific error instead of returning nothing', async () => {
+  const {replyText} = await import('../generation.mjs');
+  assert.equal(replyText({content: 'hi'}), 'hi');
+  assert.throws(() => replyText({content: '  '}), e => e.emptyReply && /empty reply/.test(e.message));
+  assert.throws(() => replyText({content: '', reasoning: 'thinking about it a lot'}), e => e.emptyReply && /spent its whole reply thinking \(5 words/.test(e.message));
+});
