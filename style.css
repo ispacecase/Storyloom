@@ -66,12 +66,12 @@
 #na-panel .storyloom-flow button:hover { color:var(--sl-accent-dark); text-decoration:underline; }
 #na-panel .storyloom-composer { flex:none; border:1px solid #dfd2c6; border-radius:13px; background:#fffdfa; padding:.65rem .7rem .55rem; }
 #na-panel .storyloom-composer:focus-within { border-color:#b8836d; box-shadow:0 0 0 3px #b8836d24; }
-#na-input { width:100%; min-height:3.5rem; max-height:22vh; resize:vertical; border:0; outline:0 !important; background:transparent; color:var(--sl-ink); font-size:.86rem; }
-#na-input::placeholder { color:#a3958b; }
+#na-input, #na-assistant-input { width:100%; min-height:3.5rem; max-height:22vh; resize:vertical; border:0; outline:0 !important; background:transparent; color:var(--sl-ink); font-size:.86rem; }
+#na-input::placeholder, #na-assistant-input::placeholder { color:#a3958b; }
 #na-panel .storyloom-compose-footer { display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
 #na-panel .storyloom-compose-footer > span { color:#a7988d; font-size:.55rem; font-weight:700; letter-spacing:.12em; }
-#na-panel #na-send { border:0; border-radius:8px; background:var(--sl-accent); color:white; padding:.5rem .9rem; font-size:.76rem; font-weight:700; }
-#na-panel #na-send:hover { background:var(--sl-accent-dark); }
+#na-panel #na-send, #na-panel #na-assistant-send { border:0; border-radius:8px; background:var(--sl-accent); color:white; padding:.5rem .9rem; font-size:.76rem; font-weight:700; }
+#na-panel #na-send:hover, #na-panel #na-assistant-send:hover { background:var(--sl-accent-dark); }
 #na-panel .storyloom-writing p { margin:0; color:var(--sl-muted); font-size:.75rem; }
 #na-panel .storyloom-count { display:flex; align-items:center; gap:.35rem; color:#665650; font-size:.75rem; }
 #na-count { width:3.5rem; padding:.3rem; color:var(--sl-ink); background:white; border:1px solid #d9cbbf; border-radius:6px; }
@@ -177,3 +177,5 @@
 #na-panel .storyloom-sugg-why { margin:.2rem 0 0; max-height:6.5em; overflow:auto; color:#5a463e; line-height:1.45; white-space:pre-wrap; }
 #na-panel .storyloom-suggestions ul { max-height:none; }
 #na-panel .storyloom-suggestions pre { max-height:9rem; margin:.25rem 0 .35rem; }
+
+#na-panel #na-send:disabled, #na-panel #na-assistant-send:disabled { opacity:.55; cursor:wait; }
