@@ -109,7 +109,7 @@ test('the final step can be split into a plan request and an outline request', a
 
 test('every final step invites new entries for things no planned entry covers', async () => {
   const {finalizeInstruction, answerInstruction, startInterview} = await import('../interview.mjs');
-  for (const part of ['all', 'plan', 'outline']) assert.match(finalizeInstruction('simple', {}, undefined, part), /add a new entry for it/);
+  for (const part of ['all', 'plan', 'outline']) assert.match(finalizeInstruction('simple', {}, undefined, part), /invent a new entry for it/);
   assert.match(finalizeInstruction('deep', {}, undefined, 'outline'), /add that as a new entry too/);
   assert.match(answerInstruction(startInterview('deep')), /create a new entry for it containing only what the writer actually said/);
 });

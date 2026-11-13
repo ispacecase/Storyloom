@@ -1,7 +1,7 @@
 {
   "display_name": "Storyloom",
   "author": "Storyloom contributors",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "js": "index.js",
   "css": "style.css",
   "loading_order": 100,
