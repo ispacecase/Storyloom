@@ -131,17 +131,26 @@ export async function indexChunks({fetchFn, headers, source, chunks, onProgress 
   return {added: missing.length, removed: stale.length, total: chunks.length};
 }
 
-/** Closest docs sections by meaning; falls back to keywords. Returns [{text, page}], plus how it searched. */
+/**
+ * Docs sections for a question: by meaning (vector store) merged with keyword matches,
+ * since questions often use story words ("Ruth", "every message") rather than SillyTavern terms.
+ */
 export async function searchDocs({fetchFn, headers, source, chunks, query, k = 6}) {
+  const byWords = keywordSearch(chunks, query, k).map(c => ({text: c.text, page: c.page}));
+  let byMeaning = [];
   if (source) {
     try {
       const r = await post(fetchFn, headers, '/api/vector/query', {...source, collectionId: DOCS_COLLECTION, searchText: String(query).slice(0, 2000), topK: k, threshold: 0});
       if (r.ok) {
         const {metadata = []} = await r.json();
-        const found = metadata.filter(m => m?.text).map(m => ({text: m.text, page: (m.text.match(/^\[SillyTavern docs: ([^\]]+)\]/) || [])[1] || ''}));
-        if (found.length) return {results: found, method: 'meaning'};
+        byMeaning = metadata.filter(m => m?.text).map(m => ({text: m.text, page: (m.text.match(/^\[SillyTavern docs: ([^\]]+)\]/) || [])[1] || ''}));
       }
     } catch {}
   }
-  return {results: keywordSearch(chunks, query, k).map(c => ({text: c.text, page: c.page})), method: 'keywords'};
+  if (!byMeaning.length) return {results: byWords, method: 'keywords'};
+  const seen = new Set(), results = [];
+  for (let i = 0; results.length < k && (i < byMeaning.length || i < byWords.length); i++) {
+    for (const r of [byMeaning[i], byWords[i]]) if (r && !seen.has(r.text) && results.length < k) { seen.add(r.text); results.push(r); }
+  }
+  return {results, method: byWords.length ? 'meaning + keywords' : 'meaning'};
 }

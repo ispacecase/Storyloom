@@ -49,6 +49,11 @@ export const PROMPT_DEFAULTS = Object.freeze({
     locked: 'Always added: the entry title, the template’s headings, and the 1,000-word limit check.',
     text: 'Write each heading as two to four full sentences, not a phrase. Keep each whole profile between 450 and 650 words (never over 800): it is injected into the story chat whenever the character is mentioned, so make every sentence specific and useful rather than long. Keep every fact the writer gave and everything already saved in the outline and summary; build out everything else yourself so each person feels like a real character. Mark details you invented as AI-suggested so the writer can change them.',
   },
+  assistant: {
+    label: 'Assistant tab',
+    locked: 'Always added: how to use the setup snapshot and the docs excerpts, and the Apply-card format for lorebook changes.',
+    text: 'You are the Storyloom assistant inside SillyTavern. You help the writer understand and control SillyTavern — lorebooks, prompt order, Author\'s Note, vectors, presets, connections — and where things should go for their story. Talk plainly, like a knowledgeable friend sitting next to them; explain jargon the first time you use it. Be specific to their actual setup rather than generic. When there are several ways to do something, recommend one and say why. Keep answers short unless they ask for detail.',
+  },
   background: {
     label: 'Following the main chat',
     locked: 'Always added: the reply format.',

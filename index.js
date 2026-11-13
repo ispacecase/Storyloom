@@ -19,6 +19,8 @@ import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
 import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
 import { castNames, characterProfilesInstruction, validateCharacters, characterTitle } from './characters.mjs';
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
+import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
+import { downloadDocs, chunkMarkdown, indexChunks, searchDocs, vectorSource } from './docs-rag.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED } from './interview.mjs';
@@ -190,6 +192,11 @@ const TIPS={
   'na-template-copy':'Save the text below as a new template, using the Name line as its name.',
   'na-template-delete':'Delete this template (your own templates only).',
   'na-review':'Has the AI re-read the whole plan without the template in front of it. It only changes something if the story clearly needs it — a missing entry or heading, or something that doesn’t belong — and says why. Usually it changes nothing.',
+  'na-tab-story':'Plan and organise your story.',
+  'na-tab-assistant':'Ask about SillyTavern and your setup. It reads your live settings and the SillyTavern docs, and can suggest lorebook changes you apply yourself.',
+  'na-docs-update':'Download the newest SillyTavern docs from GitHub and re-index them.',
+  'na-assistant-new':'Clear this conversation and its summary. Applied changes stay.',
+  'na-assistant-send':'Send your question (Ctrl+Enter).',
   'na-chapter':'Which chapter the story is on. The main chat only gets this chapter’s plan (in the always-on “Current Chapter” entry), so it doesn’t run ahead.',
 };
 function showMessages() {
@@ -335,6 +342,169 @@ async function applySuggestion(id) {
   if(sug.title.toLocaleLowerCase()===tpl(d).cast.toLocaleLowerCase())await writeProfiles('',{onlyMissing:true});
   else try{await organizeBook();}catch(e){console.warn('Storyloom layout:',e);}
 }
+/* ---------- Assistant tab ---------- */
+let activeTab='story', assistantBusy=false, docsChunks=null;
+const DOCS_CACHE='storyloom-docs-v1', DOCS_MAX_AGE=14*24*3600*1000;
+function assistantState() {
+  const c=context(); c.extensionSettings.storyloom ??= {};
+  return c.extensionSettings.storyloom.assistant ??= {messages:[],summary:''};
+}
+function saveAssistant() {context().saveSettingsDebounced();}
+function docsIndexState() {const c=context(); c.extensionSettings.storyloom ??= {}; return c.extensionSettings.storyloom.docsIndex ??= {};}
+function readDocsCache() {try{const v=JSON.parse(localStorage.getItem(DOCS_CACHE)||'null');return v?.chunks?.length?v:null;}catch{return null;}}
+function docsLabel(text) {const el=document.getElementById('na-docs-status'); if(el)el.textContent=text;}
+function renderDocsStatus() {
+  const cache=readDocsCache(), idx=docsIndexState(), src=vectorSource(context().extensionSettings.vectors);
+  if(!cache){docsLabel('SillyTavern docs: not downloaded yet (they download on your first question).');return;}
+  const age=Math.round((Date.now()-cache.at)/86400000);
+  const how=src && idx.source===src.source && idx.count===cache.chunks.length ? `searched by meaning (${src.source})` : src ? 'searched by keywords until indexing finishes' : 'searched by keywords (no embedding source set in Vector Storage)';
+  docsLabel(`SillyTavern docs: ${cache.chunks.length.toLocaleString()} sections, ${age?`${age} day${age===1?'':'s'} old`:'downloaded today'}, ${how}.`);
+}
+/** Download, cache and index the docs when missing, stale or forced. Returns the chunks. */
+async function ensureDocs({force=false}={}) {
+  let cache=readDocsCache();
+  if(force || !cache || Date.now()-cache.at>DOCS_MAX_AGE) {
+    docsLabel('Downloading SillyTavern docs from GitHub…');
+    const pages=await downloadDocs(fetch,(done,total)=>docsLabel(`Downloading SillyTavern docs… ${done} of ${total} pages`));
+    if(!pages.length)throw Error('Could not download the SillyTavern docs from GitHub.');
+    const chunks=pages.flatMap(p=>chunkMarkdown(p.path,p.text));
+    cache={at:Date.now(),chunks};
+    try{localStorage.setItem(DOCS_CACHE,JSON.stringify(cache));}catch(e){console.warn('Storyloom: docs cache not saved (browser storage full); keeping them in memory.',e);}
+  }
+  docsChunks=cache.chunks;
+  const c=context(), src=vectorSource(c.extensionSettings.vectors), idx=docsIndexState();
+  if(src && (force || idx.source!==src.source || idx.model!==src.model || idx.count!==cache.chunks.length || idx.at<cache.at)) {
+    try {
+      docsLabel('Indexing the docs for search by meaning…');
+      const r=await indexChunks({fetchFn:fetch,headers:c.getRequestHeaders(),source:src,chunks:cache.chunks,onProgress:(done,total)=>docsLabel(`Indexing the docs for search by meaning… ${done} of ${total}`)});
+      Object.assign(idx,{source:src.source,model:src.model,count:r.total,at:Date.now()}); saveAssistant();
+    } catch(e) {console.warn('Storyloom docs indexing:',e); docsLabel(`Could not index the docs by meaning (${e.message}); using keyword search.`); return cache.chunks;}
+  }
+  renderDocsStatus();
+  return cache.chunks;
+}
+async function gatherSnapshot(question) {
+  const c=context(), wi=await import('../../../world-info.js'), oai=c.chatCompletionSettings||{};
+  const order=(oai.prompt_order||[]).find(o=>Number(o.character_id)===100001)?.order || [];
+  const byId=Object.fromEntries((oai.prompts||[]).map(p=>[p.identifier,p]));
+  const prompts=order.map(o=>({name:byId[o.identifier]?.name||o.identifier,enabled:!!o.enabled,content:byId[o.identifier]?.marker?'':String(byId[o.identifier]?.content||'')}));
+  const card=c.characters?.[c.characterId];
+  const chatLorebook=c.chatMetadata?.world_info||'';
+  let entries=[], entryTexts=[];
+  if(chatLorebook && c.getWorldInfoNames().includes(chatLorebook)) {
+    const book=await freshBook(chatLorebook);
+    entries=Object.values(book.entries||{});
+    const picked=selectLore(entries.map(e=>({title:e.comment,content:e.content,keys:e.key||[]})),question,6000).entries;
+    entryTexts=picked.slice(0,5).map(e=>({comment:e.title,content:e.content}));
+  }
+  let novel='';
+  try{const d=data(); if(d.book)novel=`lorebook “${d.book}”, template ${tpl(d).name}, ${d.interview?.phase==='done'?`planned, now on ${tpl(d).unit} ${d.chapter||1}`:`planning (${d.interview?.phase||'not started'})`}`;}catch{}
+  const md=c.chatMetadata||{};
+  return formatSnapshot({
+    character:card?{name:card.name,description:String(card.description||card.data?.description||''),lorebook:card.data?.extensions?.world||''}:null,
+    chatLorebook,globalLorebooks:[...(wi.selected_world_info||[])],allLorebooks:c.getWorldInfoNames(),
+    worldInfo:{depth:wi.world_info_depth,budget:wi.world_info_budget,recursive:wi.world_info_recursive,caseSensitive:wi.world_info_case_sensitive,wholeWords:wi.world_info_match_whole_words},
+    vectors:c.extensionSettings.vectors||null,prompts,
+    authorsNote:{text:String(md.note_prompt||''),position:md.note_position,depth:md.note_depth,role:md.note_role},
+    connection:c.mainApi==='openai'?`${oai.chat_completion_source} / ${c.getChatCompletionModel?.()||'?'}`:c.mainApi,
+    novel,entries,entryTexts,
+  });
+}
+function renderAssistant() {
+  const log=document.getElementById('na-assistant-log'); if(!log)return;
+  const st=assistantState();
+  log.replaceChildren();
+  if(!st.messages.length){const p=document.createElement('p');p.className='storyloom-hint';p.textContent='Ask anything about SillyTavern or your setup — “why isn’t Ruth’s entry showing up?”, “where should a recap go?”, “what does sticky do?”. It reads your live settings and the SillyTavern docs. Lorebook changes it suggests show up as cards you apply yourself.';log.append(p);}
+  st.messages.forEach((m,mi)=>{
+    const bubble=document.createElement('article'); bubble.className=m.role==='user'?'storyloom-message is-user':'storyloom-message is-assistant';
+    const label=document.createElement('strong'); label.textContent=m.role==='user'?'YOU':'ASSISTANT';
+    const text=document.createElement('div'); text.textContent=m.content; bubble.append(label,text);
+    if(m.sources?.length){const s=document.createElement('small');s.className='storyloom-sources';s.textContent=`Docs (by ${m.method||'keywords'}): ${m.sources.join(' · ')}`;bubble.append(s);}
+    for(const a of m.actions||[]) {
+      const card=document.createElement('div'); card.className='storyloom-action is-'+a.status;
+      const d=document.createElement('div'); d.textContent=describeAction(a); card.append(d);
+      if(a.content){const det=document.createElement('details');det.innerHTML='<summary>Text</summary>';const pre=document.createElement('pre');pre.textContent=a.content;det.append(pre);card.append(det);}
+      if(a.error){const e=document.createElement('small');e.className='storyloom-action-error';e.textContent=a.error;card.append(e);}
+      const row=document.createElement('div'); row.className='storyloom-row';
+      if(a.status==='applied'){const u=document.createElement('button');u.type='button';u.textContent='Undo';u.title='Put this entry back exactly as it was before you applied the card.';u.onclick=()=>{lastAction='Undo';undoAssistantAction(mi,a.id).catch(fail);};row.append(Object.assign(document.createElement('span'),{textContent:'Applied ✓ '}),u);}
+      else if(a.status==='undone')row.append(Object.assign(document.createElement('span'),{textContent:'Undone'}));
+      else {const ap=document.createElement('button');ap.type='button';ap.textContent='Apply';ap.title='Make exactly this change in the lorebook. You can undo it.';ap.onclick=()=>{lastAction='Apply';applyAssistantAction(mi,a.id).catch(fail);};const sk=document.createElement('button');sk.type='button';sk.textContent='Dismiss';sk.onclick=()=>{a.status='dismissed';saveAssistant();renderAssistant();};row.append(ap,sk);}
+      if(a.status!=='dismissed'){card.append(row);bubble.append(card);}
+    }
+    log.append(bubble);
+  });
+  log.scrollTop=log.scrollHeight;
+}
+async function applyAssistantAction(mi,id) {
+  const st=assistantState(), a=st.messages[mi]?.actions?.find(x=>x.id===id); if(!a)return;
+  requireIdle(); syncing=true;
+  try {
+    const c=context();
+    if(!c.getWorldInfoNames().includes(a.book))throw Error(`There is no lorebook called “${a.book}”.`);
+    const before=await freshBook(a.book);
+    const {book,uid}=applyAction(before,a,b=>createWorldInfoEntry(a.book,b));
+    await c.saveWorldInfo(a.book,book,true);
+    if(JSON.stringify(await freshBook(a.book))!==JSON.stringify(book))throw Error('The save could not be verified; check the lorebook.');
+    a.status='applied'; a.error=''; a.undo={uid,before:before.entries?.[uid]??null,after:book.entries[uid]};
+    saveAssistant(); renderAssistant(); status(`Applied: ${describeAction(a)}`);
+  } catch(e) {a.error=e.message; saveAssistant(); renderAssistant(); throw e;}
+  finally {syncing=false;queueSync();}
+}
+async function undoAssistantAction(mi,id) {
+  const st=assistantState(), a=st.messages[mi]?.actions?.find(x=>x.id===id); if(!a?.undo)return;
+  requireIdle(); syncing=true;
+  try {
+    const c=context(), book=await freshBook(a.book), {uid,before,after}=a.undo;
+    if(JSON.stringify(book.entries?.[uid]??null)!==JSON.stringify(after))throw Error(`“${a.title}” was changed after you applied this, so it can’t be undone safely. Edit it in the World Info editor instead.`);
+    if(before===null)delete book.entries[uid]; else book.entries[uid]=before;
+    await c.saveWorldInfo(a.book,book,true);
+    a.status='pending'; delete a.undo; saveAssistant(); renderAssistant(); status(`Undone: ${describeAction(a)}. The card can be applied again.`);
+  } finally {syncing=false;queueSync();}
+}
+async function askAssistant(text) {
+  if(assistantBusy)throw Error('The assistant is still answering. Use Stop to cancel it.');
+  requireIdle();
+  const c=context(), st=assistantState();
+  let profile='',direct=null,tokens=12000;
+  try{const d=data();profile=d.profile||'';direct=directSnapshot(d,c);tokens=Number(d.responseTokens||12000);}catch{}
+  st.messages.push({role:'user',content:text}); saveAssistant(); renderAssistant();
+  assistantBusy=true; const controller=new AbortController(); renderModelWork(controller);
+  try {
+    status('Reading the SillyTavern docs…');
+    let results=[],method='keywords';
+    try {
+      const chunks=await ensureDocs();
+      const idx=docsIndexState(), src=vectorSource(c.extensionSettings.vectors);
+      const indexed=src && idx.source===src.source && idx.count===chunks.length;
+      const prior=st.messages.slice(-3,-1).map(m=>m.content).join(' ').slice(-600);
+      ({results,method}=await searchDocs({fetchFn:fetch,headers:c.getRequestHeaders(),source:indexed?src:null,chunks,query:`${prior}\n${text}`,k:6}));
+    } catch(e) {console.warn('Storyloom docs:',e); docsLabel(`SillyTavern docs unavailable (${e.message}).`);}
+    status('Reading your setup…');
+    const snapshot=await gatherSnapshot(text);
+    const recent=st.messages.slice(-15,-1).map(m=>`${m.role==='user'?'Writer':'Assistant'}: ${m.content}`).join('\n\n');
+    const prompt=`SETUP SNAPSHOT\n${snapshot}\n\nSILLYTAVERN DOCS EXCERPTS (found by ${method})\n${results.map(r=>r.text).join('\n\n---\n\n')||'(none found)'}\n\n${st.summary?`EARLIER CONVERSATION SUMMARY\n${st.summary}\n\n`:''}RECENT CONVERSATION\n${recent||'(this is the first message)'}\n\nWriter: ${text}`;
+    status('Waiting for the AI…');
+    const raw=await llm(c,prompt,profile,controller.signal,tokens,assistantSystem(),direct);
+    const parsed=parseActions(raw);
+    st.messages.push({role:'assistant',content:parsed.reply+(parsed.problems.length?`\n\n(Some suggested changes were malformed and left out: ${parsed.problems.join(' ')})`:''),actions:parsed.actions.map(a=>({...a,id:crypto.randomUUID(),status:'pending'})),sources:[...new Set(results.map(r=>r.page).filter(Boolean))].slice(0,6),method});
+    saveAssistant(); renderAssistant(); status(parsed.actions.length?`${parsed.actions.length} suggested change${parsed.actions.length===1?'':'s'} below — nothing is changed until you click Apply.`:'');
+    const fold=needsCompaction(st.messages);
+    if(fold) {
+      try {
+        status('Tidying up older conversation…');
+        st.summary=(await llm(c,compactionPrompt(st.summary,st.messages.slice(0,fold)),profile,controller.signal,2000,'You summarise conversations accurately and briefly.',direct)).trim();
+        st.messages=st.messages.slice(fold); saveAssistant(); renderAssistant(); status('');
+      } catch(e) {console.warn('Storyloom assistant summary:',e);}
+    }
+  } finally {assistantBusy=false;renderModelWork(null);}
+}
+function renderTabs() {
+  const panel=document.getElementById('na-panel'); if(!panel)return;
+  for(const tab of ['story','assistant'])panel.querySelector('#na-tab-'+tab).classList.toggle('is-active',activeTab===tab);
+  panel.querySelector('#na-assistant').hidden=settingsOpen || activeTab!=='assistant';
+  if(activeTab==='assistant'){renderAssistant();renderDocsStatus();}
+}
+
 function renderChapters(d) {
   const label=document.getElementById('na-chapter-label'), select=document.getElementById('na-chapter');
   const chapters=d.outlineChapters||[];
@@ -469,7 +639,8 @@ function renderModelWork(controller) {
 function renderPanelView() {
   const panel=document.getElementById('na-panel');
   panel.querySelector('#na-settings').hidden=!settingsOpen;
-  panel.querySelector('#na-workspace').hidden=settingsOpen;
+  panel.querySelector('#na-workspace').hidden=settingsOpen || activeTab!=='story';
+  renderTabs();
   const toggle=panel.querySelector('#na-settings-toggle');
   toggle.textContent=settingsOpen?'Done':'Settings';
   toggle.setAttribute('aria-expanded',String(settingsOpen));
@@ -1001,6 +1172,7 @@ function init() {
         <button id="na-close" type="button" class="storyloom-close" aria-label="Close Storyloom">×</button>
       </div>
     </header>
+    <nav class="storyloom-tabs" role="tablist"><button id="na-tab-story" type="button" role="tab" class="is-active">Story</button><button id="na-tab-assistant" type="button" role="tab">Assistant</button></nav>
     <section id="na-settings" class="storyloom-settings" aria-label="Storyloom settings" hidden>
       <div class="storyloom-settings-body">
         <label>AI connection<select id="na-profile"></select></label><p class="storyloom-hint">Which AI Storyloom talks to. “Use current connection” uses whatever is set in SillyTavern’s API Connections; pick another to use a different model just for Storyloom.</p>
@@ -1067,6 +1239,11 @@ function init() {
     <div id="na-interview-controls" class="storyloom-flow"><button id="na-skip" type="button">Skip for now <span aria-hidden="true">→</span></button><button id="na-next" type="button">Next topic <span aria-hidden="true">→</span></button><button id="na-outline" type="button">Create outline <span aria-hidden="true">→</span></button></div>
     <div id="na-composer" class="storyloom-composer"><label class="storyloom-sr-only" for="na-input">Message Storyloom</label><textarea id="na-input" placeholder="Tell me what you’re thinking…"></textarea><div class="storyloom-compose-footer"><span>YOUR STORY, YOUR WAY</span><button id="na-send" type="button">Send <span aria-hidden="true">↗</span></button></div></div>
     </div>
+    <section id="na-assistant" class="storyloom-assistant" hidden>
+      <div class="storyloom-assistant-bar"><small id="na-docs-status" class="storyloom-hint"></small><div class="storyloom-row"><button id="na-docs-update" type="button">Update docs</button><button id="na-assistant-new" type="button">New conversation</button></div></div>
+      <div id="na-assistant-log" role="log" aria-live="polite" aria-label="Assistant conversation"></div>
+      <div class="storyloom-composer"><label class="storyloom-sr-only" for="na-assistant-input">Ask the assistant</label><textarea id="na-assistant-input" placeholder="Ask about SillyTavern, your lorebook, or where something should go…"></textarea><div class="storyloom-compose-footer"><span>CTRL+ENTER TO SEND</span><button id="na-assistant-send" type="button">Ask <span aria-hidden="true">↗</span></button></div></div>
+    </section>
     <div id="na-live" class="storyloom-live" hidden aria-live="off"><div class="storyloom-live-head"></div><div class="storyloom-live-body"></div></div>
     <div class="storyloom-feedback"><div id="na-status" role="status" aria-live="polite"></div><button id="na-cancel-model" type="button" hidden>Stop</button></div>`;
   document.body.append(panel);
@@ -1237,6 +1414,13 @@ function init() {
     changeBook(name);await persist();options();await setupNovel();status('New lorebook linked to this chat.');
   }catch(e){fail(e)}};
   panel.querySelector('#na-profiles').onclick=()=>writeProfiles();
+  panel.querySelector('#na-tab-story').onclick=()=>{activeTab='story';settingsOpen=false;renderPanelView();};
+  panel.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
+  const sendAssistant=async()=>{const input=panel.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
+  panel.querySelector('#na-assistant-send').onclick=sendAssistant;
+  panel.querySelector('#na-assistant-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();sendAssistant();}});
+  panel.querySelector('#na-assistant-new').onclick=async()=>{try{if(!await context().Popup.show.confirm('Start a new conversation?','The assistant forgets this conversation and its summary. Changes you already applied stay.'))return;const st=assistantState();st.messages=[];st.summary='';saveAssistant();renderAssistant();}catch(e){fail(e);}};
+  panel.querySelector('#na-docs-update').onclick=async()=>{try{await ensureDocs({force:true});status('SillyTavern docs updated.');}catch(e){fail(e);}};
   panel.querySelector('#na-review').onclick=async()=>{try{await reviewStory();options();}catch(e){fail(e);}};
   panel.querySelector('#na-template-edit').onchange=()=>showTemplateText();
   panel.querySelector('#na-prompt-key').onchange=()=>renderPromptEditor();

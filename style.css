@@ -147,3 +147,17 @@
 #na-panel .storyloom-suggestions pre { white-space:pre-wrap; max-height:10rem; overflow:auto; font:11px/1.45 ui-monospace,monospace; background:#fff; padding:.4rem; border-radius:6px; }
 #na-panel .storyloom-suggestions button { border:1px solid #dfd1c3; border-radius:7px; padding:.25rem .55rem; background:#fffaf5; color:#604b43; font-size:.7rem; }
 #na-prompt-text { width:100%; box-sizing:border-box; margin:.5rem 0 .2rem; font:12px/1.5 Georgia,serif; color:var(--sl-ink); background:#fff; border:1px solid #d9cbbf; border-radius:8px; padding:.5rem; resize:vertical; }
+#na-panel .storyloom-tabs { display:flex; gap:.3rem; flex:none; margin:.2rem 0 .5rem; border-bottom:1px solid var(--sl-line); }
+#na-panel .storyloom-tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:.45rem .7rem; color:var(--sl-muted); font-size:.78rem; font-weight:700; letter-spacing:.04em; }
+#na-panel .storyloom-tabs button.is-active { color:var(--sl-ink); border-bottom-color:#b5775c; }
+#na-panel .storyloom-assistant { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; gap:.5rem; }
+#na-panel .storyloom-assistant[hidden] { display:none; }
+#na-panel .storyloom-assistant-bar { display:flex; flex-direction:column; gap:.3rem; flex:none; }
+#na-panel .storyloom-assistant-bar button { border:1px solid #dfd1c3; border-radius:8px; padding:.3rem .55rem; background:#fffaf5; color:#604b43; font-size:.7rem; }
+#na-assistant-log { overflow:auto; flex:1 1 4rem; min-height:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+#na-panel .storyloom-sources { display:block; margin-top:.4rem; color:#9a8d86; font-size:.66rem; }
+#na-panel .storyloom-action { margin-top:.5rem; padding:.5rem .6rem; border:1px solid #d9b9a6; border-radius:9px; background:#fff6ef; font-size:.75rem; }
+#na-panel .storyloom-action.is-applied { border-color:#9bbf9b; background:#f3faf2; }
+#na-panel .storyloom-action pre { white-space:pre-wrap; max-height:9rem; overflow:auto; font:11px/1.45 ui-monospace,monospace; background:#fff; padding:.4rem; border-radius:6px; }
+#na-panel .storyloom-action button { border:1px solid #dfd1c3; border-radius:7px; padding:.25rem .55rem; background:#fffaf5; color:#604b43; font-size:.7rem; }
+#na-panel .storyloom-action-error { display:block; color:#a33a2a; margin-top:.3rem; }

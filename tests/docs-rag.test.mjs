@@ -59,7 +59,7 @@ test('search uses meaning when available and keywords otherwise', async () => {
   const chunks = chunkMarkdown('Usage/worldinfo.md', page);
   await indexChunks({fetchFn, headers: {}, source, chunks});
   const byMeaning = await searchDocs({fetchFn, headers: {}, source, chunks, query: 'x'});
-  assert.equal(byMeaning.method, 'meaning');
+  assert.match(byMeaning.method, /^meaning/);
   assert.match(byMeaning.results[0].page, /Recursion/);
   const byWords = await searchDocs({fetchFn, headers: {}, source: null, chunks, query: 'scan depth'});
   assert.equal(byWords.method, 'keywords');
