@@ -17,13 +17,29 @@ export function chapterList(outline,unit='Chapter') {
   return heads.map((h,i)=>({number:Number(h[1]),title:h[2].trim(),text:text.slice(h.index,heads[i+1]?.index ?? text.length).trim()}));
 }
 
-export function currentChapterContent(outline,number,unit='Chapter') {
+/** One line saying what a later chapter is about: its title plus the first sentence of its Events line. */
+function gist(chapter) {
+  const events=(chapter.text.match(/^[\s*_-]*Events\s*:\s*(.+)$/mi)||[])[1]||'';
+  const first=events.replace(/\(AI-suggested\)/gi,'').match(/^.*?[.!?](\s|$)/)?.[0]?.trim()||events.slice(0,160);
+  return `${chapter.title}${first?` — ${first}`:''}`;
+}
+/**
+ * What the story chat gets for the current chapter: this chapter's full plan, how long it should run,
+ * and a short list of later chapters so it knows where the story is heading and what to leave for later.
+ */
+export function currentChapterContent(outline,number,unit='Chapter',{wordsPerChapter=''}={}) {
   const chapters=chapterList(outline,unit);
   const index=chapters.findIndex(c=>c.number===number);
   if(index<0)return '';
-  const now=chapters[index], next=chapters[index+1];
+  const now=chapters[index], later=chapters.slice(index+1);
   const u=unit.toLowerCase();
-  return `The story is currently in ${unit} ${now.number} of ${chapters.length}. Follow this plan for the ${u}; let scenes unfold naturally rather than rushing through every event.\n\n${now.text}${next?`\n\nComing next (do not start yet): ${unit} ${next.number} — ${next.title}`:`\n\nThis is the final ${u}.`}`;
+  const length=String(wordsPerChapter||'').replace(/\(.*?\)/g,'').replace(/^(approximately|approx\.?|about|around|roughly|~)\s*/i,'').trim();
+  const size=length && !/word/i.test(length) ? `${length} words` : length;
+  const parts=[`The story is currently in ${unit} ${now.number} of ${chapters.length}. Follow this plan for the ${u}; let scenes unfold naturally rather than rushing through every event.${size?` This ${u} should run about ${size} in total, across all the replies that make it up.`:''}`, now.text];
+  parts.push(later.length
+    ? `Still to come — do not write any of this yet, and do not use up these events early:\n${later.map(c=>`- ${unit} ${c.number}: ${gist(c)}`).join('\n')}`
+    : `This is the final ${u}: bring the story to its ending.`);
+  return parts.join('\n\n');
 }
 
 /** Keep only distinctive names: drop generic role words and keys two characters share. */
@@ -73,7 +89,9 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
   for(const e of entries)if(/^storyloom memory\s*[—–-]/i.test(String(e.comment||'')))set(e,{disable:true,constant:false});
   cleanCharacterKeys(entries);
   const outline=find(t.outline.title)?.content;
-  const content=currentChapterContent(outline,chapter,t.unit);
+  const scaleEntry=t.entries.map(e=>find(e.title)).find(e=>/WORDS PER/i.test(String(e?.content||'')));
+  const wordsPerChapter=(String(scaleEntry?.content||'').match(/^[\s*_-]*WORDS PER [A-Z]+\s*:\s*(.+)$/mi)||[])[1]||'';
+  const content=currentChapterContent(outline,chapter,t.unit,{wordsPerChapter});
   if(content) {
     let entry=find(CURRENT_CHAPTER);
     if(!entry) {

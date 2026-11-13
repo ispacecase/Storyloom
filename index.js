@@ -552,7 +552,7 @@ async function upgradeLayout(d=null,book=null) {
     if(!d?.book || d.interview?.phase!=='done' || context().chatMetadata?.world_info!==d.book)return false;
     book ??= await freshBook(d.book);
     const cc=findEntry(book,'Current Chapter');
-    if(!cc || cc.disable)return false;
+    if(!cc || (cc.disable && /Still to come|final [a-z]+: bring the story/i.test(String(cc.content||''))))return false;
     await organizeBook();
     return true;
   } catch(e) {console.warn('Storyloom layout upgrade:',e); return false;}

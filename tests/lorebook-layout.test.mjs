@@ -15,9 +15,10 @@ test('current chapter text carries only that chapter plus what comes next', () =
   const one = currentChapterContent(outline, 1);
   assert.match(one, /Chapter 1 of 2/);
   assert.match(one, /Wren arrives/);
-  assert.doesNotMatch(one, /The clinic/);
-  assert.match(one, /Coming next.*Chapter 2 — The Word for It/);
-  assert.match(currentChapterContent(outline, 2), /final chapter/);
+  assert.doesNotMatch(one, /humiliation|notebook/, 'later chapters appear as one line, not their full plan');
+  assert.match(one, /Still to come — do not write any of this yet[\s\S]*- Chapter 2: The Word for It — The clinic\./);
+  assert.match(currentChapterContent(outline, 2), /final chapter: bring the story to its ending/);
+  assert.match(currentChapterContent(outline, 1, 'Chapter', {wordsPerChapter: 'approximately 2,500 (fixed by the writer)'}), /should run about 2,500 words in total/);
   assert.equal(currentChapterContent(outline, 9), '');
 });
 
