@@ -10,18 +10,39 @@ export function replyText(response) {
   error.emptyReply=true;
   throw error;
 }
+/**
+ * Stream when the caller wants progress: `run(stream)` sends the request.
+ * Falls back to a normal request if streaming fails before anything arrives.
+ */
+export async function streamOrWait(run,onProgress,signal) {
+  if(!onProgress)return replyText(await run(false));
+  let got=false;
+  try {
+    const make=await run(true);
+    if(typeof make!=='function')return replyText(make);
+    let text='',reasoning='';
+    for await (const chunk of make()) {
+      got=true;
+      text=chunk?.text||''; reasoning=chunk?.state?.reasoning||'';
+      onProgress({text,reasoning});
+    }
+    return replyText({content:text,reasoning});
+  } catch(error) {
+    if(got || signal?.aborted || error?.emptyReply)throw error;
+    console.warn('Storyloom: streaming unavailable, waiting for the full reply instead:',error?.message);
+    return replyText(await run(false));
+  }
+}
 /** Generate without switching the main connection or mutating its response length. */
-export async function generate(c,prompt,profile,signal,maxTokens=6000,systemPrompt='',direct=null) {
+export async function generate(c,prompt,profile,signal,maxTokens=6000,systemPrompt='',direct=null,onProgress=null) {
   if(!Number.isInteger(maxTokens) || maxTokens<256 || maxTokens>16000) throw Error('Response budget must be between 256 and 16000 tokens.');
   const messages=systemPrompt ? [{role:'system',content:systemPrompt},{role:'user',content:prompt}] : [{role:'user',content:prompt}];
   if(profile==='__direct__') {
     const payload=directPayload(direct);
-    const response=await c.ChatCompletionService.processRequest({stream:false,messages,max_tokens:maxTokens,...payload},{},true,signal);
-    return replyText(response);
+    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,max_tokens:maxTokens,...payload},{},true,signal),onProgress,signal);
   }
   if(profile) {
-    const response=await c.ConnectionManagerRequestService.sendRequest(profile,messages,maxTokens,{stream:false,extractData:true,includePreset:true,signal});
-    return replyText(response);
+    return streamOrWait(stream=>c.ConnectionManagerRequestService.sendRequest(profile,messages,maxTokens,{stream,extractData:true,includePreset:true,signal}),onProgress,signal);
   }
   if(c.mainApi==='openai' && c.ChatCompletionService && c.getChatCompletionModel) {
     const settings=c.chatCompletionSettings || {};
@@ -33,8 +54,7 @@ export async function generate(c,prompt,profile,signal,maxTokens=6000,systemProm
       ]),
     ) : {};
     const options={presetName:c.getPresetManager('openai')?.getSelectedPresetName()};
-    const response=await c.ChatCompletionService.processRequest({stream:false,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom},options,true,signal);
-    return replyText(response);
+    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom},options,true,signal),onProgress,signal);
   }
   // Legacy APIs do not expose an equivalent isolated request service.
   // Respect their configured response length instead of changing shared settings.

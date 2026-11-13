@@ -337,19 +337,49 @@ function sameDirect(d,snapshot) {
 }
 // Big planning replies from slower providers can take several minutes; Stop is always available.
 const MODEL_TIMEOUT_MS=10*60*1000;
+/** Small box at the bottom of the panel showing the reply as it streams in. */
+const live={frame:0,data:null};
+function showLive(data) {
+  live.data=data;
+  if(live.frame)return;
+  live.frame=requestAnimationFrame(()=>{
+    live.frame=0;
+    const box=document.getElementById('na-live'); if(!box)return;
+    const d=live.data;
+    if(!d){box.hidden=true;return;}
+    box.hidden=false;
+    const answer=readable(d.text), thinking=String(d.reasoning||'');
+    const words=s=>(s.match(/\S+/g)||[]).length;
+    box.querySelector('.storyloom-live-head').textContent=answer
+      ? `Writing… ${words(answer).toLocaleString()} words`
+      : thinking ? `Thinking… ${words(thinking).toLocaleString()} words` : 'Waiting for the first words…';
+    const body=box.querySelector('.storyloom-live-body');
+    body.classList.toggle('is-thinking',!answer);
+    body.textContent=(answer||thinking).slice(-4000);
+    body.scrollTop=body.scrollHeight;
+  });
+}
+/** Make streaming JSON readable: drop the wrapper and unescape line breaks and quotes. */
+function readable(text) {
+  return String(text||'').replace(/^\s*```(?:json)?\s*/,'').replace(/^\s*\{\s*"reply"\s*:\s*"/,'')
+    .replace(/\\n/g,'\n').replace(/\\"/g,'"').replace(/"\s*,\s*"updates"\s*:\s*\[\s*\{\s*"title"\s*:\s*"/,'\n\n— ').replace(/"\s*,\s*"content"\s*:\s*"/g,'\n').replace(/"\s*,\s*"keys"\s*:\s*\[[^\]]*\]\s*\}\s*,?\s*\{?\s*(?:"title"\s*:\s*")?/g,'\n\n— ');
+}
 async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct) {
+  const progress=data=>showLive(data);
+  showLive({text:'',reasoning:''});
   const started=Date.now(), label=document.getElementById('na-status')?.textContent?.replace(/\s*\(\d+s\)$/,'') || 'Waiting for the AI…';
   const ticker=setInterval(()=>{const el=document.getElementById('na-status');if(el && busyLabel(el.textContent,label))el.textContent=`${label} (${Math.round((Date.now()-started)/1000)}s)`;},1000);
   try {
     return await requestModel(async requestSignal=>{
       try {
-        try {return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct);}
+        try {return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress);}
         catch(error) {
           if(!error?.emptyReply || requestSignal.aborted)throw error;
           // Empty answers are usually a one-off from the provider; ask once more before failing.
           console.warn('Storyloom: empty model reply, retrying once:',error.message);
           const el=document.getElementById('na-status'); if(el)el.textContent=`The model answered with nothing (${error.message.replace(/^the model /,'')}); asking once more…`;
-          return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct);
+          showLive({text:'',reasoning:''});
+          return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress);
         }
       } catch(error) {
         if(requestSignal.aborted)throw requestSignal.reason;
@@ -359,7 +389,7 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct) {
         throw Error(`The AI connection failed${detail?` (${detail})`:''}. Check AI connection in Settings and try again.`);
       }
     },signal,MODEL_TIMEOUT_MS);
-  } finally {clearInterval(ticker);}
+  } finally {clearInterval(ticker);showLive(null);}
 }
 function busyLabel(text,label) {return text===label || text.startsWith(label+' (');}
 function renderModelWork(controller) {
@@ -433,11 +463,12 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     catch(error) {
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
       console.warn('Storyloom: could not read the model reply ('+error.message+'). Start:',String(raw).slice(0,500),'… End:',String(raw).slice(-500));
-      status(`The model’s reply couldn’t be read (${String(error.message).slice(0,80)}); asking it to try again…`);
+      const cutOff=/Unterminated string|Unexpected end of JSON|Expected .* after/i.test(String(error.message));
+      status(cutOff?`The model’s reply was cut off before it finished (${String(raw).length.toLocaleString()} characters — it ran out of response budget); asking it to try again…`:`The model’s reply couldn’t be read (${String(error.message).slice(0,80)}); asking it to try again…`);
       const retrySystem=system+'\nYour last response could not be read. Respond with exactly one valid JSON object, beginning with { and ending with }, and no surrounding prose or markdown. Escape line breaks inside strings.';
       const retried=await ask(prompt,retrySystem);
       try {result=parseAssistant(retried,{allowProse});}
-      catch {throw Error('The model did not return a usable response after retrying. Nothing was saved; please try again.');}
+      catch(second) {throw Error(/Unterminated string|Unexpected end of JSON/i.test(String(second?.message))?'The model’s reply was cut off twice — it is longer than the response budget allows. Raise “Response budget” in Settings (up to 16000) and try again. Nothing was saved.':'The model did not return a usable response after retrying. Nothing was saved; please try again.');}
     }
     if(interview?.collaborative && !isCollaborativeReply(result.reply)) {
       if(context().chatId!==chatId || data()!==d)throw Error('Chat changed; nothing saved.');
@@ -448,7 +479,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if(interview?.requireOutline) result=await repairOutline(result,value=>{
       const t=tpl(d), foundation=value.updates.find(entry=>entry.title.trim().toLowerCase()===t.summary.title.toLowerCase());
       if(foundation)foundation.content=normalizeFoundation(foundation.content,targetEntries.find(entry=>entry.title===t.summary.title)?.content,t.summary.fields);
-      validateOutline(normalizePeopleFocus(value,d.interview?.answers,t.cast),d.interview?.mode,t);
+      validateOutline(normalizePeopleFocus(value,d.interview?.answers,t.cast),d.interview?.mode,t,interview.part||'all',Object.fromEntries(targetEntries.map(e=>[e.title,e.content])));
     },async (previous,issue)=>{
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
       status('Completing missing story details…');
@@ -767,13 +798,20 @@ async function finishInterview() {
   try {
     requireIdle();const d=data(), interview=d.interview;
     if(interview?.phase!=='outline')throw Error('Finish the questions before creating the outline.');
-    status('Creating the outline and filling the story foundation…');
-    const t=tpl(d), task=finalizeInstruction(interview.mode,interview.answers,t);
-    const result=await interact(task,false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry, including the outline, in updates.',requireOutline:true,silentUser:true});
+    const t=tpl(d);
+    // Two requests so each reply fits the response budget (reasoning models spend part of it thinking).
+    if(!interview.planSaved) {
+      status(`Step 1 of 2: filling in ${t.summary.title} and the planning entries…`);
+      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan'),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry in updates.',requireOutline:true,part:'plan',silentUser:true,loreBudget:60000});
+      if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
+      d.interview={...d.interview,planSaved:true}; await persist();
+    }
+    status(`Step 2 of 2: writing the ${t.outline.title}…`);
+    const result=await interact(finalizeInstruction(interview.mode,interview.answers,t,'outline'),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,part:'outline',silentUser:true,loreBudget:60000});
     if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
     const outline=result.updates.find(x=>x.title.trim().toLocaleLowerCase()===t.outline.title.toLocaleLowerCase());
     d.messages.push({role:'assistant',content:'Here is your outline:\n\n'+outline.content});
-    d.interview={...interview,phase:'done'};
+    d.interview={...d.interview,phase:'done'};
     d.outlineChapters=chapterList(outline.content,t.unit).map(({number,title})=>({number,title}));
     await persist();
     let bookMessage='';
@@ -919,6 +957,7 @@ function init() {
     <div id="na-interview-controls" class="storyloom-flow"><button id="na-skip" type="button">Skip for now <span aria-hidden="true">→</span></button><button id="na-next" type="button">Next topic <span aria-hidden="true">→</span></button><button id="na-outline" type="button">Create outline <span aria-hidden="true">→</span></button></div>
     <div id="na-composer" class="storyloom-composer"><label class="storyloom-sr-only" for="na-input">Message Storyloom</label><textarea id="na-input" placeholder="Tell me what you’re thinking…"></textarea><div class="storyloom-compose-footer"><span>YOUR STORY, YOUR WAY</span><button id="na-send" type="button">Send <span aria-hidden="true">↗</span></button></div></div>
     </div>
+    <div id="na-live" class="storyloom-live" hidden aria-live="off"><div class="storyloom-live-head"></div><div class="storyloom-live-body"></div></div>
     <div class="storyloom-feedback"><div id="na-status" role="status" aria-live="polite"></div><button id="na-cancel-model" type="button" hidden>Stop</button></div>`;
   document.body.append(panel);
   for(const [id,tip] of Object.entries(TIPS)){const el=panel.querySelector('#'+id);if(el)el.title=tip;}

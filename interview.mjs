@@ -27,14 +27,28 @@ export function recordAnswer(interview,text) {
 }
 const quote=x=>`"${x}"`;
 const lineList=fields=>fields.map(f=>f+':').join(', ');
-export function requiredTitles(t=NOVEL) {return [t.summary.title,...t.entries.map(e=>e.title),t.cast,t.outline.title,'Current Writing Directive'];}
-export function finalizeInstruction(mode,answers={},t=NOVEL) {
+export function requiredTitles(t=NOVEL,part='all') {
+  const plan=[t.summary.title,...t.entries.map(e=>e.title),t.cast,'Current Writing Directive'];
+  return part==='plan'?plan:part==='outline'?[t.outline.title]:[...plan.slice(0,-1),t.outline.title,plan.at(-1)];
+}
+/**
+ * The final step is split so each reply fits the response budget:
+ * part 'plan' = summary, planning entries, cast, directive; part 'outline' = the outline alone.
+ */
+export function finalizeInstruction(mode,answers={},t=NOVEL,part='all') {
   const unit=t.unit, units=unit.toLowerCase()+'s', count=unitCountField(t), voice=voiceEntry(t);
   const source=mode==='deep'?'The writer’s answers and the ideas they agreed to in the conversation':'The writer’s answers';
   const fill=`${source} are fixed facts; never contradict them. They are a starting point, not the whole project: build out everything around them so the plan feels real and complete — invent supporting characters, history, places, events and relationships the story needs, and develop each thing the writer mentioned beyond what they said. Fill in every skipped or undecided detail, including the ${titleField(t).toLowerCase()}, with your own coherent choices. Mark details you invented as AI-suggested so the writer can revise them. Do not leave placeholders such as untitled, undecided or to be chosen.${count?` If the writer did not specify how many ${units}, use six as an AI-suggested starting point, which they can change.`:''}`;
-  const titles=requiredTitles(t);
+  const titles=requiredTitles(t,part);
   const entryRules=t.entries.map(e=>`${e.title} must contain nonempty lines ${lineList(e.fields)}.`).join(' ');
-  return `The interview is complete. ${fill} Return the following ${titles.length} complete entries in updates, even if they already exist: ${titles.map(quote).join(', ')}. ${t.summary.title} must contain nonempty lines ${lineList(t.summary.fields)} and keep its consistency instruction. ${entryRules} ${t.cast} is the cast list: every named character the story needs (at least three), one person per line in this format: **Name | Age: value | Pronouns: value | Relationships: value | Wants: value. Mark the focus character with **. Full character profiles are written in the next step, so keep ${t.cast} to the cast list. These are characters in a story, not chatbot personas: never include chatbot greetings, roleplay directions or {{user}}/{{char}} placeholders. ${t.outline.title} must have one heading for each ${unit.toLowerCase()} in the form ${unit} 1 — Title, followed by nonempty lines ${lineList(t.outline.lines)}. Explain what actually happens, how characters and relationships change, and what results or remains unresolved. Write each of these lines as three to five sentences naming concrete scenes, choices and turning points — what someone would actually see happen — not summaries. The outline is the backbone of the project, so give it at least as much substance as the character material.${count?` If ${count.entry} specifies a numeric ${count.field.toLowerCase()} count, create exactly that many numbered ${units}.`:''} Include Current Writing Directive as an update, preserving its existing chapter, scene, pacing and prose instructions.${voice?` Its POV, Tense and Tone values must exactly match ${voice.title}. If the writer did not choose POV, tense or tone, retain the current directive defaults.`:''} The outline must be a saved entry, not merely ${unit.toLowerCase()} titles. Keys decide when an entry is shown in the story chat, so give every entry keys that are the specific names it covers — people, places, factions, objects — never the entry’s own title or generic words. Reply conversationally. Answers by topic (null means skipped): ${JSON.stringify(answers)}`;
+  const keys='Keys decide when an entry is shown in the story chat, so give every entry keys that are the specific names it covers — people, places, factions, objects — never the entry’s own title or generic words.';
+  const outlineRules=`${t.outline.title} must have one heading for each ${unit.toLowerCase()} in the form ${unit} 1 — Title, followed by nonempty lines ${lineList(t.outline.lines)}. Explain what actually happens, how characters and relationships change, and what results or remains unresolved. Write each of these lines as three to five sentences naming concrete scenes, choices and turning points — what someone would actually see happen — not summaries. The outline is the backbone of the project, so give it at least as much substance as the character material.${count?` If ${count.entry} specifies a numeric ${count.field.toLowerCase()} count, create exactly that many numbered ${units}.`:''} The outline must be a saved entry, not merely ${unit.toLowerCase()} titles.`;
+  const planRules=`${t.summary.title} must contain nonempty lines ${lineList(t.summary.fields)} and keep its consistency instruction. ${entryRules} ${t.cast} is the cast list: every named character the story needs (at least three), one person per line in this format: **Name | Age: value | Pronouns: value | Relationships: value | Wants: value. Mark the focus character with **. Full character profiles are written in a later step, so keep ${t.cast} to the cast list. These are characters in a story, not chatbot personas: never include chatbot greetings, roleplay directions or {{user}}/{{char}} placeholders. Include Current Writing Directive as an update, preserving its existing chapter, scene, pacing and prose instructions.${voice?` Its POV, Tense and Tone values must exactly match ${voice.title}. If the writer did not choose POV, tense or tone, retain the current directive defaults.`:''}`;
+  const ask=`Return the following ${titles.length} complete ${titles.length===1?'entry':'entries'} in updates, even if ${titles.length===1?'it already exists':'they already exist'}: ${titles.map(quote).join(', ')}.`;
+  const tail=`${keys} Reply conversationally. Answers by topic (null means skipped): ${JSON.stringify(answers)}`;
+  if(part==='plan')return `The interview is complete. ${fill} ${ask} ${planRules} The ${t.outline.title} is written in the next step; do not include it now. ${tail}`;
+  if(part==='outline')return `The plan is saved in the current entries (${t.summary.title}, ${t.entries.map(e=>e.title).join(', ')}, ${t.cast}). Now write the ${t.outline.title} from it, keeping every saved fact. ${ask} ${outlineRules} Return only this one entry. ${tail}`;
+  return `The interview is complete. ${fill} ${ask} ${planRules} ${outlineRules} ${tail}`;
 }
 function fieldValue(content,label) {
   const lines=String(content).split('\n');const expected=label.toLocaleLowerCase()+':';
@@ -50,12 +64,13 @@ export function compatibleVoice(left,right) {
  const normalize=x=>String(x||'').toLocaleLowerCase().replace(/[-–—]/g,' ').replace(/\btense\b/g,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim().replace(/\s+/g,' ');
  const a=normalize(left),b=normalize(right);return !!a && !!b && (a===b || a.startsWith(b+' ') || b.startsWith(a+' '));
 }
-export function validateOutline(result,mode='simple',t=NOVEL) {
-  const required=requiredTitles(t);
+export function validateOutline(result,mode='simple',t=NOVEL,part='all',saved=null) {
+  const required=requiredTitles(t,part);
   const updates=Array.isArray(result?.updates)?result.updates:[];
   const find=title=>updates.find(x=>String(x.title).trim().toLocaleLowerCase()===title.toLocaleLowerCase());
   const missing=required.filter(title=>!String(find(title)?.content||'').trim());
   if(missing.length)throw Error(`The model did not return required outline or planning entries: ${missing.join(', ')}. Retry outline creation.`);
+  if(part!=='outline') {
   const foundation=find(t.summary.title).content;
   for(const field of t.summary.fields){
     const value=fieldValue(foundation,field);
@@ -78,11 +93,14 @@ export function validateOutline(result,mode='simple',t=NOVEL) {
       if(!line.includes('|') || !/\bAge\s*:\s*[^|\n]+/i.test(line) || !/\bPronouns\s*:\s*[^|\n]+/i.test(line) || !/\bRelationships?\s*:\s*[^|\n]+/i.test(line) || !/\bWants?\s*:\s*[^|\n]+/i.test(line))throw Error(`Each ${cast} line needs a name, age, pronouns, relationships and wants.`);
     }
   }
+  }
+  if(part==='plan')return;
   const unit=t.unit, outline=find(t.outline.title).content;
   const headings=[...outline.matchAll(new RegExp(`^\\s*(?:#{1,6}\\s*)?[*_]*${unit}\\s+(\\d+)\\s*[-—–:][^\\n]+`,'gmi'))];
   if(!headings.length)throw Error(`The outline needs ${unit.toLowerCase()} headings and ${unit.toLowerCase()} details.`);
   const count=unitCountField(t);
-  const declared=count && fieldValue(find(count.entry).content,count.field).match(/^(\d+)\s*(?:[a-z]+)?(?:\s*\([^\n]*\))?\s*$/i);
+  const scaleText=count ? (find(count.entry)?.content ?? saved?.[count.entry] ?? '') : '';
+  const declared=count && fieldValue(scaleText,count.field).match(/^(\d+)\s*(?:[a-z]+)?(?:\s*\([^\n]*\))?\s*$/i);
   if(declared && Number(declared[1])!==headings.length)throw Error(`The outline has ${headings.length} ${unit.toLowerCase()}s but ${count.entry} specifies ${declared[1]}.`);
   headings.forEach((heading,i)=>{
     if(Number(heading[1])!==i+1)throw Error(`Outline ${unit.toLowerCase()}s must be numbered in order.`);

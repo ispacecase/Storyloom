@@ -94,3 +94,15 @@ test('starting an interview requires a lorebook explicitly selected in Storyloom
  assert.throws(()=>requireSelectedBook({}),/choose.*lorebook/i);
  assert.equal(requireSelectedBook({book:'My Novel'}),'My Novel');
 });
+
+test('the final step can be split into a plan request and an outline request', async () => {
+  const {finalizeInstruction, requiredTitles} = await import('../interview.mjs');
+  const plan = finalizeInstruction('simple', {}, undefined, 'plan');
+  assert.doesNotMatch(plan, /"Novel Outline"/);
+  assert.match(plan, /written in the next step/);
+  const outline = finalizeInstruction('simple', {}, undefined, 'outline');
+  assert.match(outline, /Return the following 1 complete entry/);
+  assert.match(outline, /"Novel Outline"/);
+  assert.deepEqual(requiredTitles(undefined, 'outline'), ['Novel Outline']);
+  assert.ok(!requiredTitles(undefined, 'plan').includes('Novel Outline'));
+});

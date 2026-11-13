@@ -128,3 +128,7 @@
 #na-panel .storyloom-links { margin:0; padding:0; list-style:none; font-size:.72rem; color:#665650; }
 #na-panel .storyloom-links li { display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; padding:.3rem 0; border-top:1px solid var(--sl-line); }
 #na-panel .storyloom-links button { border:1px solid #dfd1c3; border-radius:7px; padding:.2rem .45rem; background:#fffaf5; color:#604b43; font-size:.68rem; }
+#na-panel .storyloom-live { flex:none; margin-top:.4rem; border:1px solid var(--sl-line); border-radius:10px; background:#fffdf9; overflow:hidden; }
+#na-panel .storyloom-live-head { padding:.35rem .6rem; font-size:.66rem; font-weight:750; letter-spacing:.06em; color:#a16b56; border-bottom:1px solid var(--sl-line); }
+#na-panel .storyloom-live-body { max-height:7.5em; overflow:auto; padding:.4rem .6rem; font:12px/1.5 Georgia,serif; color:var(--sl-ink); white-space:pre-wrap; overflow-wrap:anywhere; }
+#na-panel .storyloom-live-body.is-thinking { color:#9a8d86; font-style:italic; }

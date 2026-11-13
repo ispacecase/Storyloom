@@ -73,3 +73,30 @@ test('empty replies raise a specific error instead of returning nothing', async 
   assert.throws(() => replyText({content: '  '}), e => e.emptyReply && /empty reply/.test(e.message));
   assert.throws(() => replyText({content: '', reasoning: 'thinking about it a lot'}), e => e.emptyReply && /spent its whole reply thinking \(5 words/.test(e.message));
 });
+
+test('streaming reports progress and returns the full answer', async () => {
+  const {streamOrWait} = await import('../generation.mjs');
+  const seen = [];
+  const run = async stream => stream ? async function* () {
+    yield {text: '', state: {reasoning: 'hmm'}};
+    yield {text: 'Hel', state: {reasoning: 'hmm'}};
+    yield {text: 'Hello', state: {reasoning: 'hmm'}};
+  } : {content: 'unused'};
+  assert.equal(await streamOrWait(run, p => seen.push(p.text || p.reasoning)), 'Hello');
+  assert.deepEqual(seen, ['hmm', 'Hel', 'Hello']);
+});
+
+test('streaming falls back to a normal request when it cannot start', async () => {
+  const {streamOrWait} = await import('../generation.mjs');
+  const run = async stream => { if (stream) throw Error('no streaming here'); return {content: 'whole reply'}; };
+  assert.equal(await streamOrWait(run, () => {}), 'whole reply');
+  assert.equal(await streamOrWait(async () => ({content: 'plain'}), null), 'plain');
+});
+
+test('a stream that ends with only thinking is an empty reply, not retried as non-stream', async () => {
+  const {streamOrWait} = await import('../generation.mjs');
+  let calls = 0;
+  const run = async stream => { calls++; return async function* () { yield {text: '', state: {reasoning: 'thinking only'}}; }; };
+  await assert.rejects(streamOrWait(run, () => {}), e => e.emptyReply && /thinking/.test(e.message));
+  assert.equal(calls, 1);
+});
