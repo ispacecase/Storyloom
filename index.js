@@ -464,11 +464,11 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
       console.warn('Storyloom: could not read the model reply ('+error.message+'). Start:',String(raw).slice(0,500),'… End:',String(raw).slice(-500));
       const cutOff=/Unterminated|Unexpected end of JSON|cut off|Expected .* after/i.test(String(error.message));
-      status(cutOff?`The model’s reply was cut off before it finished (${String(raw).length.toLocaleString()} characters — it ran out of response budget); asking it to try again…`:`The model’s reply couldn’t be read (${String(error.message).slice(0,80)}); asking it to try again…`);
+      status(cutOff?`The model’s reply stopped partway through (${String(raw).length.toLocaleString()} characters${String(raw).length>tokens*2.5?', about the response budget':''}); asking it to try again…`:`The model’s reply couldn’t be read (${String(error.message).slice(0,80)}); asking it to try again…`);
       const retrySystem=system+'\nYour last response could not be read. Use the plain-text entry format exactly: your reply, then each entry as === ENTRY: title / KEYS: … / content / === END. Never JSON.';
       const retried=await ask(prompt,retrySystem);
       try {result=parseAssistant(retried,{allowProse});}
-      catch(second) {throw Error(/Unterminated|Unexpected end of JSON|cut off/i.test(String(second?.message))?'The model’s reply was cut off twice — it is longer than the response budget allows. Raise “Response budget” in Settings (up to 16000) and try again. Nothing was saved.':'The model did not return a usable response after retrying. Nothing was saved; please try again.');}
+      catch(second) {throw Error(/Unterminated|Unexpected end of JSON|cut off/i.test(String(second?.message))?(String(retried).length>tokens*2.5?'The model’s reply was cut off twice at about the response budget. Raise “Response budget” in Settings (up to 16000) and try again. Nothing was saved.':'The model’s reply stopped partway through twice. Nothing was saved; try again (the raw replies are in the browser console).'):'The model did not return a usable response after retrying. Nothing was saved; please try again.');}
     }
     if(interview?.collaborative && !isCollaborativeReply(result.reply)) {
       if(context().chatId!==chatId || data()!==d)throw Error('Chat changed; nothing saved.');

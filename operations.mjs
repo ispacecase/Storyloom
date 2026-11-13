@@ -34,26 +34,27 @@ the complete entry content, on as many lines as it needs
 === END
 Write no blocks when no entry should change. Write each block's content as normal text; nothing needs escaping. Put nothing after the last === END.`;
 const BLOCK_START = /^[\s*_#>]*=+\s*ENTRY\s*:\s*(.*?)[\s*_=]*$/i;
-const BLOCK_END = /^[\s*_#>]*=+\s*END[\s*_=]*$/i;
+const BLOCK_END = /^[\s*_#>]*=+\s*END\b[^\n]*$/i;
 /** Entry blocks → {reply, updates}; null when the text has no blocks. Throws when the last block is cut off. */
 export function parseBlocks(text) {
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
   if (!lines.some(l => BLOCK_START.test(l))) return null;
   const reply = [], updates = [];
   let current = null;
+  const close = () => {
+    const content = current.lines.join('\n').replace(/^\s*\n|\n\s*$/g, '').replace(/^```[a-z]*\n?|\n?```$/g, '').trim();
+    if (content) updates.push({title: current.title, content, keys: current.keys ?? [current.title]});
+    current = null;
+  };
   for (const line of lines) {
     const start = line.match(BLOCK_START);
     if (start) {
-      if (current) throw Error(`The entry “${current.title}” has no === END line; the reply was cut off or malformed.`);
+      // A new block closes an unclosed previous one: models often skip === END between entries.
+      if (current) close();
       current = {title: start[1].replace(/[*_]+$/,'').trim(), lines: [], keys: null};
       continue;
     }
-    if (current && BLOCK_END.test(line)) {
-      const content = current.lines.join('\n').replace(/^\s*\n|\n\s*$/g, '').replace(/^```[a-z]*\n?|\n?```$/g, '').trim();
-      updates.push({title: current.title, content, keys: current.keys ?? [current.title]});
-      current = null;
-      continue;
-    }
+    if (current && BLOCK_END.test(line)) {close(); continue;}
     if (current) {
       const keys = current.lines.length === 0 && current.keys === null && line.match(/^\s*\**KEYS?\**\s*:\s*(.*)$/i);
       if (keys) current.keys = keys[1].split(',').map(k => k.replace(/^[\s"'`*]+|[\s"'`*]+$/g, '')).filter(Boolean);
@@ -62,7 +63,12 @@ export function parseBlocks(text) {
     }
     reply.push(line);
   }
-  if (current) throw Error(`Unterminated entry block “${current.title}”: the reply was cut off before === END.`);
+  if (current) {
+    // The last block may simply lack === END. Only a block that stops mid-sentence was really cut off.
+    const tail = current.lines.join('\n').trim();
+    if (!tail || !/[.!?)"'”’\]*_]$/.test(tail)) throw Error(`Unterminated entry block “${current.title}”: the reply stopped mid-sentence.`);
+    close();
+  }
   const replyText = reply.join('\n').replace(/^\s*\**REPLY\**\s*:\s*/i, '').trim();
   return {reply: replyText || 'Done.', updates};
 }

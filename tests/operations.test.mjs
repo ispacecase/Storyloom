@@ -87,10 +87,17 @@ test('plain-text entry blocks are read without any JSON', async () => {
 
 test('a block without === END is reported as cut off', async () => {
   const {parseAssistant} = await import('../operations.mjs');
-  assert.throws(() => parseAssistant('Reply\n=== ENTRY: Novel Outline\nKEYS: x\nChapter 1'), /cut off/);
+  assert.throws(() => parseAssistant('Reply\n=== ENTRY: Novel Outline\nKEYS: x\nChapter 1 — The arrival of'), /stopped mid-sentence/);
 });
 
 test('old JSON replies still work', async () => {
   const {parseAssistant} = await import('../operations.mjs');
   assert.equal(parseAssistant('{"reply":"ok","updates":[{"title":"A","content":"B","keys":["k"]}]}').updates[0].title, 'A');
+});
+
+test('common END variations and missing ENDs are accepted', async () => {
+  const {parseAssistant} = await import('../operations.mjs');
+  const r = parseAssistant('Hi\n=== ENTRY: A\nKEYS: a\nFirst entry.\n=== ENTRY: B\nKEYS: b\nSecond entry.\n=== END ENTRY ===\n=== ENTRY: C\nKEYS: c\nThird entry, no end marker.');
+  assert.deepEqual(r.updates.map(u => [u.title, u.content]), [['A', 'First entry.'], ['B', 'Second entry.'], ['C', 'Third entry, no end marker.']]);
+  assert.equal(parseAssistant('x\n=== ENTRY: D\nKEYS: d\nText\n=== END: D').updates[0].content, 'Text');
 });
