@@ -313,13 +313,18 @@ function renderSuggestions() {
     const name=document.createElement('strong'); name.textContent=sug.title;
     const kind=document.createElement('span'); kind.className='storyloom-sugg-kind'; kind.textContent=sug.kind==='change'?'change to existing entry':'new entry';
     head.append(name,kind);
-    const why=document.createElement('details'); why.innerHTML='<summary>Why</summary>'; const wp=document.createElement('p'); wp.textContent=sug.reason||'(no reason given)'; why.append(wp);
-    const what=document.createElement('details'); what.innerHTML='<summary>What it would save</summary>'; const pre=document.createElement('pre'); pre.textContent=`KEYS: ${(sug.keys||[]).join(', ')}\n\n${sug.content}`; what.append(pre);
+    // Shown directly, not behind a click: the reason and the exact text are what the writer decides on.
+    const whyLabel=document.createElement('div'); whyLabel.className='storyloom-sugg-label'; whyLabel.textContent='Why';
+    const why=document.createElement('p'); why.className='storyloom-sugg-why'; why.textContent=sug.reason||'(no reason given)';
+    const whatLabel=document.createElement('div'); whatLabel.className='storyloom-sugg-label'; whatLabel.textContent=`What it would save (${(String(sug.content).match(/\S+/g)||[]).length} words)`;
+    const what=document.createElement('pre'); what.textContent=`KEYS: ${(sug.keys||[]).join(', ')}\n\n${sug.content}`;
+    const err=document.createElement('small'); err.className='storyloom-action-error'; err.hidden=true;
     const row=document.createElement('div'); row.className='storyloom-row';
-    const ok=document.createElement('button'); ok.type='button'; ok.textContent='Approve'; ok.title='Save this to the lorebook. You can undo it afterwards in Settings → More options.'; ok.onclick=()=>{lastAction='Approve';applySuggestion(sug.id).catch(fail);};
+    const ok=document.createElement('button'); ok.type='button'; ok.textContent='Approve'; ok.title='Save this to the lorebook. You can undo it afterwards in Settings → More options.';
+    ok.onclick=async()=>{lastAction='Approve';ok.disabled=true;ok.textContent='Saving…';err.hidden=true;try{await applySuggestion(sug.id);}catch(e){ok.disabled=false;ok.textContent='Approve';err.textContent=`Not saved: ${e.message}`;err.hidden=false;fail(e);}};
     const no=document.createElement('button'); no.type='button'; no.textContent='Skip'; no.title='Throw this suggestion away. Nothing is saved.'; no.onclick=async()=>{lastAction='Skip';try{d.suggestions=d.suggestions.filter(x=>x.id!==sug.id);await persist();renderSuggestions();status(`Skipped “${sug.title}”.`);}catch(e){fail(e);}};
     row.append(ok,no);
-    li.append(head,why,what,row); ul.append(li);
+    li.append(head,whyLabel,why,whatLabel,what,row,err); ul.append(li);
   }
 }
 async function applySuggestion(id) {

@@ -173,3 +173,7 @@
 #na-panel .storyloom-finish p { margin:.2rem 0; }
 #na-panel #na-version { display:block; margin-top:.15rem; font-size:.58rem; font-weight:700; letter-spacing:.08em; color:var(--sl-muted); }
 #na-panel .storyloom-update { margin-left:.4rem; border:1px solid #b5775c; border-radius:999px; padding:.2rem .6rem; background:#b5775c; color:#fff; font-size:.66rem; font-weight:700; }
+#na-panel .storyloom-sugg-label { margin-top:.4rem; font-size:.66rem; font-weight:750; letter-spacing:.06em; color:#a16b56; text-transform:uppercase; }
+#na-panel .storyloom-sugg-why { margin:.2rem 0 0; max-height:6.5em; overflow:auto; color:#5a463e; line-height:1.45; white-space:pre-wrap; }
+#na-panel .storyloom-suggestions ul { max-height:none; }
+#na-panel .storyloom-suggestions pre { max-height:9rem; margin:.25rem 0 .35rem; }
