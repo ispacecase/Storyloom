@@ -1,4 +1,5 @@
-import {NOVEL, titleField, voiceEntry, unitCountField} from './templates.mjs';
+import {NOVEL, titleField, voiceEntry, unitCountField, requiredOf} from './templates.mjs';
+import {P} from './prompt-texts.mjs';
 export const QUESTIONS = Object.freeze(NOVEL.questions.map(q=>Object.freeze({...q})));
 const questionsOf=interview=>interview?.questions?.length ? interview.questions : QUESTIONS;
 export function startInterview(mode,template=NOVEL) {
@@ -38,18 +39,29 @@ export function requiredTitles(t=NOVEL,part='all') {
 export function finalizeInstruction(mode,answers={},t=NOVEL,part='all') {
   const unit=t.unit, units=unit.toLowerCase()+'s', count=unitCountField(t), voice=voiceEntry(t);
   const source=mode==='deep'?'The writer’s answers and the ideas they agreed to in the conversation':'The writer’s answers';
-  const fill=`${source} are fixed facts; never contradict them. They are a starting point, not the whole project: build out everything around them so the plan feels real and complete — invent supporting characters, history, places, events and relationships the story needs, and develop each thing the writer mentioned beyond what they said. Fill in every skipped or undecided detail, including the ${titleField(t).toLowerCase()}, with your own coherent choices. Mark details you invented as AI-suggested so the writer can revise them. Do not leave placeholders such as untitled, undecided or to be chosen.${count?` If the writer did not specify how many ${units}, use six as an AI-suggested starting point, which they can change.`:''}`;
+  const fill=`${source} are fixed facts; never contradict them. ${P('fill')}${count?` If the writer did not specify how many ${units}, use six as an AI-suggested starting point, which they can change.`:''}`;
   const titles=requiredTitles(t,part);
-  const entryRules=t.entries.map(e=>`${e.title} must contain nonempty lines ${lineList(e.fields)}.`).join(' ')+' Every entry may also have extra capitalised headings for anything specific the writer wants recorded there.';
+  const headingRule=(part,isSummary=false)=>{const req=requiredOf(part,isSummary), opt=part.fields.filter(f=>!req.includes(f));return `${req.length?`must contain nonempty lines ${lineList(req)}`:'has no required headings'}${opt.length?`; suggested headings: ${lineList(opt)} — use the ones that fit this story, leave out any that don’t apply, and add your own`:''}`;};
+  const entryRules=t.entries.map(e=>`${e.title} ${headingRule(e)}.`).join(' ')+' Every entry may also have extra capitalised headings for anything specific the writer wants recorded there.';
   const keys='Keys decide when an entry is shown in the story chat, so give every entry keys that are the specific names it covers — people, places, factions, objects — never the entry’s own title or generic words.';
-  const outlineRules=`${t.outline.title} must have one heading for each ${unit.toLowerCase()} in the form ${unit} 1 — Title, followed by nonempty lines ${lineList(t.outline.lines)}. Explain what actually happens, how characters and relationships change, and what results or remains unresolved. Write each of these lines as three to five sentences naming concrete scenes, choices and turning points — what someone would actually see happen — not summaries. The outline is the backbone of the project, so give it at least as much substance as the character material.${count?` If ${count.entry} specifies a numeric ${count.field.toLowerCase()} count, create exactly that many numbered ${units}.`:''} The outline must be a saved entry, not merely ${unit.toLowerCase()} titles.`;
-  const planRules=`${t.summary.title} must contain nonempty lines ${lineList(t.summary.fields)} and keep its consistency instruction. ${entryRules} ${t.cast} is the cast list: every named character the story needs (at least three), one person per line in this format: **Name | Age: value | Pronouns: value | Relationships: value | Wants: value. Mark the focus character with **. Full character profiles are written in a later step, so keep ${t.cast} to the cast list. These are characters in a story, not chatbot personas: never include chatbot greetings, roleplay directions or {{user}}/{{char}} placeholders. Include Current Writing Directive as an update, preserving its existing chapter, scene, pacing and prose instructions.${voice?` Its POV, Tense and Tone values must exactly match ${voice.title}. If the writer did not choose POV, tense or tone, retain the current directive defaults.`:''}`;
+  const outlineRules=`${t.outline.title} must have one heading for each ${unit.toLowerCase()} in the form ${unit} 1 — Title, followed by nonempty lines ${lineList(t.outline.lines)}. ${P('outlineStyle')}${count?` If ${count.entry} specifies a numeric ${count.field.toLowerCase()} count, create exactly that many numbered ${units}.`:''} The outline must be a saved entry, not merely ${unit.toLowerCase()} titles.`;
+  const planRules=`${t.summary.title} ${headingRule(t.summary,true)}, and keeps its consistency instruction. ${entryRules} ${t.cast} is the cast list: every named character the story needs (at least three), one person per line in this format: **Name | Age: value | Pronouns: value | Relationships: value | Wants: value. Mark the focus character with **. Full character profiles are written in a later step, so keep ${t.cast} to the cast list. These are characters in a story, not chatbot personas: never include chatbot greetings, roleplay directions or {{user}}/{{char}} placeholders. Include Current Writing Directive as an update, preserving its existing chapter, scene, pacing and prose instructions.${voice?` Its POV, Tense and Tone values must exactly match ${voice.title}. If the writer did not choose POV, tense or tone, retain the current directive defaults.`:''}`;
   const ask=`Return the following ${titles.length} complete ${titles.length===1?'entry':'entries'} as entry blocks, even if ${titles.length===1?'it already exists':'they already exist'}: ${titles.map(quote).join(', ')}.`;
-  const extra='If the writer asked for something specific that an entry has no heading for, add a new capitalised heading line of your own for it in that entry rather than squeezing it under another heading. These entries are a starting point, not a limit: whenever the story has something that fits none of them, invent a new entry for it — your own title, whatever this story needs — with name keys. ';
+  const extra='If the writer asked for something specific that an entry has no heading for, add a new capitalised heading line of your own for it in that entry rather than squeezing it under another heading. These entries are a starting point, not a limit: only if the story has something important that fits none of them, invent a new entry for it with your own title and name keys; otherwise do not add entries. ';
   const tail=`${extra}${keys} Reply conversationally. Answers by topic (null means skipped): ${JSON.stringify(answers)}`;
   if(part==='plan')return `The interview is complete. ${fill} ${ask} ${planRules} The ${t.outline.title} is written in the next step; do not include it now. ${tail}`;
   if(part==='outline')return `The plan is saved in the current entries (${t.summary.title}, ${t.entries.map(e=>e.title).join(', ')}, ${t.cast}). Now write the ${t.outline.title} from it, keeping every saved fact. ${ask} ${outlineRules} Return the outline entry; if writing it reveals something the story needs that no entry covers yet, add that as a new entry too. ${tail}`;
   return `The interview is complete. ${fill} ${ask} ${planRules} ${outlineRules} ${tail}`;
+}
+/**
+ * Second pass with no template in view: an editor's read of the saved story that adds what this story
+ * needs and trims what doesn't fit. Templates prime the model to fill only their own headings; this pass doesn't show them.
+ */
+export const REVIEW_PROTECTED=['Current Writing Directive','Current Chapter','Storyloom Interview Notes'];
+export function reviewInstruction(answers={},protectedTitles=REVIEW_PROTECTED) {
+  return `${P('review')}
+For every change, your reply must point to the specific part of the story that requires it; if you cannot point to one, do not make the change. Never change: ${protectedTitles.join(', ')}. Never contradict established facts or the writer's answers.
+If nothing needs changing, reply with one sentence saying so and write no entry blocks. Writer's answers by topic (null means skipped): ${JSON.stringify(answers)}`;
 }
 function fieldValue(content,label) {
   const lines=String(content).split('\n');const expected=label.toLocaleLowerCase()+':';
@@ -73,11 +85,11 @@ export function validateOutline(result,mode='simple',t=NOVEL,part='all',saved=nu
   if(missing.length)throw Error(`The model did not return required outline or planning entries: ${missing.join(', ')}. Retry outline creation.`);
   if(part!=='outline') {
   const foundation=find(t.summary.title).content;
-  for(const field of t.summary.fields){
+  for(const field of requiredOf(t.summary,true)){
     const value=fieldValue(foundation,field);
     if(!value || /^\(?\s*(?:untitled|undecided|tbd|to be chosen|not yet decided)(?:\s*[—-].*)?\)?$/i.test(value)) throw Error(`${t.summary.title} needs a completed ${field}.`);
   }
-  for(const e of t.entries)labeled(find(e.title).content,e.fields,e.title);
+  for(const e of t.entries)labeled(find(e.title).content,requiredOf(e),e.title);
   const directive=find('Current Writing Directive').content;
   labeled(directive,['Chapter','Scene','POV','Tense','Tone','Pacing'],'Current Writing Directive');
   const voice=voiceEntry(t);

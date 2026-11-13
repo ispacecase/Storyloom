@@ -116,9 +116,9 @@ export function planWrites(book, updates, summary = {title:'Novel Foundation', f
     seen.add(name);
     const found = Object.values(book.entries).filter(e => String(e.comment || '').trim().toLocaleLowerCase() === name);
     if (found.length > 1) throw new Error('Ambiguous entry title: ' + u.title);
-    if (name === summaryName && !validFoundation(u.content, summary.fields)) {
-      const content = normalizeFoundation(u.content, found[0]?.content, summary.fields);
-      if (!validFoundation(content, summary.fields)) throw Error('Storyloom could not read the proposed story foundation. Your existing lorebook is intact. Try sending your message again.');
+    if (name === summaryName && !validFoundation(u.content, summary.fields, summary.required ?? summary.fields)) {
+      const content = normalizeFoundation(u.content, found[0]?.content, summary.fields, summary.required ?? summary.fields);
+      if (!validFoundation(content, summary.fields, summary.required ?? summary.fields)) throw Error('Storyloom could not read the proposed story foundation. Your existing lorebook is intact. Try sending your message again.');
       u = {...u, content};
     }
     return { uid: found[0]?.uid ?? null, prior: found[0] ? structuredClone(found[0]) : null, update: u };

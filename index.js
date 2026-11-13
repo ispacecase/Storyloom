@@ -15,12 +15,13 @@ import { repairOutline } from './outline-repair.mjs';
 import { normalizePeopleFocus } from './focus.mjs';
 import { characterImportRequest, requiredCharacterUpdate, selectCharacterSource } from './reuse.mjs';
 import { planningSystem } from './prompts.mjs';
+import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
 import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
-import { castNames, characterProfilesInstruction, validateCharacters } from './characters.mjs';
+import { castNames, characterProfilesInstruction, validateCharacters, characterTitle } from './characters.mjs';
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
-import { NOVEL, BUILT_IN, templateToText, parseTemplate } from './templates.mjs';
-import { requiredTitles } from './interview.mjs';
+import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
+import { requiredTitles, reviewInstruction, REVIEW_PROTECTED } from './interview.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
 
 const KEY = 'novelArchitect';
@@ -180,11 +181,15 @@ const TIPS={
   'na-watch':'Read new main-chat messages and add story developments to the lorebook.',
   'na-tokens':'Longest reply Storyloom asks the AI for.',
   'na-profile':'Which AI Storyloom uses.',
+  'na-prompt-key':'Pick which part of Storyloom’s instructions to the AI you want to see or change.',
+  'na-prompt-save':'Use your wording for this part from the next request on.',
+  'na-prompt-reset':'Go back to Storyloom’s original wording for this part.',
   'na-template':'What kind of project this is. It decides the questions and the lorebook entries. Edit or add templates in Settings → Templates.',
   'na-template-edit':'Pick a template to view or edit.',
   'na-template-save':'Save your changes to this template (your own templates only).',
   'na-template-copy':'Save the text below as a new template, using the Name line as its name.',
   'na-template-delete':'Delete this template (your own templates only).',
+  'na-review':'Has the AI re-read the whole plan without the template in front of it. It only changes something if the story clearly needs it — a missing entry or heading, or something that doesn’t belong — and says why. Usually it changes nothing.',
   'na-chapter':'Which chapter the story is on. The main chat only gets this chapter’s plan (in the always-on “Current Chapter” entry), so it doesn’t run ahead.',
 };
 function showMessages() {
@@ -222,18 +227,32 @@ function options() {
   document.getElementById('na-tokens').value=String(d.responseTokens || 12000);
   renderDirectConnection(d);
   renderTemplates(d);
+  renderPromptEditor();
   renderLinks();
+  renderSuggestions();
   showMessages();
   renderInterview();
   renderPanelView();
   const list=document.getElementById('na-history'); list.replaceChildren();
   document.getElementById('na-history-empty').hidden=!!d.history?.length;
   document.getElementById('na-profiles').hidden=d.interview?.phase!=='done';
+  document.getElementById('na-review').hidden=d.interview?.phase!=='done';
   renderChapters(d);
   loadChapters(d).catch(e=>console.warn('Storyloom chapters:',e));
   for(const item of [...(d.history||[])].reverse()){const li=document.createElement('li');li.textContent=describeChange(item);list.append(li);}
   if(d.pendingContinuity)status('A saved draft is waiting for a continuity update. Retry it in settings.');
   else if(d.review)status('A previously processed chat message changed. Review your lore, then resume tracking in settings.');
+}
+function storedPrompts() {
+  const c=context(); c.extensionSettings.storyloom ??= {}; c.extensionSettings.storyloom.prompts ??= {};
+  return c.extensionSettings.storyloom.prompts;
+}
+function renderPromptEditor() {
+  const select=document.getElementById('na-prompt-key'); if(!select)return;
+  if(!select.options.length)for(const [key,p] of Object.entries(PROMPT_DEFAULTS))select.add(new Option(p.label,key));
+  const key=select.value||Object.keys(PROMPT_DEFAULTS)[0], saved=storedPrompts()[key];
+  document.getElementById('na-prompt-text').value=saved||PROMPT_DEFAULTS[key].text;
+  document.getElementById('na-prompt-locked').textContent=(saved?'Edited. ':'Default. ')+PROMPT_DEFAULTS[key].locked;
 }
 function renderTemplates(d) {
   const templates=allTemplates(), names=templates.map(t=>t.name);
@@ -268,6 +287,53 @@ function saveTemplate(asNew) {
   document.getElementById('na-template-edit').value=parsed.name;
   renderTemplates(data());
   status(`Template “${parsed.name}” saved. Choose it on the start screen for your next novel.`);
+}
+/** Extras the model proposed: shown for the author to approve or skip; nothing is saved until approved. */
+function renderSuggestions() {
+  const box=document.getElementById('na-suggestions'); if(!box)return;
+  let d; try{d=data();}catch{box.hidden=true;return;}
+  const list=d.suggestions||[];
+  box.hidden=!list.length;
+  box.querySelector('.storyloom-sugg-count').textContent=String(list.length);
+  const ul=box.querySelector('ul'); ul.replaceChildren();
+  for(const sug of list) {
+    const li=document.createElement('li');
+    const head=document.createElement('div'); head.className='storyloom-sugg-head';
+    const name=document.createElement('strong'); name.textContent=sug.title;
+    const kind=document.createElement('span'); kind.className='storyloom-sugg-kind'; kind.textContent=sug.kind==='change'?'change to existing entry':'new entry';
+    head.append(name,kind);
+    const why=document.createElement('details'); why.innerHTML='<summary>Why</summary>'; const wp=document.createElement('p'); wp.textContent=sug.reason||'(no reason given)'; why.append(wp);
+    const what=document.createElement('details'); what.innerHTML='<summary>What it would save</summary>'; const pre=document.createElement('pre'); pre.textContent=`KEYS: ${(sug.keys||[]).join(', ')}\n\n${sug.content}`; what.append(pre);
+    const row=document.createElement('div'); row.className='storyloom-row';
+    const ok=document.createElement('button'); ok.type='button'; ok.textContent='Approve'; ok.title='Save this to the lorebook. You can undo it afterwards in Settings → More options.'; ok.onclick=()=>{lastAction='Approve';applySuggestion(sug.id).catch(fail);};
+    const no=document.createElement('button'); no.type='button'; no.textContent='Skip'; no.title='Throw this suggestion away. Nothing is saved.'; no.onclick=async()=>{lastAction='Skip';try{d.suggestions=d.suggestions.filter(x=>x.id!==sug.id);await persist();renderSuggestions();status(`Skipped “${sug.title}”.`);}catch(e){fail(e);}};
+    row.append(ok,no);
+    li.append(head,why,what,row); ul.append(li);
+  }
+}
+async function applySuggestion(id) {
+  requireIdle();
+  const c=context(), d=data(), sug=(d.suggestions||[]).find(x=>x.id===id); if(!sug)return;
+  if(!d.book || c.chatMetadata.world_info!==d.book)throw Error('Link this novel’s lorebook to the current chat first.');
+  syncing=true;
+  try {
+    const before=await freshBook(d.book), fresh=structuredClone(before);
+    const t=tpl(d);
+    const [w]=planWrites(fresh,[{title:sug.title,content:sug.content,keys:sug.keys}],{...t.summary,required:requiredOf(t.summary,true)});
+    const entry=w.uid===null?createWorldInfoEntry(d.book,fresh):fresh.entries[w.uid];
+    if(!entry)throw Error('Could not create the entry.');
+    entry.comment=w.update.title.trim(); entry.content=w.update.content; entry.key=w.update.keys;
+    if(JSON.stringify(await freshBook(d.book))!==JSON.stringify(before))throw Error('The lorebook changed; try again.');
+    await c.saveWorldInfo(d.book,fresh,true);
+    if(JSON.stringify(await freshBook(d.book))!==JSON.stringify(fresh))throw Error('The save could not be verified.');
+    d.history ??= []; d.history.push({id:crypto.randomUUID(),book:d.book,changes:buildChange(before,fresh),source:'approved suggestion',at:new Date().toISOString()}); if(d.history.length>30)d.history.shift();
+    d.suggestions=d.suggestions.filter(x=>x.id!==id);
+    await persist();
+  } finally {syncing=false;queueSync();scheduleDrain();}
+  renderSuggestions(); options();
+  status(`Saved “${sug.title}”.`);
+  if(sug.title.toLocaleLowerCase()===tpl(d).cast.toLocaleLowerCase())await writeProfiles('',{onlyMissing:true});
+  else try{await organizeBook();}catch(e){console.warn('Storyloom layout:',e);}
 }
 function renderChapters(d) {
   const label=document.getElementById('na-chapter-label'), select=document.getElementById('na-chapter');
@@ -480,7 +546,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     }
     if(interview?.requireOutline) result=await repairOutline(result,value=>{
       const t=tpl(d), foundation=value.updates.find(entry=>entry.title.trim().toLowerCase()===t.summary.title.toLowerCase());
-      if(foundation)foundation.content=normalizeFoundation(foundation.content,targetEntries.find(entry=>entry.title===t.summary.title)?.content,t.summary.fields);
+      if(foundation)foundation.content=normalizeFoundation(foundation.content,targetEntries.find(entry=>entry.title===t.summary.title)?.content,t.summary.fields,requiredOf(t.summary,true));
       validateOutline(normalizePeopleFocus(value,d.interview?.answers,t.cast),d.interview?.mode,t,interview.part||'all',Object.fromEntries(targetEntries.map(e=>[e.title,e.content])));
     },async (previous,issue)=>{
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
@@ -497,6 +563,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if(controller.signal.aborted)throw Error('Stopped. Your message is still in the box.');
     document.getElementById('na-cancel-model').hidden=true;
     if(interview?.requiredCharacterTitle) result.updates=[requiredCharacterUpdate(result,interview.requiredCharacterTitle)];
+    if(interview?.dropTitles) {const drop=new Set(interview.dropTitles.map(x=>x.toLocaleLowerCase()));result.updates=(result.updates||[]).filter(u=>!drop.has(String(u.title).trim().toLocaleLowerCase()));}
     if(interview?.collaborative && d.interview?.phase==='asking') {
       const prior=[...d.messages].reverse().find(m=>m.role==='assistant')?.content || '';
       // Writer-stated facts that fit no planned entry may become their own entry; proposals stay in the notes.
@@ -508,18 +575,37 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if (guard && !guard()) throw Error('The source message changed; nothing was saved.');
     const fresh = await freshBook(bookName);
     if (JSON.stringify(fresh) !== JSON.stringify(before)) throw new Error('Lorebook changed while generating; nothing saved. Please retry.');
+    // Anything beyond the planned entries waits for the author's approval instead of being saved.
+    let held=[];
+    if(interview?.holdForAuthor) {
+      const planned=new Set([...requiredTitles(tpl(d)),'Storyloom Interview Notes'].map(x=>x.toLocaleLowerCase()));
+      const exists=title=>Object.values(fresh.entries||{}).some(e=>String(e.comment||'').trim().toLocaleLowerCase()===title);
+      const isExtra=u=>{const t=String(u.title).trim().toLocaleLowerCase();return interview.holdForAuthor==='all' || (!planned.has(t) && !exists(t) && !/^character\s*[—–-]/i.test(t));};
+      held=(result.updates||[]).filter(u=>u.storyloomKind!=='interview_notes' && isExtra(u));
+      result.updates=(result.updates||[]).filter(u=>!held.includes(u));
+      if(held.length) {
+        d.suggestions ??= [];
+        for(const u of held) {
+          const title=u.title.trim(), kind=exists(title.toLocaleLowerCase())?'change':'new';
+          d.suggestions=d.suggestions.filter(x=>x.title.toLocaleLowerCase()!==title.toLocaleLowerCase());
+          d.suggestions.push({id:crypto.randomUUID(),title,content:u.content,keys:u.keys||[title],kind,source:sourceKind||'planning',reason:String(result.reply||'').slice(0,2000),at:new Date().toISOString()});
+        }
+        await persist();
+      }
+      result.held=held;
+    }
     let skippedFoundation=false;
     if(!fromMain && !interview?.requireOutline) {
       const foundation=result.updates.find(entry=>entry.title.trim().toLowerCase()===tpl(d).summary.title.toLowerCase());
       if(foundation) {
-        try {planWrites(fresh,[foundation],tpl(d).summary);}
+        try {planWrites(fresh,[foundation],{...tpl(d).summary,required:requiredOf(tpl(d).summary,true)});}
         catch {
           result.updates=result.updates.filter(entry=>entry!==foundation);
           skippedFoundation=true;
         }
       }
     }
-    const writes = planWrites(fresh, result.updates, tpl(d).summary);
+    const writes = planWrites(fresh, result.updates, {...tpl(d).summary,required:requiredOf(tpl(d).summary,true)});
     ensureCompleteUpdates(writes.filter(w=>w.update.storyloomKind!=='interview_notes'),current);
     for (const w of writes) {
       const entry = w.uid === null ? createWorldInfoEntry(bookName, fresh) : fresh.entries[w.uid];
@@ -546,7 +632,9 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
       if(!document.getElementById('na-panel').hidden) options();
     }
     if (!fromMain) { if(!interview?.silentUser)d.messages.push({role:'user',content:input}); d.messages.push({role:'assistant',content:result.reply}); await persist(); showMessages(); }
-    status(result.ignoredUpdates?'Reply received. The proposed lorebook updates could not be read.':skippedFoundation?'Reply received. Storyloom kept the existing foundation because the proposed update could not be read.':writes.length ? `Saved ${writes.length} World Info ${writes.length === 1 ? 'entry' : 'entries'}.` : 'No entry changes.');
+    if(held.length)renderSuggestions();
+    const heldNote=held.length?` ${held.length} suggestion${held.length===1?'':'s'} waiting for your OK under “Suggestions”.`:'';
+    status((result.ignoredUpdates?'Reply received. The proposed lorebook updates could not be read.':skippedFoundation?'Reply received. Storyloom kept the existing foundation because the proposed update could not be read.':writes.length ? `Saved ${writes.length} World Info ${writes.length === 1 ? 'entry' : 'entries'}.` : 'No entry changes.')+heldNote);
     return result;
   } finally { renderModelWork(null); busy = false; queueSync(); if(!draining)scheduleDrain(); }
 }
@@ -807,24 +895,26 @@ async function finishInterview() {
     // Two requests so each reply fits the response budget (reasoning models spend part of it thinking).
     if(!interview.planSaved) {
       status(`Step 1 of 2: filling in ${t.summary.title} and the planning entries…`);
-      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan'),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',silentUser:true,loreBudget:60000});
+      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan'),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',holdForAuthor:'extras',silentUser:true,loreBudget:60000});
       if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
       d.interview={...d.interview,planSaved:true}; await persist();
     }
     status(`Step 2 of 2: writing the ${t.outline.title}…`);
-    const result=await interact(finalizeInstruction(interview.mode,interview.answers,t,'outline'),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,part:'outline',silentUser:true,loreBudget:60000});
+    const result=await interact(finalizeInstruction(interview.mode,interview.answers,t,'outline'),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,holdForAuthor:'extras',part:'outline',silentUser:true,loreBudget:60000});
     if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
     const outline=result.updates.find(x=>x.title.trim().toLocaleLowerCase()===t.outline.title.toLocaleLowerCase());
     d.messages.push({role:'assistant',content:'Here is your outline:\n\n'+outline.content});
     d.interview={...d.interview,phase:'done'};
     d.outlineChapters=chapterList(outline.content,t.unit).map(({number,title})=>({number,title}));
     await persist();
+    let reviewNote='';
+    try {reviewNote=(await reviewStory({quiet:true})).note;} catch(e) {console.warn('Storyloom review:',e); reviewNote='The fresh-eyes review could not run; use “Check what’s missing” later.';}
     let bookMessage='';
     try {bookMessage=await nameFinishedLorebook(d);}
     catch {bookMessage=' The outline is saved in the draft lorebook. Storyloom could not switch it to a titled book.';}
     try {await organizeBook(1);} catch(e) {console.warn('Storyloom layout:',e);}
     options();
-    status('Outline saved.'+bookMessage+' Writing full character profiles next…');
+    status('Outline saved.'+bookMessage+' '+reviewNote.slice(0,300)+' Writing full character profiles next…');
     await writeProfiles(bookMessage);
   }catch(e){fail(e);try{renderInterview()}catch{}}
 }
@@ -852,22 +942,34 @@ async function organizeBook(chapter=null) {
     await persist();
   } finally {syncing=false;queueSync();scheduleDrain();}
 }
+/** Second look with no template in view: add only what this story clearly needs, trim what doesn't fit. */
+async function reviewStory({quiet=false}={}) {
+  const d=data(), t=tpl(d);
+  status('Checking the plan with fresh eyes for anything missing or out of place…');
+  const result=await interact(reviewInstruction(d.interview?.answers||{},[...REVIEW_PROTECTED,t.outline.title]),false,null,null,'story review',false,{silentUser:true,loreBudget:60000,holdForAuthor:'all',dropTitles:[...REVIEW_PROTECTED,t.outline.title],guidance:'You are reviewing, not filling in a form. Changing nothing is a good outcome.'});
+  const changed=(result.held||[]).map(u=>u.title);
+  const note=changed.length?`Review suggests: ${changed.join(', ')} — approve or skip under “Suggestions”.`:`Review: nothing needed changing. ${String(result.reply||'').slice(0,300)}`;
+  if(!quiet)status(note.slice(0,600));
+  return {changed,note};
+}
 /** Second planning pass: one full lorebook entry per cast member. */
-async function writeProfiles(prefix='') {
+async function writeProfiles(prefix='',{onlyMissing=false}={}) {
   try {
     requireIdle();
     const d=data();
     if(!d.book)throw Error('Choose this novel’s lorebook first.');
     const book=await freshBook(d.book);
     const people=findEntry(book,tpl(d).cast);
-    const names=castNames(people?.content);
-    if(!names.length)throw Error(`There is no cast list (${tpl(d).cast} entry) to build character profiles from.`);
+    const cast=castNames(people?.content);
+    if(!cast.length)throw Error(`There is no cast list (${tpl(d).cast} entry) to build character profiles from.`);
+    const names=onlyMissing?cast.filter(n=>!findEntry(book,characterTitle(n))):cast;
+    if(!names.length){if(onlyMissing){status(`${prefix.trim()?prefix.trim()+' ':''}Every character already has a profile.`);return;}}
     // One request per person: several full profiles in one reply overflow typical response budgets.
     const done=[];
     for(const [i,name] of names.entries()) {
       try {
         status(`Writing character profile ${i+1} of ${names.length}: ${name}…`);
-        await interact(characterProfilesInstruction([name],names,tpl(d).characterSections,tpl(d).unit),false,null,null,`character profile: ${name}`,false,{silentUser:true,requireCharacters:[name],loreBudget:60000,guidance:'Write the requested character profile as a complete lorebook entry.'});
+        await interact(characterProfilesInstruction([name],cast,tpl(d).characterSections,tpl(d).unit),false,null,null,`character profile: ${name}`,false,{silentUser:true,requireCharacters:[name],loreBudget:60000,guidance:'Write the requested character profile as a complete lorebook entry.'});
         done.push(name);
       } catch(e) {
         try{options()}catch{}
@@ -912,6 +1014,7 @@ function init() {
           <p class="storyloom-hint">Uses this provider only for Storyloom. Choose a saved provider key, or enter a session key where offered. Session keys take priority and are not saved.</p>
         </div>
         <label class="storyloom-check"><input id="na-watch" type="checkbox"> Follow the main chat</label><p class="storyloom-hint">When on, Storyloom reads new messages in your main SillyTavern chat and adds anything that happens in the story (new people, events, changes) to the lorebook.</p>
+        <details class="storyloom-advanced storyloom-prompts"><summary>Prompts <span aria-hidden="true">⌄</span></summary><p class="storyloom-hint">Change how Storyloom talks to the AI. Only the wording below is yours to change; the parts that make saving work are always added and shown underneath, so an edit can’t break Storyloom. Changes apply to the next request.</p><select id="na-prompt-key"></select><textarea id="na-prompt-text" rows="10"></textarea><p id="na-prompt-locked" class="storyloom-hint"></p><div class="storyloom-row"><button id="na-prompt-save" type="button">Save prompt</button><button id="na-prompt-reset" type="button">Reset to default</button></div></details>
         <details class="storyloom-advanced storyloom-templates"><summary>Templates <span aria-hidden="true">⌄</span></summary><p class="storyloom-hint">A template decides what the wizard asks and which lorebook entries it saves — for a novel, a roleplay or a D&amp;D campaign. Pick one to see it. Built-in templates can’t be changed, but “Save as new” makes your own copy to edit. Novels keep the template they were started with.</p><select id="na-template-edit"></select><textarea id="na-template-text" rows="16" spellcheck="false"></textarea><div class="storyloom-row"><button id="na-template-save" type="button">Save</button><button id="na-template-copy" type="button">Save as new</button><button id="na-template-delete" type="button">Delete</button></div><p class="storyloom-hint">Format: keep the labels before the colons. Questions and Entries are lists starting with “-”. Each entry says when the story chat sees it: always, by name (when its keywords come up) or off (planning only).</p></details>
         <details class="storyloom-advanced"><summary>More options <span aria-hidden="true">⌄</span></summary><p class="storyloom-hint">Repair and recovery tools. You normally don’t need these.</p>
           <button id="na-attach" type="button">Link selected lorebook to this chat</button><p class="storyloom-hint">Makes this chat use the novel’s lorebook, so the main chat’s AI sees your characters and world. Storyloom does this for you when you start; use it if the link was removed.</p>
@@ -935,9 +1038,11 @@ function init() {
         <button id="na-view-book" type="button" hidden>View entries</button>
         <button id="na-use-title" type="button" hidden>Use novel title for lorebook</button>
         <label id="na-chapter-label" class="storyloom-chapter" hidden>Now on <select id="na-chapter"></select></label>
+        <button id="na-review" type="button" hidden>Check what’s missing</button>
         <button id="na-profiles" type="button" hidden title="Writes a full entry (history, personality, motivation, arc…) for every person in the cast list. Existing profiles are rewritten.">Write character profiles</button>
       </div>
     </div>
+    <section id="na-suggestions" class="storyloom-suggestions" hidden><strong>Suggestions waiting for you (<span class="storyloom-sugg-count">0</span>)</strong><p class="storyloom-hint">Extra entries and changes the AI thinks the story needs. Nothing here is saved until you approve it.</p><ul></ul></section>
     <details class="storyloom-reference">
       <summary>Reference &amp; characters</summary><p class="storyloom-hint">Use another lorebook — say, an earlier book in a series or a world you already built — as source material. Storyloom reads it for ideas and to copy characters from. It only ever changes it if you choose “Keep in sync” for a character.</p>
       <label for="na-reference">Reference lorebook</label><select id="na-reference"></select>
@@ -1132,7 +1237,11 @@ function init() {
     changeBook(name);await persist();options();await setupNovel();status('New lorebook linked to this chat.');
   }catch(e){fail(e)}};
   panel.querySelector('#na-profiles').onclick=()=>writeProfiles();
+  panel.querySelector('#na-review').onclick=async()=>{try{await reviewStory();options();}catch(e){fail(e);}};
   panel.querySelector('#na-template-edit').onchange=()=>showTemplateText();
+  panel.querySelector('#na-prompt-key').onchange=()=>renderPromptEditor();
+  panel.querySelector('#na-prompt-save').onclick=()=>{try{const key=panel.querySelector('#na-prompt-key').value,text=panel.querySelector('#na-prompt-text').value.trim();if(!text)throw Error('The prompt is empty. Use “Reset to default” to go back to the original.');const all=storedPrompts();if(text===PROMPT_DEFAULTS[key].text)delete all[key];else all[key]=text;setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” saved. It applies from the next request.`);}catch(e){fail(e);}};
+  panel.querySelector('#na-prompt-reset').onclick=async()=>{try{const key=panel.querySelector('#na-prompt-key').value;if(!await context().Popup.show.confirm('Reset this prompt?',`Put “${PROMPT_DEFAULTS[key].label}” back to Storyloom’s original wording?`))return;const all=storedPrompts();delete all[key];setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” is back to the default.`);}catch(e){fail(e);}};
   panel.querySelector('#na-template-save').onclick=()=>{try{saveTemplate(false);}catch(e){fail(e);}};
   panel.querySelector('#na-template-copy').onclick=()=>{try{saveTemplate(true);}catch(e){fail(e);}};
   panel.querySelector('#na-template-delete').onclick=async()=>{try{
@@ -1155,14 +1264,15 @@ function init() {
       if(!interview)throw Error('Choose Simple or Deep to begin.');
       if(interview?.phase==='outline')throw Error('Create the outline before continuing.');
       if(interview?.phase==='asking') {
-        await interact(v,false,null,null,null,false,{guidance:answerInstruction(interview),collaborative:interview.mode==='deep'});
+        await interact(v,false,null,null,null,false,{guidance:answerInstruction(interview),collaborative:interview.mode==='deep',holdForAuthor:'extras'});
         if(data()!==d)throw Error('Chat changed; return to this novel.');
         d.interview=recordAnswer(d.interview,v); await persist(); input.value='';
         if(interview.mode==='simple') await nextInterview(false);
-      } else {await interact(v,false,null,null,null,false,{collaborative:interview.mode==='deep'});input.value='';}
+      } else {await interact(v,false,null,null,null,false,{collaborative:interview.mode==='deep',holdForAuthor:'extras'});input.value='';}
     } catch(e){fail(e)}
   };
   const c=context();
+  setPromptOverrides(c.extensionSettings.storyloom?.prompts);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,name=>{if(linkRunning)return;clearTimeout(linkTimer);linkTimer=setTimeout(()=>syncLinks(typeof name==='string'?name:null),1000);});
   setTimeout(()=>{if(storedLinks().length)syncLinks();},4000);

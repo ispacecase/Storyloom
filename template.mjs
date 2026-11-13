@@ -8,8 +8,8 @@ export function initialDirective() {
   return `CURRENT WRITING DIRECTIVE\nChapter: ${x.chapter}\nScene: ${x.scene}\nPOV: ${x.pov}\nTense: ${x.tense}\nTone: ${x.tone}\nPacing: ${x.pacing}\n\n${x.consistency}\n\n${x.instructions}`;
 }
 
-export function validFoundation(content,fields=FOUNDATION_FIELDS) {
-  return fields.every(field=>new RegExp(`^${field}:`, 'm').test(content)) && content.includes(createNovel().directive.consistency);
+export function validFoundation(content,fields=FOUNDATION_FIELDS,required=fields) {
+  return required.every(field=>new RegExp(`^${field}:`, 'm').test(content)) && content.includes(createNovel().directive.consistency);
 }
 
 
@@ -37,13 +37,14 @@ function foundationSections(text,fields=FOUNDATION_FIELDS) {
   return new Map([...sections].map(([field, lines]) => [field, lines.join('\n').trim()]));
 }
 
-export function normalizeFoundation(content, previous = '', fields = FOUNDATION_FIELDS) {
+export function normalizeFoundation(content, previous = '', fields = FOUNDATION_FIELDS, required = fields) {
   const proposed = foundationSections(content, fields);
   if (![...proposed.values()].some(Boolean)) return content;
   const prior = foundationSections(previous, fields);
-  const lines = fields.map(field => {
+  // Suggested headings with nothing in them are left out; required ones always appear.
+  const lines = fields.flatMap(field => {
     const value = proposed.get(field) || prior.get(field);
-    return value ? field + ': ' + value : field + ':';
+    return value ? [field + ': ' + value] : required.includes(field) ? [field + ':'] : [];
   });
   // Extra headings the writer asked for: new ones from this update, then earlier ones it didn't repeat.
   const extras = [...new Set([...proposed.keys(), ...prior.keys()])].filter(field => !fields.includes(field));

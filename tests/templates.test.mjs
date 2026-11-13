@@ -66,3 +66,28 @@ test('layout follows the template’s show settings', () => {
   assert.equal(by('Factions').constant, false);
   assert.match(by('Current Chapter').content, /Session 2 of 2/);
 });
+
+test('only starred headings are required; the rest are suggestions the model may skip or extend', async () => {
+  const {requiredOf} = await import('../templates.mjs');
+  const {validateOutline, finalizeInstruction} = await import('../interview.mjs');
+  assert.deepEqual(requiredOf(NOVEL.summary, true), ['NOVEL TITLE']);
+  assert.ok(!NOVEL.entries.some(e => e.fields.includes('ROUGHNESS POLICY')), 'story-specific headings are not built in');
+  assert.match(templateToText(NOVEL), /Summary fields: NOVEL TITLE\*, GENRE,/);
+  assert.match(templateToText(NOVEL), /POV\*, TENSE\*, TONE\*, REGISTER/);
+  const text = finalizeInstruction('simple', {}, NOVEL, 'plan');
+  assert.match(text, /suggested headings: .*leave out any that don’t apply, and add your own/);
+  const minimal = [
+    {title: 'Novel Foundation', content: 'NOVEL TITLE: Salt'},
+    {title: 'Story Scale', content: 'CHAPTERS: 1'},
+    {title: 'Voice and Boundaries', content: 'POV: Third\nTENSE: Past\nTONE: Dry'},
+    {title: 'Place and Sensory Details', content: 'A harbour town.'},
+    {title: 'People', content: '**Mara | Age: 32 | Pronouns: she/her | Relationships: none | Wants: answers'},
+    {title: 'Novel Outline', content: 'Chapter 1 — One\nEvents: x\nCharacters and relationships: y\nConsequences and threads: z'},
+    {title: 'Current Writing Directive', content: 'Chapter: 1\nScene: 1\nPOV: Third\nTense: Past\nTone: Dry\nPacing: Slow'},
+  ];
+  assert.doesNotThrow(() => validateOutline({updates: minimal}, 'simple', NOVEL));
+  const noTitle = minimal.map(u => u.title === 'Novel Foundation' ? {...u, content: 'GENRE: x'} : u);
+  assert.throws(() => validateOutline({updates: noTitle}, 'simple', NOVEL), /NOVEL TITLE/);
+  const stars = parseTemplate(templateToText(NOVEL).replace('REGISTER', 'REGISTER*'));
+  assert.ok(requiredOf(stars.entries.find(e => e.title === 'Voice and Boundaries')).includes('REGISTER'));
+});

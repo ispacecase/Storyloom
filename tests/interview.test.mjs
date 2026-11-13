@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {startInterview,currentQuestion,advanceInterview,finalizeInstruction,answerInstruction,validateOutline} from '../interview.mjs';
 
 test('both modes begin with the idea and use an ordered set of questions',()=>{
- for(const mode of ['simple','deep']){let x=startInterview(mode); assert.match(currentQuestion(x),/premise/i);let all=[];while(x.phase==='asking'){all.push(currentQuestion(x));x=advanceInterview(x)}assert.ok(all.length>=6);const text=all.join(' ');for(const word of ['chapters','words','POV','tense','roughness','pronouns','sensory','ending'])assert.match(text,new RegExp(word,'i'));assert.equal(x.phase,'outline');}
+ for(const mode of ['simple','deep']){let x=startInterview(mode); assert.match(currentQuestion(x),/premise/i);let all=[];while(x.phase==='asking'){all.push(currentQuestion(x));x=advanceInterview(x)}assert.ok(all.length>=6);const text=all.join(' ');for(const word of ['chapters','words','POV','tense','pronouns','sensory','ending'])assert.match(text,new RegExp(word,'i'));assert.equal(x.phase,'outline');}
 });
 test('simple allows skipped answers and deep retains collaborative guidance',()=>{
  assert.match(answerInstruction(startInterview('simple')),/fill.*gaps|undecided/i);
@@ -112,4 +112,14 @@ test('every final step invites new entries for things no planned entry covers', 
   for (const part of ['all', 'plan', 'outline']) assert.match(finalizeInstruction('simple', {}, undefined, part), /invent a new entry for it/);
   assert.match(finalizeInstruction('deep', {}, undefined, 'outline'), /add that as a new entry too/);
   assert.match(answerInstruction(startInterview('deep')), /create a new entry for it containing only what the writer actually said/);
+});
+
+test('the review pass shows no template and makes "no change" the default', async () => {
+  const {reviewInstruction} = await import('../interview.mjs');
+  const text = reviewInstruction({idea: ['x']}, ['Current Writing Directive', 'Novel Outline']);
+  assert.match(text, /Your job is to judge, not to add/);
+  assert.match(text, /right answer is to change nothing/);
+  assert.match(text, /if you cannot point to one, do not make the change/);
+  assert.match(text, /Never change: Current Writing Directive, Novel Outline/);
+  assert.doesNotMatch(text, /NOVEL TITLE|GENRE|REGISTER|Story Scale/, 'no template headings are shown');
 });

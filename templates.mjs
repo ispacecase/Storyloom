@@ -7,20 +7,20 @@ export const SHOW=Object.freeze(['always','by name','off']);
 export const NOVEL=Object.freeze({
   name:'Novel',
   unit:'Chapter',
-  summary:{title:'Novel Foundation',fields:['NOVEL TITLE','GENRE','SETTING','PREMISE','PROTAGONIST','MAJOR CHARACTERS','CENTRAL CONFLICT','RELATIONSHIP ARCS','NARRATIVE STYLE','MAJOR PLOT MILESTONES','ENDING DIRECTION']},
+  summary:{title:'Novel Foundation',fields:['NOVEL TITLE','GENRE','SETTING','PREMISE','PROTAGONIST','MAJOR CHARACTERS','CENTRAL CONFLICT','RELATIONSHIP ARCS','NARRATIVE STYLE','MAJOR PLOT MILESTONES','ENDING DIRECTION'],required:['NOVEL TITLE']},
   questions:[
     {id:'idea', text:'What is the premise in two or three sentences? What pressure is driving the story, and what is wanted?'},
     {id:'scale', text:'What scale do you want: the span of the story, number of chapters, words per chapter, and target total words?'},
-    {id:'voice', text:'What voice should it have: POV and tense, register, tone, and roughness policy? Is there an age the subject must never read as?'},
+    {id:'voice', text:'What voice should it have: POV and tense, register and tone? Is there anything the writing must always or never do?'},
     {id:'people', text:'Who are the people? Give one per line: name, age, pronouns, who they are to each other, and what they want. Mark the focus character with **.'},
     {id:'place', text:'Where does it take place? Which rooms matter, and what sensory details should ground the setting?'},
     {id:'foundation', text:'What else have you decided about the title, genre, central conflict, and relationship arcs?'},
     {id:'plot', text:'What major plot milestones or ending direction do you have in mind?'},
   ],
   entries:[
-    {title:'Story Scale',show:'off',fields:['SPAN','CHAPTERS','WORDS PER CHAPTER','TARGET WORDS']},
-    {title:'Voice and Boundaries',show:'always',fields:['POV','TENSE','REGISTER','TONE','ROUGHNESS POLICY','AGE THE SUBJECT MUST NEVER READ AS']},
-    {title:'Place and Sensory Details',show:'by name',fields:['LOCATION','IMPORTANT ROOMS','SENSORY DETAILS']},
+    {title:'Story Scale',show:'off',fields:['SPAN','CHAPTERS','WORDS PER CHAPTER','TARGET WORDS'],required:[]},
+    {title:'Voice and Boundaries',show:'always',fields:['POV','TENSE','TONE','REGISTER','ALWAYS OR NEVER'],required:['POV','TENSE','TONE']},
+    {title:'Place and Sensory Details',show:'by name',fields:['LOCATION','IMPORTANT PLACES','SENSORY DETAILS'],required:[]},
   ],
   cast:'People',
   outline:{title:'Novel Outline',lines:['Events','Characters and relationships','Consequences and threads']},
@@ -30,7 +30,7 @@ export const NOVEL=Object.freeze({
 export const CAMPAIGN=Object.freeze({
   name:'Campaign (roleplay / D&D)',
   unit:'Session',
-  summary:{title:'Campaign Overview',fields:['CAMPAIGN TITLE','SYSTEM AND GENRE','SETTING','PREMISE','PLAYER CHARACTERS','MAJOR NPCS','CENTRAL THREAT','FACTIONS','THEMES','ENDGAME']},
+  summary:{title:'Campaign Overview',fields:['CAMPAIGN TITLE','SYSTEM AND GENRE','SETTING','PREMISE','PLAYER CHARACTERS','MAJOR NPCS','CENTRAL THREAT','FACTIONS','THEMES','ENDGAME'],required:['CAMPAIGN TITLE']},
   questions:[
     {id:'idea', text:'What is the hook? In two or three sentences, what pulls the characters in and what is at stake?'},
     {id:'scale', text:'How long should it run: number of sessions or arcs, and how long is a session?'},
@@ -41,10 +41,10 @@ export const CAMPAIGN=Object.freeze({
     {id:'plot', text:'What big beats or endgame do you have in mind?'},
   ],
   entries:[
-    {title:'Campaign Scale',show:'off',fields:['SPAN','SESSIONS','SESSION LENGTH']},
-    {title:'Table Rules and Voice',show:'always',fields:['SYSTEM','POV','TENSE','TONE','CONTENT LIMITS','PLAYER AGENCY']},
-    {title:'World and Locations',show:'by name',fields:['REGIONS','KEY LOCATIONS','SENSORY DETAILS']},
-    {title:'Factions',show:'by name',fields:['FACTIONS','GOALS','ALLIANCES AND RIVALRIES']},
+    {title:'Campaign Scale',show:'off',fields:['SPAN','SESSIONS','SESSION LENGTH'],required:[]},
+    {title:'Table Rules and Voice',show:'always',fields:['POV','TENSE','TONE','SYSTEM','CONTENT LIMITS','PLAYER AGENCY'],required:['POV','TENSE','TONE']},
+    {title:'World and Locations',show:'by name',fields:['REGIONS','KEY LOCATIONS','SENSORY DETAILS'],required:[]},
+    {title:'Factions',show:'by name',fields:['FACTIONS','GOALS','ALLIANCES AND RIVALRIES'],required:[]},
   ],
   cast:'Cast',
   outline:{title:'Campaign Arc',lines:['Events','Characters and relationships','Consequences and threads']},
@@ -54,19 +54,22 @@ export const CAMPAIGN=Object.freeze({
 export const BUILT_IN=Object.freeze([NOVEL,CAMPAIGN]);
 
 const list=x=>x.join(', ');
+/** Required headings: listed in `required`; older templates without it require only the summary's TITLE field. */
+export const requiredOf=(part,isSummary=false)=>part?.required ?? (isSummary ? part.fields.filter(f=>/TITLE/.test(f)).slice(0,1) : []);
+const marked=(part,isSummary)=>part.fields.map(f=>requiredOf(part,isSummary).includes(f)?f+'*':f).join(', ');
 /** Plain text the user edits in Settings. */
 export function templateToText(t) {
   return [
     `Name: ${t.name}`,
     `Unit: ${t.unit}`,
     `Summary entry: ${t.summary.title}`,
-    `Summary fields: ${list(t.summary.fields)}`,
+    `Summary fields: ${marked(t.summary,true)}`,
     '',
     'Questions:',
     ...t.questions.map(q=>`- ${q.text}`),
     '',
-    'Entries (always / by name / off):',
-    ...t.entries.map(e=>`- ${e.title} (${e.show}): ${list(e.fields)}`),
+    'Entries (always / by name / off; * = must be filled, the rest are suggestions):',
+    ...t.entries.map(e=>`- ${e.title} (${e.show}): ${marked(e)}`),
     '',
     `Cast list: ${t.cast}`,
     `Outline: ${t.outline.title}`,
@@ -75,7 +78,8 @@ export function templateToText(t) {
   ].join('\n');
 }
 
-const fieldsOf=text=>String(text).split(',').map(x=>x.trim().replace(/:$/,'')).filter(Boolean);
+const fieldsOf=text=>String(text).split(',').map(x=>x.trim().replace(/:$/,'').replace(/\*$/,'').trim()).filter(Boolean);
+const starred=text=>String(text).split(',').map(x=>x.trim().replace(/:$/,'')).filter(x=>x.endsWith('*')).map(x=>x.slice(0,-1).trim().toUpperCase());
 const upper=x=>x.map(f=>f.toUpperCase());
 
 export function parseTemplate(text) {
@@ -95,7 +99,7 @@ export function parseTemplate(text) {
       if(section==='entries') {
         const m=item.match(/^(.+?)\s*\((always|by name|off)\)\s*:\s*(.+)$/i);
         if(!m)throw Error(`${at}: write entries as “- Title (always|by name|off): FIELD, FIELD”.`);
-        t.entries.push({title:m[1].trim(),show:m[2].toLowerCase(),fields:upper(fieldsOf(m[3]))});
+        t.entries.push({title:m[1].trim(),show:m[2].toLowerCase(),fields:upper(fieldsOf(m[3])),required:starred(m[3])});
         continue;
       }
       throw Error(`${at}: a “-” item must be under Questions or Entries.`);
@@ -107,7 +111,7 @@ export function parseTemplate(text) {
     if(key==='name')t.name=v;
     else if(key==='unit')t.unit=v;
     else if(key==='summary entry')(t.summary??={}).title=v;
-    else if(key==='summary fields')(t.summary??={}).fields=upper(fieldsOf(v));
+    else if(key==='summary fields'){(t.summary??={}).fields=upper(fieldsOf(v));t.summary.required=starred(v);}
     else if(key==='cast list')t.cast=v;
     else if(key==='outline')(t.outline??={}).title=v;
     else if(key==='outline lines')(t.outline??={}).lines=fieldsOf(v);
@@ -123,6 +127,8 @@ export function validateTemplate(t) {
   need(/^[A-Za-z][A-Za-z ]{1,20}$/.test(t.unit||''),'Unit must be one word or two, like Chapter, Session or Part.');
   need(t.summary?.title?.trim() && t.summary.fields?.length,'The template needs a Summary entry and Summary fields.');
   need(t.summary.fields.some(f=>/TITLE/.test(f)),'Summary fields need one with TITLE in it (the lorebook is named after it).');
+  const title=t.summary.fields.find(f=>/TITLE/.test(f));
+  if(!t.summary.required?.includes(title))t.summary.required=[...(t.summary.required||[]),title];
   need(t.questions.length>=1,'Add at least one question under Questions.');
   need(t.cast?.trim(),'The template needs a Cast list entry name.');
   need(t.outline?.title?.trim() && t.outline.lines?.length,'The template needs an Outline and Outline lines.');
