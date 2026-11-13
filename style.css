@@ -260,3 +260,8 @@
 #na-panel .storyloom-mic.is-on { background:#c0392b; border-color:#c0392b; color:#fff; animation:storyloom-pulse 1.2s ease-in-out infinite; }
 #na-panel .storyloom-mic:disabled { opacity:.4; cursor:not-allowed; }
 @keyframes storyloom-pulse { 50% { box-shadow:0 0 0 5px rgba(192,57,43,.25); } }
+.storyloom-narrator-form { text-align:left; }
+.storyloom-narrator-form .checkbox_label { display:flex; gap:.4rem; align-items:baseline; justify-content:flex-start; text-align:left; margin:.6rem 0 .25rem; }
+.storyloom-narrator-form .checkbox_label small { opacity:.75; }
+.storyloom-narrator-form label { display:block; text-align:left; margin-top:.5rem; }
+.storyloom-narrator-form textarea { width:100%; }

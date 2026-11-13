@@ -186,12 +186,15 @@ The writer wants: ${wish || '(no specific wish — work it out from the outline 
 Use these headings as a guide. Use the ones that matter for this narrator, skip any that don't apply, and add your own headings for anything this story needs that they don't cover:
 ${template.map(([h, d]) => `- ${h}: ${d}`).join('\n')}
 Be specific to this book: names, places, what this narrator would and wouldn't notice. Under 450 words.
-Then, after the instructions, write two lines the chapter team needs for this ${unit.toLowerCase()} only, or "none" if nothing changes:
+Then write a MAIN PROMPT: two to four sentences that tell the model it is this book's narrator — write only the story, in prose, follow the character description, the lorebook and the chapter plan, stop at a natural beat. Only if the writer's answers say they play a character in the chat (a roleplay), add that the narrator never writes that character's words or actions; for a novel, the narrator writes every character — do not assume the writer plays anyone. It replaces SillyTavern's Main Prompt in this narrator's chats only.
+Then write two lines the chapter team needs for this ${unit.toLowerCase()} only, or "none" if nothing changes:
 CHECKER NOTE: what the Checker should accept as intended in this ${unit.toLowerCase()} (e.g. "first person, Danny, rough register is deliberate").
 EDITOR NOTE: what the Editor must preserve (e.g. "keep Danny's roughness; don't polish it into Ruth's voice").
 Reply in exactly this form:
 === NARRATOR
 (the instructions)
+=== MAIN PROMPT
+(two to four sentences)
 === NOTES
 CHECKER NOTE: …
 EDITOR NOTE: …
@@ -202,9 +205,10 @@ ${facts}`;
 }
 export function parseNarrator(text) {
   const s = String(text || '').replace(/\r\n?/g, '\n');
-  const body = (s.match(/^===\s*NARRATOR\s*$\n([\s\S]*?)(?=^===\s*(?:NOTES|END)\s*$|(?![\s\S]))/mi) || [])[1]?.trim() || '';
+  const body = (s.match(/^===\s*NARRATOR\s*$\n([\s\S]*?)(?=^===\s*(?:MAIN PROMPT|NOTES|END)\s*$|(?![\s\S]))/mi) || [])[1]?.trim() || '';
+  const mainPrompt = (s.match(/^===\s*MAIN PROMPT\s*$\n([\s\S]*?)(?=^===\s*(?:NOTES|END)\s*$|(?![\s\S]))/mi) || [])[1]?.trim() || '';
   const note = label => { const v = (s.match(new RegExp(`^\\s*${label}\\s*NOTE\\s*:\\s*(.+)$`, 'mi')) || [])[1]?.trim() || ''; return /^none\.?$/i.test(v) ? '' : v; };
-  return body ? {instructions: body, checkerNote: note('CHECKER'), editorNote: note('EDITOR')} : null;
+  return body ? {instructions: body, mainPrompt, checkerNote: note('CHECKER'), editorNote: note('EDITOR')} : null;
 }
 /** Who narrates, read from instructions text ("WHO NARRATES: Danny…"). */
 export function narratorLabel(instructions) {
@@ -220,3 +224,13 @@ export function suggestNarrators(registry = [], {wish = '', chapterPlan = '', cu
   };
   return registry.filter(n => n.avatar !== current).map(n => ({...n, score: score(n)})).filter(n => n.score > 0).sort((a, b) => b.score - a.score);
 }
+
+/** The narrator template as editable text: one "HEADING: what it covers" per line. */
+export const narratorTemplateText = (t = NARRATOR_TEMPLATE) => t.map(([h, d]) => `${h}: ${d}`).join('\n');
+/** Read an edited narrator template; lines without "HEADING:" are ignored. Empty → the default. */
+export function parseNarratorTemplate(text) {
+  const rows = String(text || '').split('\n').map(l => l.match(/^\s*[-*]?\s*([A-Z][A-Z0-9 &/'’-]{1,40})\s*:\s*(.*)$/)).filter(Boolean).map(m => [m[1].trim(), m[2].trim()]);
+  return rows.length ? rows : NARRATOR_TEMPLATE;
+}
+/** A default Main Prompt for a narrator when the writer writes the instructions themselves. */
+export const defaultMainPrompt = (book = 'this book') => `You are the narrator of ${book}. Write only the story, in prose, following your character description, the lorebook and the current chapter plan. Stop at a natural beat and let the writer continue.`;

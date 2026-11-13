@@ -28,7 +28,7 @@ import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, pr
 import { wordBudget, castFit, budgetLines, SCENE_MIN, parseNumber } from './budget.mjs';
 import { exactLint, lintInstruction, parseFindings, countsLine, biggestProblem, ALL_BUCKETS } from './lint.mjs';
 import { addEntry, filterEntries, logText } from './log.mjs';
-import { ROLES, ROLE_KEYS, STEPS, roleSettings, roleSystem, activeSteps, parseNotes, overallLine, markupInstruction, readerInstruction, reviseInstruction, parseRevision, wordDiff, narratorInstruction, parseNarrator, narratorLabel, suggestNarrators } from './roles.mjs';
+import { ROLES, ROLE_KEYS, STEPS, roleSettings, roleSystem, activeSteps, parseNotes, overallLine, markupInstruction, readerInstruction, reviseInstruction, parseRevision, wordDiff, narratorInstruction, parseNarrator, narratorLabel, suggestNarrators, parseNarratorTemplate, narratorTemplateText, defaultMainPrompt } from './roles.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
 
 const KEY = 'novelArchitect';
@@ -872,11 +872,11 @@ async function chapterPlan(d,n) {try{const t=tpl(d), book=await freshBook(d.book
 const shortWho=n=>String(n?.who||n?.name||'').split(/\s[—–-]\s|[,(;]/)[0].trim();
 /** Narrators this book has used (character cards), with the chapters each narrated. */
 function narratorRegistry(d) {d.narrators ??= []; return d.narrators;}
-function currentNarrator(d,c=context()) {
+function currentNarrator(d,c=context(),{record=false}={}) {
   const ch=c.characters?.[c.characterId]; if(!ch)return null;
   const reg=narratorRegistry(d); let n=reg.find(x=>x.avatar===ch.avatar);
   if(!n){n={avatar:ch.avatar,name:ch.name,who:narratorLabel(ch.description)||ch.name,chapters:[],notes:{}};reg.push(n);}
-  const num=d.chapter||1; if(!n.chapters.includes(num))n.chapters.push(num);
+  const num=d.chapter||1; if(record && !n.chapters.includes(num))n.chapters.push(num);
   return n;
 }
 
@@ -895,7 +895,8 @@ function renderTeam(d=null) {
   const box=document.getElementById('na-team'); if(!box)return;
   try{d ??= data();}catch{return;}
   const t=teamState(d), rs=teamSettings(), steps=activeSteps(rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
-  const narr=(d.narrators||[]).find(x=>x.chapters?.includes(n));
+  const open=context().characters?.[context().characterId], narr=open?((d.narrators||[]).find(x=>x.avatar===open.avatar)||{name:open.name}):null;
+  const und=document.getElementById('na-narrator-undo'); if(und)und.hidden=!d.narratorUndo || d.narratorUndo.avatar!==context().characters?.[context().characterId]?.avatar;
   document.getElementById('na-team-label').textContent=`${u} ${n}${total?` of ${total}`:''}${narr?` — narrated by ${shortWho(narr)}`:''}`;
   const row=document.getElementById('na-team-steps'); row.replaceChildren();
   const run={lint:stepLint,markup:stepMarkup,reader:stepReader,revise:stepRevise,seal:sealChapter};
@@ -988,7 +989,7 @@ async function sealChapter() {
   const book=await freshBook(d.book), rs=teamSettings();
   const sofarTitle=MEMORY_ITEMS[0].title, sumTitle=summaryTitle(t.unit,n);
   const castTitles=Object.values(book.entries||{}).map(e=>String(e.comment||'')).filter(x=>/^character\s*[—–-]/i.test(x));
-  const facts=await bookFacts(d), narr=currentNarrator(d,c), note=chapterNote(d);
+  const facts=await bookFacts(d), narr=currentNarrator(d,c,{record:true}), note=chapterNote(d);
   const sealedNotes=facts.seals.filter(e=>e.comment!==sumTitle).map(e=>e.content).join('\n\n');
   status(`Seal is reading ${t.unit} ${n} and writing its seal note…`);
   logEvent('info','Seal',`${t.unit} ${n}: started`);
@@ -1033,10 +1034,51 @@ async function chooseNarrator(next) {
   const earlier=suggestNarrators(reg,{chapterPlan:plan,current:cur?.avatar});
   const buttons=earlier.slice(0,2).map((x,i)=>({text:`Use ${shortWho(x)}${x.chapters.length?` (${u} ${x.chapters.join(', ')})`:''}`,result:10+i}));
   const pick=await new c.Popup(`<h3>Who narrates ${u} ${next}?</h3><p><b>Keep the current narrator</b> — ${escHtml(shortWho(cur)||'the current character')}.</p>${earlier.length?`<p>The outline for ${u} ${next} looks like it follows <b>${escHtml(shortWho(earlier[0]))}</b>, ${earlier[0].chapters.length?`who narrated ${u} ${earlier[0].chapters.join(', ')}`:'who is already set up as a narrator'} — reusing them brings their Checker and Editor notes too.</p>`:''}<p><b>New narrator</b> — a copy of the current narrator for you (or Storyloom) to rewrite: a different character’s point of view, a new register, first person instead of third…</p>`,c.POPUP_TYPE.TEXT,'',{okButton:'Keep the current narrator',cancelButton:'Cancel',customButtons:[...buttons,{text:'New narrator…',result:3}]}).show();
-  if(pick===(c.POPUP_RESULT?.AFFIRMATIVE??1))return cur?{avatar:cur.avatar,notes:cur.notes||{}}:null;
+  if(pick===(c.POPUP_RESULT?.AFFIRMATIVE??1)) {
+    if(!cur)return null;
+    const diff=await c.Popup.show.input(`Anything different in ${u} ${next}?`,`<p>Same narrator. If the narration changes in this ${u.toLowerCase()} — a rougher register, a time jump, a different mood — say so, and Storyloom adds it as a note for the Checker and Editor so they don’t “fix” it. Leave it empty if nothing changes.</p>`,'',{okButton:'Next',cancelButton:'Nothing changes'});
+    const extra=typeof diff==='string'?diff.trim():'', notes={...(cur.notes||{})};
+    if(extra){notes.checker=`In this ${u.toLowerCase()}: ${extra} — this is intended.`;notes.editor=`In this ${u.toLowerCase()}: ${extra} — preserve it.`;}
+    return {avatar:cur.avatar,notes};
+  }
   if(pick>=10){const x=earlier[pick-10];return {avatar:x.avatar,notes:x.notes||{}};}
   if(pick!==3)return null;
   return newNarrator(next,cur);
+}
+/** The writer's narrator template (Extensions → Storyloom → Narrator template), or the default. */
+const narratorTemplate=()=>parseNarratorTemplate(context().extensionSettings.storyloom?.narratorTemplate||'');
+/** Draft (optional) and review a narrator. Returns the reviewed fields or null if cancelled. */
+async function draftNarrator({number,wish,title,okLabel,mode}) {
+  const c=context(), d=data(), u=tpl(d).unit, ch=c.characters?.[c.characterId];
+  const plan=await chapterPlan(d,number), prevText=ch?.description||'', prevMain=ch?.data?.system_prompt||'';
+  const help=await new c.Popup(`<h3>Want help writing the narrator?</h3><p>Storyloom drafts the narrator’s instructions from the book — the outline for this ${u.toLowerCase()}, the cast, ${mode==='current'?'what the narrator says now':'the previous narrator'}, your rules — using the narrator template as a guide (Extensions → Storyloom → Narrator template). You read and edit the draft before anything is saved.</p>`,c.POPUP_TYPE.TEXT,'',{okButton:'Yes, draft it',cancelButton:'I’ll write it myself'}).show();
+  let draft={instructions:prevText,mainPrompt:prevMain||defaultMainPrompt(d.book),checkerNote:'',editorNote:''};
+  if(help===(c.POPUP_RESULT?.AFFIRMATIVE??1)) {
+    const f=await bookFacts(d);
+    const ctl=new AbortController(); renderModelWork(ctl); busy=true;
+    try {
+      status('Storyloom is drafting the narrator…');
+      let base='',direct=null; try{base=d.profile||'';direct=directSnapshot(d,c);}catch{}
+      const raw=await llm(c,narratorInstruction({unit:u,number,wish:String(wish||''),facts:`${plan?`THIS ${u.toUpperCase()}'S PLAN\n${plan.text}\n\n`:''}${f.facts}`,previous:prevText,template:narratorTemplate()}),base,ctl.signal,Number(d.responseTokens||12000),'You help a writer set up the AI that narrates their book. You brief the narrator; you never write the story.',direct,{label:'Narrator builder'});
+      const p=parseNarrator(raw); if(!p){logEvent('error','Narrator','draft unreadable',raw.slice(0,2000));throw Error('The narrator draft came back in a form Storyloom couldn’t read. Try again, or choose “I’ll write it myself”.');}
+      draft={...p,mainPrompt:p.mainPrompt||draft.mainPrompt};
+    } finally {busy=false;renderModelWork(null);}
+  }
+  const form=document.createElement('div'); form.className='storyloom-narrator-form';
+  form.innerHTML=`<h3>${escHtml(title)}</h3>
+    <label class="checkbox_label"><input type="checkbox" data-c="toDesc" checked> Put this in the narrator’s <b>Description</b> ${mode==='current'&&prevText?'<small>(replaces what’s there now; the old text is kept so you can undo)</small>':''}</label>
+    <textarea class="text_pole" rows="13" data-k="instructions"></textarea>
+    <label class="checkbox_label"><input type="checkbox" data-c="toMain" checked> Put this in the narrator’s <b>Main Prompt override</b> <small>(replaces SillyTavern’s Main Prompt in this character’s chats only; needs “Prefer Char. Prompt”, which is on by default)</small></label>
+    <textarea class="text_pole" rows="3" data-k="mainPrompt"></textarea>
+    <label>Checker note for this ${u.toLowerCase()} <small>(what to accept as intended)</small><textarea class="text_pole" rows="2" data-k="checkerNote"></textarea></label>
+    <label>Editor note for this ${u.toLowerCase()} <small>(what to preserve)</small><textarea class="text_pole" rows="2" data-k="editorNote"></textarea></label>`;
+  for(const ta of form.querySelectorAll('textarea'))ta.value=draft[ta.dataset.k]||'';
+  const ok=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:okLabel,cancelButton:'Cancel',wide:true,large:true}).show();
+  if(ok!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return null;
+  const val=k=>form.querySelector(`[data-k="${k}"]`).value.trim(), on=k=>form.querySelector(`[data-c="${k}"]`).checked;
+  const instructions=val('instructions');
+  return {instructions,mainPrompt:val('mainPrompt'),toDesc:on('toDesc'),toMain:on('toMain'),plan,
+    notes:{checker:val('checkerNote'),editor:val('editorNote'),pov:sectionOf(instructions,'POINT OF VIEW')||sectionOf(instructions,'POV'),tense:sectionOf(instructions,'TENSE')}};
 }
 async function newNarrator(next,cur) {
   const c=context(), d=data(), t=tpl(d), u=t.unit;
@@ -1044,42 +1086,59 @@ async function newNarrator(next,cur) {
   const wish=await c.Popup.show.input(`New narrator for ${u} ${next}`,`<p>Who should narrate, and how? For example “Danny, first person, rough and short”. ${plan?`The outline for ${u} ${next} is “${escHtml(plan.title)}”.`:''}</p><p>Next you can let Storyloom draft the narrator’s instructions, or write them yourself.</p>`,'',{okButton:'Next',cancelButton:'Cancel'});
   if(wish===null || wish===undefined || wish===false)return null;
   const again=suggestNarrators(narratorRegistry(d),{wish:String(wish),current:cur?.avatar})[0];
-  if(again && await c.Popup.show.confirm(`Use ${escHtml(shortWho(again))} again?`,`${escHtml(shortWho(again))} already narrated ${u} ${again.chapters.join(', ')}. Use that narrator (with its Checker and Editor notes) instead of making a new one?`))return {avatar:again.avatar,notes:again.notes||{}};
-  const help=await new c.Popup('<h3>Want help writing the narrator?</h3><p>Storyloom drafts the narrator’s instructions from the book — the outline for this chapter, the cast, the previous narrator, your rules — using the narrator template as a guide. You read and edit the draft before anything is saved.</p>',c.POPUP_TYPE.TEXT,'',{okButton:'Yes, draft it',cancelButton:'I’ll write it myself'}).show();
-  const prevText=c.characters?.[c.characterId]?.description||'';
-  let draft={instructions:prevText,checkerNote:'',editorNote:''};
-  if(help===(c.POPUP_RESULT?.AFFIRMATIVE??1)) {
-    const f=await bookFacts(d);
-    const ctl=new AbortController(); renderModelWork(ctl); busy=true;
-    try {
-      status('Storyloom is drafting the narrator…');
-      let base='',direct=null; try{base=d.profile||'';direct=directSnapshot(d,c);}catch{}
-      const raw=await llm(c,narratorInstruction({unit:u,number:next,wish:String(wish),facts:`${plan?`THIS ${u.toUpperCase()}'S PLAN\n${plan.text}\n\n`:''}${f.facts}`,previous:prevText}),base,ctl.signal,Number(d.responseTokens||12000),'You help a writer set up the AI that narrates their book. You brief the narrator; you never write the story.',direct,{label:'Narrator builder'});
-      const p=parseNarrator(raw); if(!p){logEvent('error','Narrator','draft unreadable',raw.slice(0,2000));throw Error('The narrator draft came back in a form Storyloom couldn’t read. Try again, or choose “I’ll write it myself”.');}
-      draft=p;
-    } finally {busy=false;renderModelWork(null);}
-  }
-  const form=document.createElement('div');
-  form.innerHTML=`<h3>Narrator for ${u} ${next}</h3><p class="storyloom-hint">This goes into the new narrator’s description. Edit anything.</p><textarea class="text_pole" rows="14" data-k="instructions"></textarea><label>Checker note for this ${u.toLowerCase()} <small>(what to accept as intended)</small><textarea class="text_pole" rows="2" data-k="checkerNote"></textarea></label><label>Editor note for this ${u.toLowerCase()} <small>(what to preserve)</small><textarea class="text_pole" rows="2" data-k="editorNote"></textarea></label>`;
-  for(const ta of form.querySelectorAll('textarea'))ta.value=draft[ta.dataset.k]||'';
-  const ok=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Create narrator',cancelButton:'Cancel',wide:true,large:true}).show();
-  if(ok!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return null;
-  const val=k=>form.querySelector(`[data-k="${k}"]`).value.trim();
-  const instructions=val('instructions'), who=narratorLabel(instructions)||String(wish).split(/[,.;]/)[0].trim()||`${u} ${next} narrator`;
+  if(again && await c.Popup.show.confirm(`Use ${escHtml(shortWho(again))} again?`,`${escHtml(shortWho(again))} ${again.chapters.length?`already narrated ${u} ${again.chapters.join(', ')}`:'is already set up as a narrator'}. Use that narrator (with its Checker and Editor notes) instead of making a new one?`))return {avatar:again.avatar,notes:again.notes||{}};
+  const r=await draftNarrator({number:next,wish,title:`Narrator for ${u} ${next}`,okLabel:'Create narrator',mode:'new'});
+  if(!r)return null;
+  const who=narratorLabel(r.instructions)||String(wish).split(/[,.;]/)[0].trim()||`${u} ${next} narrator`;
   const name=`${d.book} — ${who.split(/\s[—–-]\s|[,(;]/)[0].trim().slice(0,40)}`;
-  const avatar=await cloneNarrator(cur?.avatar,{name,description:instructions,greeting:`${u} ${next}${plan?.title?` — ${plan.title}`:''}`});
-  const notes={checker:val('checkerNote'),editor:val('editorNote'),pov:sectionOf(instructions,'POINT OF VIEW')||sectionOf(instructions,'POV'),tense:sectionOf(instructions,'TENSE')};
-  narratorRegistry(d).push({avatar,name,who,chapters:[],notes});
+  const prev=c.characters?.[c.characterId];
+  const avatar=await cloneNarrator(cur?.avatar,{name,description:r.toDesc?r.instructions:(prev?.description||''),mainPrompt:r.toMain?r.mainPrompt:null,greeting:`${u} ${next}${r.plan?.title?` — ${r.plan.title}`:''}`});
+  narratorRegistry(d).push({avatar,name,who,chapters:[],notes:r.notes});
   await persist();
   logEvent('info','Narrator',`created “${name}” for ${u} ${next}`);
-  return {avatar,notes};
+  return {avatar,notes:r.notes};
+}
+/** Write or rewrite the narrator of the chat you are in (any chapter, including the first). The old text is kept for Undo. */
+async function setupNarrator() {
+  requireIdle();
+  const c=context(), d=data(), t=tpl(d), u=t.unit, n=d.chapter||1, ch=c.characters?.[c.characterId];
+  if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first, so Storyloom knows the book.');
+  if(!ch)throw Error('Open the narrator character’s chat first.');
+  const wish=await c.Popup.show.input(`Narrator: ${escHtml(ch.name)}`,`<p>How should this narrator tell the story? For example “Ruth, close third person, past tense, dry and exact”. Leave it empty and Storyloom works it out from the book.</p><p>This changes the character card <b>${escHtml(ch.name)}</b>, so it applies to every chat with this character.</p>`,'',{okButton:'Next',cancelButton:'Cancel'});
+  if(wish===null || wish===undefined || wish===false)return;
+  const r=await draftNarrator({number:n,wish,title:`Narrator: ${ch.name}`,okLabel:'Save narrator',mode:'current'});
+  if(!r)return;
+  if(!r.toDesc && !r.toMain && !r.notes.checker && !r.notes.editor)return status('Nothing was ticked, so nothing was changed.');
+  d.narratorUndo={avatar:ch.avatar,name:ch.name,description:ch.description||'',mainPrompt:ch.data?.system_prompt||'',at:new Date().toISOString()};
+  const patch={avatar:ch.avatar,data:{}};
+  if(r.toDesc){patch.description=r.instructions;patch.data.description=r.instructions;}
+  if(r.toMain)patch.data.system_prompt=r.mainPrompt;
+  if(r.toDesc||r.toMain) {
+    const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify(patch)});
+    if(!m.ok)throw Error(`SillyTavern couldn’t save the narrator (${(await m.text()).slice(0,200)}).`);
+    await c.getCharacters();
+  }
+  d.chapterNotes ??= {}; d.chapterNotes[n]={...(d.chapterNotes[n]||{}),...r.notes};
+  const reg=currentNarrator(d,c); reg.who=narratorLabel(r.instructions)||reg.who; reg.notes={...r.notes};
+  await persist(); await applyMemory(); renderTeam();
+  logEvent('info','Narrator',`updated “${ch.name}”${r.toDesc?' description':''}${r.toMain?' + Main Prompt override':''}`);
+  status(`Narrator saved to “${ch.name}”. The old text is kept — “Undo narrator change” on the Memory tab puts it back.`);
+}
+async function undoNarrator() {
+  requireIdle();
+  const c=context(), d=data(), u=d.narratorUndo; if(!u)return;
+  if(!await c.Popup.show.confirm('Undo the narrator change?',`Put back “${escHtml(u.name)}”’s description and Main Prompt override as they were on ${new Date(u.at).toLocaleString()}?`))return;
+  const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify({avatar:u.avatar,description:u.description,data:{description:u.description,system_prompt:u.mainPrompt}})});
+  if(!m.ok)throw Error('SillyTavern couldn’t restore the narrator.');
+  await c.getCharacters(); delete d.narratorUndo; await persist(); renderTeam();
+  logEvent('info','Narrator',`restored “${u.name}”`); status(`“${u.name}” is back to how it was.`);
 }
 /** Copy a character card and give it new instructions, name and greeting. Returns the new avatar file name. */
-async function cloneNarrator(fromAvatar,{name,description,greeting}) {
+async function cloneNarrator(fromAvatar,{name,description,greeting,mainPrompt=null}) {
   const c=context(); if(!fromAvatar)throw Error('Open the narrator character’s chat first.');
   const r=await fetch('/api/characters/duplicate',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify({avatar_url:fromAvatar})});
   const out=await r.json().catch(()=>({})); if(!r.ok || !out.path)throw Error('SillyTavern couldn’t copy the narrator character.');
-  const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify({avatar:out.path,name,description,first_mes:greeting,chat:`${name} - ${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}`,data:{name,description,first_mes:greeting,alternate_greetings:[]}})});
+  const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify({avatar:out.path,name,description,first_mes:greeting,chat:`${name} - ${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}`,data:{name,description,first_mes:greeting,alternate_greetings:[],...(mainPrompt!=null?{system_prompt:mainPrompt}:{})}})});
   if(!m.ok)throw Error(`SillyTavern couldn’t save the new narrator (${(await m.text()).slice(0,200)}).`);
   await c.getCharacters();
   return out.path;
@@ -1927,6 +1986,7 @@ function buildExtSettings(openButton,panel) {
   wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
     <details id="sl-team" open><summary>Chapter team</summary><p class="storyloom-hint">The people who work on each chapter after it’s written: Lint → Editor → Reader → Revise → Seal (Memory tab). Switch a role off to skip its step. Each can use its own model — a fast, cheap one for the Checker, a stronger one for the Editor. If a role’s model fails or answers in a form Storyloom can’t read, Storyloom asks its own connection once and says so in the log. Their jobs are fixed so the steps can’t break; their personalities are yours to change.</p>${teamMarkup()}</details>
+    <details id="sl-narrator-template"><summary>Narrator template</summary><p class="storyloom-hint">The headings Storyloom uses as a guide when it drafts a narrator — one “HEADING: what it covers” per line. It’s a guide, not a form: Storyloom skips headings that don’t fit the story and adds its own when the story needs them.</p><textarea id="sl-narrator-template-text" class="text_pole" rows="10" spellcheck="false"></textarea><div class="storyloom-row"><button id="sl-narrator-template-save" type="button" class="menu_button">Save</button><button id="sl-narrator-template-reset" type="button" class="menu_button">Reset to original</button></div></details>
     <details id="sl-placement"><summary>Memory placement</summary><p class="storyloom-hint">Where each piece of memory goes in the main chat’s prompt, who it is sent as, and the instruction wrapped around it. The text itself is on the Memory tab.</p><p class="storyloom-hint sl-placement-book"></p><p class="storyloom-hint sl-placement-empty">Open a novel’s chat (with its outline done) to set placement.</p><div class="sl-placement-items">${placementMarkup()}</div></details>
     <div id="sl-moved"></div>
     <details id="sl-log"><summary>Log</summary><p class="storyloom-hint">What Storyloom did, what failed and why. Kept in this browser (newest 500 entries). API keys are never recorded.</p>
@@ -1954,6 +2014,10 @@ function buildExtSettings(openButton,panel) {
     box.querySelector('.na-mem-where').onchange=()=>{const p=place();box.querySelector('.na-mem-depth-label').hidden=p.where!=='chat-depth';box.querySelector('.na-mem-role-label').hidden=p.where==='off';};
     box.querySelector('.na-mem-save').onclick=async()=>{lastAction=`Save ${item.label} placement`;try{await saveMemoryItem(item,undefined,place());toastr?.success?.(`${item.label}: placement saved.`);renderMemory();}catch(e){fail(e);toastr?.error?.(e.message);}};
   }
+  const tplBox=wrap.querySelector('#sl-narrator-template-text'), st=()=>(context().extensionSettings.storyloom ??= {});
+  tplBox.value=narratorTemplateText(narratorTemplate());
+  wrap.querySelector('#sl-narrator-template-save').onclick=()=>{const rows=parseNarratorTemplate(tplBox.value);st().narratorTemplate=narratorTemplateText(rows);saveSettings();tplBox.value=st().narratorTemplate;toastr?.success?.(`Narrator template saved (${rows.length} headings).`);logEvent('info','Settings','narrator template saved');};
+  wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};
   wrap.querySelector('#sl-log-copy').onclick=async()=>{try{await navigator.clipboard.writeText(logText(readLog()));toastr?.success?.('Storyloom log copied.');}catch(e){toastr?.error?.('Could not copy: '+e.message);}};
@@ -2078,6 +2142,7 @@ function init() {
       <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
       <div id="na-team" class="storyloom-team" hidden>
         <p id="na-team-label" class="storyloom-team-label"></p>
+        <div class="storyloom-row"><button id="na-narrator" type="button" title="Write or rewrite how this chat’s narrator tells the story — its description and Main Prompt override — with Storyloom’s help.">Narrator…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button></div>
         <ol id="na-team-steps" class="storyloom-steps"></ol>
         <p id="na-team-hint" class="storyloom-hint"></p>
         <button id="na-team-next" type="button" class="storyloom-team-next">Next →</button>
@@ -2268,6 +2333,8 @@ function init() {
   document.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-open-ext').onclick=()=>openStoryloomSettings();
+  document.querySelector('#na-narrator').onclick=()=>{lastAction='Narrator';setupNarrator().catch(fail);};
+  document.querySelector('#na-narrator-undo').onclick=()=>{lastAction='Undo narrator change';undoNarrator().catch(fail);};
   const sendAssistant=async()=>{const input=document.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
   document.querySelector('#na-assistant-send').onclick=sendAssistant;
   document.querySelector('#na-assistant-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();sendAssistant();}});

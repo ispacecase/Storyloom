@@ -64,3 +64,15 @@ test('a rewritten phrase shows as one removal and one addition', () => {
   const d = wordDiff('Her father was asleep in the chair by the window.', 'Her father was awake in the hospital bed by the window.');
   assert.deepEqual(d.filter(x => x.op !== 'same').map(x => [x.op, x.text.trim()]), [['del', 'asleep in the chair'], ['add', 'awake in the hospital bed']]);
 });
+
+test('narrator draft includes a main prompt; the template is editable text', async () => {
+  const {parseNarrator, narratorTemplateText, parseNarratorTemplate, NARRATOR_TEMPLATE, narratorInstruction} = await import('../roles.mjs');
+  const p = parseNarrator('=== NARRATOR\nWHO NARRATES: Ruth\n=== MAIN PROMPT\nYou narrate A Small Weather.\n=== NOTES\nCHECKER NOTE: none\nEDITOR NOTE: none\n=== END');
+  assert.equal(p.mainPrompt, 'You narrate A Small Weather.');
+  assert.equal(p.instructions, 'WHO NARRATES: Ruth');
+  assert.deepEqual(parseNarratorTemplate(narratorTemplateText()), NARRATOR_TEMPLATE.map(x => [...x]));
+  const custom = parseNarratorTemplate('WHO NARRATES: who\nSMELLS: what they notice by smell\nnot a heading');
+  assert.deepEqual(custom.map(x => x[0]), ['WHO NARRATES', 'SMELLS']);
+  assert.match(narratorInstruction({template: custom}), /- SMELLS: what they notice by smell/);
+  assert.deepEqual(parseNarratorTemplate(''), NARRATOR_TEMPLATE);
+});
