@@ -65,3 +65,17 @@ test('search uses meaning when available and keywords otherwise', async () => {
   assert.equal(byWords.method, 'keywords');
   assert.match(byWords.results[0].text, /Scan Depth/);
 });
+
+test('rare words outrank common ones, and search phrases are parsed from a model reply', async () => {
+  const {parseSearchTerms, searchDocsMany} = await import('../docs-rag.mjs');
+  const chunks = [
+    ...chunkMarkdown('a.md', '# Characters\nA character card has a character description for each character.'),
+    ...chunkMarkdown('b.md', '# Characters two\nAnother character and character message.'),
+    ...chunkMarkdown('Usage/worldinfo.md', '# World Info\n## Recursion\nRecursive scanning lets one entry trigger another entry.'),
+  ];
+  assert.match(keywordSearch(chunks, 'character entry recursion', 1)[0].text, /Recursion/);
+  assert.deepEqual(parseSearchTerms('1. “World Info recursive scanning”\n- Author\'s Note depth\n\nok'), ['World Info recursive scanning', "Author's Note depth"]);
+  const r = await searchDocsMany({fetchFn: null, headers: {}, source: null, chunks}, ['recursive scanning', 'character card'], 4);
+  assert.equal(r.method, 'keywords');
+  assert.ok(r.results.length >= 2 && new Set(r.results.map(x => x.text)).size === r.results.length);
+});

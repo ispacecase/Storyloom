@@ -20,7 +20,7 @@ import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
 import { castNames, characterProfilesInstruction, validateCharacters, characterTitle } from './characters.mjs';
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
-import { downloadDocs, chunkMarkdown, indexChunks, searchDocs, vectorSource } from './docs-rag.mjs';
+import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED } from './interview.mjs';
@@ -477,7 +477,12 @@ async function askAssistant(text) {
       const idx=docsIndexState(), src=vectorSource(c.extensionSettings.vectors);
       const indexed=src && idx.source===src.source && idx.count===chunks.length;
       const prior=st.messages.slice(-3,-1).map(m=>m.content).join(' ').slice(-600);
-      ({results,method}=await searchDocs({fetchFn:fetch,headers:c.getRequestHeaders(),source:indexed?src:null,chunks,query:`${prior}\n${text}`,k:6}));
+      // Questions use story words; the docs use SillyTavern's. A short request translates first.
+      let terms=[];
+      try {status('Working out which SillyTavern features this is about…');terms=parseSearchTerms(await llm(c,searchTermsPrompt(`${prior}\n${text}`.trim()),profile,controller.signal,600,'You map questions to SillyTavern documentation search terms.',direct));}
+      catch(e){if(controller.signal.aborted)throw e;console.warn('Storyloom search terms:',e);}
+      status('Reading the SillyTavern docs…');
+      ({results,method}=await searchDocsMany({fetchFn:fetch,headers:c.getRequestHeaders(),source:indexed?src:null,chunks},[...terms,text],6));
     } catch(e) {console.warn('Storyloom docs:',e); docsLabel(`SillyTavern docs unavailable (${e.message}).`);}
     status('Reading your setup…');
     const snapshot=await gatherSnapshot(text);

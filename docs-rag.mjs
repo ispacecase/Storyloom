@@ -59,16 +59,34 @@ export function chunkMarkdown(path, markdown, max = 1800) {
 const words = text => (String(text).toLocaleLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []);
 const STOP = new Set(['the', 'and', 'for', 'you', 'are', 'can', 'with', 'this', 'that', 'what', 'how', 'does', 'from', 'your', 'have', 'not', 'but', 'when', 'where', 'which', 'will', 'its', 'into', 'there', 'they', 'then', 'than', 'about', 'should', 'would', 'could', 'just', 'like', 'make', 'need', 'want']);
 
-/** Fallback when no embedding source is available: rank chunks by shared words, headings weighted. */
+/** Keyword ranking: rare words count more than common ones (so "recursion" beats "character"); headings weigh triple. */
 export function keywordSearch(chunks, query, k = 6) {
   const terms = [...new Set(words(query).filter(w => !STOP.has(w)))];
-  if (!terms.length) return [];
-  return (chunks || []).map(chunk => {
-    const head = chunk.text.slice(0, chunk.text.indexOf('\n') + 1).toLocaleLowerCase();
-    const body = chunk.text.toLocaleLowerCase();
-    const score = terms.reduce((n, t) => n + (head.includes(t) ? 3 : 0) + (body.includes(t) ? 1 : 0), 0);
+  if (!terms.length || !chunks?.length) return [];
+  const lower = chunks.map(c => c.text.toLocaleLowerCase());
+  const idf = Object.fromEntries(terms.map(t => [t, Math.log(1 + chunks.length / (1 + lower.filter(x => x.includes(t)).length))]));
+  return chunks.map((chunk, i) => {
+    const head = lower[i].slice(0, lower[i].indexOf('\n') + 1);
+    const score = terms.reduce((n, t) => n + (head.includes(t) ? 3 * idf[t] : 0) + (lower[i].includes(t) ? idf[t] : 0), 0);
     return {chunk, score};
   }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, k).map(x => x.chunk);
+}
+
+/** Prompt that turns a writer's question into SillyTavern search phrases. */
+export function searchTermsPrompt(question) {
+  return `A SillyTavern user asked: “${String(question).slice(0, 1500)}”
+Which SillyTavern features, settings or documentation topics is this about? Answer with 2 to 4 short search phrases in SillyTavern's own terminology (for example “World Info recursive scanning”, “Author's Note depth”), one per line, nothing else.`;
+}
+export const parseSearchTerms = text => String(text || '').split('\n').map(x => x.replace(/^[\s\-*\d.“"]+|[”"\s]+$/g, '').trim()).filter(x => x.length > 2 && x.length < 120).slice(0, 4);
+
+/** Search several phrases and merge, best first, without duplicates. */
+export async function searchDocsMany(opts, queries, k = 6) {
+  const runs = [];
+  for (const q of queries.filter(Boolean)) runs.push(await searchDocs({...opts, query: q, k: Math.max(3, Math.ceil(k / queries.length) + 1)}));
+  const seen = new Set(), results = [];
+  for (let i = 0; results.length < k && runs.some(r => i < r.results.length); i++)
+    for (const r of runs) { const x = r.results[i]; if (x && !seen.has(x.text) && results.length < k) { seen.add(x.text); results.push(x); } }
+  return {results, method: runs.some(r => r.method !== 'keywords') ? 'meaning + keywords' : 'keywords'};
 }
 
 /** Request fields for the user's embedding source, mirroring SillyTavern's Vector Storage. Null = unsupported here. */
