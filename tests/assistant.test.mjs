@@ -67,3 +67,18 @@ test('long conversations fold older turns into a summary', () => {
   assert.equal(needsCompaction(Array(20).fill({})), 0);
   assert.equal(needsCompaction(Array(31).fill({})), 15);
 });
+
+test('the assistant knows what Storyloom delivers itself and cannot switch it on twice', () => {
+  const managed = [{title: 'Current Chapter', how: 'sent by the Memory tab as “This chapter”'}, {title: 'Current Writing Directive', how: 'sent through the Author’s Note'}];
+  const snap = formatSnapshot({chatLorebook: 'B', managed, memory: [{label: 'This chapter', words: 450, where: '3 messages from the end as system'}, {label: 'Story so far', words: 0}],
+    entries: [{comment: 'Current Chapter', disable: true, position: 0, content: 'x'}], entryTexts: [{comment: 'Voice', content: 'psychologica', shortened: true}],
+    authorsNote: {text: '<!-- Novel Architect -->\nCURRENT WRITING DIRECTIVE', position: 1, depth: 4, role: 0}});
+  assert.match(snap, /“Current Chapter” — off.*managed by Storyloom: sent by the Memory tab/);
+  assert.match(snap, /Sent by Storyloom itself each reply \(Memory tab\): This chapter — 450 words, 3 messages from the end as system; Story so far — empty, not sent/);
+  assert.match(snap, /contains the Storyloom writing directive/);
+  assert.match(snap, /Start of the text of “Voice”:\npsychologica\n\[…shortened here for space/);
+  assert.match(assistantSystem(), /switched off in the lorebook ON PURPOSE/);
+  const book = {entries: {1: {uid: 1, comment: 'Current Chapter', disable: true}}};
+  assert.throws(() => applyAction(book, {type: 'set-placement', book: 'B', title: 'Current Chapter', strategy: 'always'}, () => null, managed), /switched off on purpose.*send it twice/);
+  assert.doesNotThrow(() => applyAction(book, {type: 'set-placement', book: 'B', title: 'Current Chapter', strategy: 'off'}, () => null, managed));
+});

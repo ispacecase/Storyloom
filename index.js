@@ -352,6 +352,26 @@ async function applySuggestion(id) {
   else try{await organizeBook();}catch(e){console.warn('Storyloom layout:',e);}
 }
 /* ---------- Assistant tab ---------- */
+/** Entries Storyloom delivers itself (switched off on purpose) and what the Memory tab currently sends. */
+async function storyloomManaged() {
+  const managed=[], memory=[];
+  let d; try{d=data();}catch{return {managed,memory};}
+  if(!d?.book)return {managed,memory};
+  const t=tpl(d), c=context();
+  managed.push({title:t.outline.title,how:'the full outline is planning-only; only the current chapter’s plan is sent, from the Memory tab'});
+  for(const e of t.entries)if(e.show==='off')managed.push({title:e.title,how:'planning notes the story does not need'});
+  managed.push({title:t.cast,how:'the cast index Storyloom uses; full character entries are the “Character — Name” entries'});
+  managed.push({title:'Current Writing Directive',how:'sent through the Author’s Note, which Storyloom keeps in sync'});
+  managed.push({title:'Storyloom Interview Notes',how:'the planning interview record'});
+  let book=null; try{if(c.getWorldInfoNames().includes(d.book))book=await freshBook(d.book);}catch{}
+  for(const item of MEMORY_ITEMS) {
+    managed.push({title:item.title,how:`sent by the Memory tab as “${item.label}”`});
+    const e=book?findEntry(book,item.title):null, place=e?.storyloom_memory||item.place, w=(String(e?.content||'').match(/\S+/g)||[]).length;
+    memory.push({label:item.label,words:place.where==='off'?0:w,where:place.where==='chat-depth'?`${place.depth} messages from the end as ${place.role}`:`${WHERE[place.where]||place.where} as ${place.role}`});
+  }
+  for(const e of Object.values(book?.entries||{}))if(/^storyloom memory\s*[—–-]/i.test(String(e.comment||'')) && !managed.some(m=>m.title===e.comment))managed.push({title:e.comment,how:'chapter memory kept for Storyloom'});
+  return {managed,memory};
+}
 let activeTab='story', assistantBusy=false, docsChunks=null;
 const DOCS_CACHE='storyloom-docs-v1', DOCS_MAX_AGE=14*24*3600*1000;
 function assistantState() {
@@ -404,12 +424,14 @@ async function gatherSnapshot(question) {
     const book=await freshBook(chatLorebook);
     entries=Object.values(book.entries||{});
     const picked=selectLore(entries.map(e=>({title:e.comment,content:e.content,keys:e.key||[]})),question,6000).entries;
-    entryTexts=picked.slice(0,5).map(e=>({comment:e.title,content:e.content}));
+    const full=new Map(entries.map(e=>[e.comment,String(e.content||'')]));
+    entryTexts=picked.slice(0,5).map(e=>({comment:e.title,content:e.content,shortened:e.content.length<(full.get(e.title)||'').length}));
   }
   let novel='';
   try{const d=data(); if(d.book)novel=`lorebook “${d.book}”, template ${tpl(d).name}, ${d.interview?.phase==='done'?`planned, now on ${tpl(d).unit} ${d.chapter||1}`:`planning (${d.interview?.phase||'not started'})`}`;}catch{}
   const md=c.chatMetadata||{};
-  return formatSnapshot({
+  const {managed,memory}=await storyloomManaged();
+  return formatSnapshot({managed,memory,
     character:card?{name:card.name,description:String(card.description||card.data?.description||''),lorebook:card.data?.extensions?.world||''}:null,
     chatLorebook,globalLorebooks:[...(wi.selected_world_info||[])],allLorebooks:c.getWorldInfoNames(),
     worldInfo:{depth:wi.world_info_depth,budget:wi.world_info_budget,recursive:wi.world_info_recursive,caseSensitive:wi.world_info_case_sensitive,wholeWords:wi.world_info_match_whole_words},
@@ -451,7 +473,8 @@ async function applyAssistantAction(mi,id) {
     const c=context();
     if(!c.getWorldInfoNames().includes(a.book))throw Error(`There is no lorebook called “${a.book}”.`);
     const before=await freshBook(a.book);
-    const {book,uid}=applyAction(before,a,b=>createWorldInfoEntry(a.book,b));
+    const {managed}=a.book===(()=>{try{return data().book;}catch{return '';}})()?await storyloomManaged():{managed:[]};
+    const {book,uid}=applyAction(before,a,b=>createWorldInfoEntry(a.book,b),managed);
     await c.saveWorldInfo(a.book,book,true);
     if(JSON.stringify(await freshBook(a.book))!==JSON.stringify(book))throw Error('The save could not be verified; check the lorebook.');
     a.status='applied'; a.error=''; a.undo={uid,before:before.entries?.[uid]??null,after:book.entries[uid]};
@@ -522,6 +545,18 @@ function renderTabs() {
 }
 
 /* ---------- Memory tab ---------- */
+/** Books arranged before the Memory tab still send Current Chapter through the lorebook: re-arrange once. */
+async function upgradeLayout(d=null,book=null) {
+  try {
+    d ??= data();
+    if(!d?.book || d.interview?.phase!=='done' || context().chatMetadata?.world_info!==d.book)return false;
+    book ??= await freshBook(d.book);
+    const cc=findEntry(book,'Current Chapter');
+    if(!cc || cc.disable)return false;
+    await organizeBook();
+    return true;
+  } catch(e) {console.warn('Storyloom layout upgrade:',e); return false;}
+}
 /** Send each memory item into the main chat's prompt with its chosen placement (or clear it). */
 async function applyMemory() {
   const c=context();
@@ -564,9 +599,7 @@ async function renderMemory() {
   root_.querySelector('#na-memory-items').hidden=!ready;
   root_.querySelector('#na-finish-area').hidden=!ready;
   if(!ready)return;
-  // Books arranged before the Memory tab still send Current Chapter through the lorebook: re-arrange once.
-  const cc=book?findEntry(book,'Current Chapter'):null;
-  if(cc && !cc.disable){try{await organizeBook();book=await freshBook(d.book);}catch(e){console.warn('Storyloom layout:',e);}}
+  if(await upgradeLayout(d,book))book=await freshBook(d.book);
   const t=tpl(d), n=d.chapter||1, total=d.outlineChapters?.length||0;
   root_.querySelector('#na-finish-label').textContent=`You are on ${t.unit} ${n}${total?` of ${total}`:''}.`;
   root_.querySelector('#na-finish-chapter').textContent=n<total?`Finish ${t.unit} ${n} → start ${t.unit} ${n+1}`:`Finish ${t.unit} ${n}`;
@@ -1339,7 +1372,7 @@ async function writeProfiles(prefix='',{onlyMissing=false}={}) {
 }
 function init() {
   const button = document.createElement('button'); button.className='menu_button'; button.textContent='Storyloom';
-  const openPanel=()=>{checkForUpdate().catch(()=>{});try{options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
+  const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s setup: the chapter plan is now sent from the Memory tab instead of the lorebook.');}),300);try{options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
   button.addEventListener('click',()=>{openPanel();document.querySelector('#extensions-settings-button .drawer-toggle')?.click();});
   const shortcut=document.createElement('button');shortcut.type='button';shortcut.id='storyloom-chat-shortcut';shortcut.title='Open Storyloom';shortcut.setAttribute('aria-label','Open Storyloom');shortcut.innerHTML='<i class="fa-solid fa-feather-pointed" aria-hidden="true"></i>';shortcut.addEventListener('click',openPanel);document.getElementById('leftSendForm')?.append(shortcut);
   document.querySelector('#extensions_settings2, #extensions_settings')?.append(button);

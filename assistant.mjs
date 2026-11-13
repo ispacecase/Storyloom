@@ -26,8 +26,15 @@ the complete entry text (add-entry; for edit-entry only if the text changes)
 === END
 The writer sees each block as a card with an Apply button; nothing changes until they click it. Never claim you changed anything yourself. Never propose changes to presets, character cards or settings — explain where the writer can change those instead. Never put documentation text into a story lorebook.`;
 
+/** How Storyloom itself delivers its entries; the assistant must not "fix" these. */
+const STORYLOOM_DESIGN = `How Storyloom sets up a novel's lorebook (deliberate — never suggest changing it):
+- Entries marked "managed by Storyloom" are switched off in the lorebook ON PURPOSE. The full outline and planning notes are off so the story never sees future chapters. "Current Chapter", "Story so far" and "Previously" are sent by Storyloom itself as injected prompts (Storyloom panel → Memory tab, where the writer chooses position and role). "Current Writing Directive" reaches the chat through the Author's Note, which Storyloom keeps in sync. Switching any of these on would send them twice.
+- Character and place entries are keyword entries that other entries cannot trigger (excludeRecursion), so they arrive only when named in recent messages or matched by Vector Storage.
+- To change what the story sees each chapter, the writer uses the Memory tab or the chapter picker, not these entries' settings.
+- Long entry texts in the snapshot may be shortened for space; a marked "[…shortened here…]" is not a problem in the real entry.`;
+
 export function assistantSystem() {
-  return `${P('assistant')}\n\nYou are given (1) a snapshot of the writer's live SillyTavern setup, (2) excerpts from the official SillyTavern documentation chosen for this question, and (3) the conversation so far. Base answers about how SillyTavern works on the documentation excerpts and name the page you used, like (Docs: Usage › worldinfo). If the excerpts don't cover something, say so rather than guessing. Base answers about the writer's setup on the snapshot.\n\n${ACTION_FORMAT}`;
+  return `${P('assistant')}\n\nYou are given (1) a snapshot of the writer's live SillyTavern setup, (2) excerpts from the official SillyTavern documentation chosen for this question, and (3) the conversation so far. Base answers about how SillyTavern works on the documentation excerpts and name the page you used, like (Docs: Usage › worldinfo). If the excerpts don't cover something, say so rather than guessing. Base answers about the writer's setup on the snapshot.\n\n${STORYLOOM_DESIGN}\n\n${ACTION_FORMAT}`;
 }
 
 const strategyOf = e => e.disable ? 'off' : e.constant ? 'always' : e.vectorized ? 'vector' : 'keyword';
@@ -51,14 +58,16 @@ export function formatSnapshot(s) {
   if (s.vectors) lines.push(`Vector Storage: source ${s.vectors.source || 'none'}; for lorebooks ${s.vectors.enabled_world_info ? 'on' : 'off'}${s.vectors.enabled_for_all ? ' (all entries)' : ''}, max ${s.vectors.max_entries} entries, threshold ${s.vectors.score_threshold}; for chats ${s.vectors.enabled_chats ? 'on' : 'off'}`);
   if (s.prompts?.length) lines.push(`Prompt order (chat completion): ${s.prompts.map(p => `${p.enabled ? '' : '[off] '}${p.name}`).join(' → ')}`);
   for (const p of s.prompts || []) if (p.content && p.enabled) lines.push(`${p.name} text: ${p.content.slice(0, 1200)}`);
-  if (s.authorsNote) lines.push(`Author's Note: ${s.authorsNote.text ? `${words(s.authorsNote.text)} words` : 'empty'}, position ${s.authorsNote.position}, depth ${s.authorsNote.depth}, role ${s.authorsNote.role}`);
+  if (s.authorsNote) lines.push(`Author's Note: ${s.authorsNote.text ? `${words(s.authorsNote.text)} words${/Novel Architect/.test(s.authorsNote.text) ? ', contains the Storyloom writing directive' : ''}` : 'empty'}, position ${s.authorsNote.position}, depth ${s.authorsNote.depth}, role ${s.authorsNote.role}`);
+  if (s.memory?.length) lines.push(`Sent by Storyloom itself each reply (Memory tab): ${s.memory.map(m => `${m.label} — ${m.words ? `${m.words} words, ${m.where}` : 'empty, not sent'}`).join('; ')}`);
   if (s.connection) lines.push(`Main connection: ${s.connection}`);
   if (s.novel) lines.push(`Storyloom project: ${s.novel}`);
   if (s.entries?.length) {
     lines.push(`Entries in the chat lorebook “${s.chatLorebook}”:`);
-    for (const e of s.entries) lines.push(`- ${describeEntry(e)}`);
+    const managed = new Map((s.managed || []).map(m => [m.title.toLocaleLowerCase(), m.how]));
+    for (const e of s.entries) { const how = managed.get(String(e.comment || '').toLocaleLowerCase()); lines.push(`- ${describeEntry(e)}${how ? ` — managed by Storyloom: ${how}` : ''}`); }
   }
-  for (const e of s.entryTexts || []) lines.push(`Full text of “${e.comment}”:\n${e.content}`);
+  for (const e of s.entryTexts || []) lines.push(`${e.shortened ? 'Start of the text' : 'Full text'} of “${e.comment}”:\n${e.content}${e.shortened ? '\n[…shortened here for space; the real entry continues]' : ''}`);
   return lines.join('\n');
 }
 
@@ -119,8 +128,11 @@ export function describeAction(a) {
   return `${verb} “${a.title}” in “${a.book}”${parts.length ? ` — ${parts.join('; ')}` : ''}${a.content && a.type !== 'add-entry' ? ' — new text' : ''}`;
 }
 
-/** Apply one action to a copy of a lorebook. `create(book)` adds and returns a new entry. Returns {book, uid}. */
-export function applyAction(source, a, create) {
+/** Apply one action to a copy of a lorebook. `create(book)` adds and returns a new entry. Returns {book, uid}.
+ * `managed` lists entries Storyloom delivers itself; switching those on is refused (it would send them twice). */
+export function applyAction(source, a, create, managed = []) {
+  const guard = managed.find(m => m.title.toLocaleLowerCase() === a.title.trim().toLocaleLowerCase());
+  if (guard && a.strategy && a.strategy !== 'off') throw Error(`“${a.title}” is switched off on purpose: ${guard.how}. Switching it on would send it twice. Change it in Storyloom’s Memory tab instead.`);
   const book = structuredClone(source);
   const matches = Object.values(book.entries || {}).filter(e => String(e.comment || '').trim().toLocaleLowerCase() === a.title.trim().toLocaleLowerCase());
   let entry;
