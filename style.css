@@ -254,3 +254,9 @@
 #na-panel .storyloom-pick-body > div { margin-top:.1rem; color:#5d4c45; }
 #na-panel .storyloom-pick-body q { font-style:italic; }
 #na-panel .storyloom-diff del { margin-right:.2em; }
+#na-panel .storyloom-mic { width:2rem; height:2rem; flex:none; margin-left:auto; margin-right:.4rem; border:1px solid #d9cbbf; border-radius:50%; background:#fff; color:var(--sl-accent); display:inline-flex; align-items:center; justify-content:center; padding:0; }
+#na-panel .storyloom-proposal .storyloom-mic { margin-left:0; }
+#na-panel .storyloom-mic:hover { border-color:var(--sl-accent); }
+#na-panel .storyloom-mic.is-on { background:#c0392b; border-color:#c0392b; color:#fff; animation:storyloom-pulse 1.2s ease-in-out infinite; }
+#na-panel .storyloom-mic:disabled { opacity:.4; cursor:not-allowed; }
+@keyframes storyloom-pulse { 50% { box-shadow:0 0 0 5px rgba(192,57,43,.25); } }

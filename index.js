@@ -1963,6 +1963,33 @@ function buildExtSettings(openButton,panel) {
   renderExtSettings();
 }
 
+/* ---------- Dictation: speak instead of typing (browser speech recognition) ---------- */
+const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
+let dictation=null;
+const MIC_TIP=SpeechRec?'Dictate: speak instead of typing. Click again to stop. Your browser turns the speech into text (Chrome and Edge use Google’s speech service for this).':'Dictation isn’t available in this browser — it works in Chrome and Edge. SillyTavern’s Speech Recognition extension is another option.';
+function addMic(textarea,host,before=null) {
+  if(!textarea || !host)return;
+  const b=document.createElement('button'); b.type='button'; b.className='storyloom-mic'; b.title=MIC_TIP; b.setAttribute('aria-label','Dictate'); b.setAttribute('aria-pressed','false');
+  b.innerHTML='<i class="fa-solid fa-microphone" aria-hidden="true"></i>'; b.disabled=!SpeechRec;
+  b.onclick=()=>toggleDictation(textarea,b).catch(fail);
+  host.insertBefore(b,before);
+}
+async function toggleDictation(textarea,button) {
+  if(dictation){const same=dictation.button===button; dictation.rec.stop(); if(same)return;}
+  const c=context(), s=(c.extensionSettings.storyloom ??= {});
+  if(!s.dictationOk) {
+    if(!await c.Popup.show.confirm('Use dictation?','<p>Your browser turns what you say into text in this box. In Chrome and Edge the audio is sent to Google’s speech service to do that. Storyloom doesn’t record or keep any audio.</p><p>The browser will ask for microphone access the first time.</p>'))return;
+    s.dictationOk=true; c.saveSettingsDebounced();
+  }
+  const rec=new SpeechRec(); rec.lang=navigator.language||'en-US'; rec.continuous=true; rec.interimResults=true;
+  const base=textarea.value, gap=base && !/\s$/.test(base)?' ':''; let done='';
+  rec.onresult=e=>{let live='';for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)done+=t;else live+=t;} textarea.value=base+gap+(done+live).replace(/^\s+/,''); textarea.dispatchEvent(new Event('input',{bubbles:true}));};
+  rec.onerror=e=>{logEvent(e.error==='no-speech'||e.error==='aborted'?'info':'warn','Dictation',e.error); if(e.error==='not-allowed'||e.error==='service-not-allowed')status('Microphone access is blocked. Allow it for this site in the browser’s settings, then try again.'); else if(e.error==='network')status('Dictation needs an internet connection (the browser’s speech service).'); else if(e.error!=='no-speech'&&e.error!=='aborted')status(`Dictation stopped: ${e.error}.`);};
+  rec.onend=()=>{if(dictation?.rec===rec)dictation=null; button.classList.remove('is-on'); button.setAttribute('aria-pressed','false'); textarea.focus();};
+  dictation={rec,button}; button.classList.add('is-on'); button.setAttribute('aria-pressed','true');
+  rec.start(); logEvent('info','Dictation','started'); status('Listening… click the microphone again to stop.');
+}
+
 function init() {
   const button = document.createElement('button'); button.className='menu_button'; button.textContent='Storyloom';
   const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s setup: the chapter plan is now sent from the Memory tab instead of the lorebook.');}),300);try{options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
@@ -2291,6 +2318,9 @@ function init() {
   setTimeout(()=>{if(storedLinks().length)syncLinks();},4000);
   c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();try{renderExtSettings();}catch{}modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;document.querySelector('#na-session-key').value='';if(!panel.hidden){try{options();status('')}catch{panel.hidden=true}} queueSync(); scheduleDrain();});
   buildExtSettings(button,panel);
+  addMic(document.getElementById('na-input'),document.querySelector('#na-composer .storyloom-compose-footer'),document.getElementById('na-send'));
+  addMic(document.getElementById('na-assistant-input'),document.querySelector('#na-assistant .storyloom-compose-footer'),document.getElementById('na-assistant-send'));
+  addMic(document.getElementById('na-proposal-feedback'),document.querySelector('#na-proposal .storyloom-row'));
   const sourceChanged=(id,deleted=false)=>{try {const d=data(); if(d.watch && (requiresReview(d.processed||[],id) || requiresReview(d.pending||[],id) || (deleted && [...(d.processed||[]),...(d.pending||[])].some(x=>x.index>=id)))) {d.review={index:id}; persist(); status('A previously processed chat message changed. Review your lore before resuming tracking.');}}catch(e){warnLog('Storyloom:',e.message)}};
   c.eventSource.on(c.event_types.MESSAGE_EDITED,id=>sourceChanged(id));
   c.eventSource.on(c.event_types.MESSAGE_DELETED,id=>sourceChanged(id,true));
