@@ -131,3 +131,22 @@ test('the cast list holds only on-page characters, with no minimum', async () =>
   assert.match(text, /never appears in person is not on the cast list/);
   assert.doesNotMatch(text, /at least three/);
 });
+
+test('the proposal is requested in brief, parsed into fields, and becomes the fixed brief', async () => {
+  const {proposalInstruction, parseProposal, validateProposal, approvedBrief, finalizeInstruction} = await import('../interview.mjs');
+  const ask = proposalInstruction('simple', {idea: ['x']});
+  assert.match(ask, /not the outline: no chapter-by-chapter breakdown/);
+  assert.match(ask, /Add nobody the story can do without/);
+  assert.match(proposalInstruction('simple', {}, undefined, {previous: 'OLD', feedback: 'drop the neighbour'}), /drop the neighbour/);
+  const content = 'CORE: Two strangers snowed in at a cabin fall for each other.\nCORE SHARE: 90%\nTIMELINE: One night, 8pm to dawn.\nThe turn comes around midnight.\nWHAT HAPPENS: They argue. They thaw. They stay.\nCHAPTERS: 2\nWORDS PER CHAPTER: 2,500\nCAST:\n- Ann — named by the writer\n- Ben — named by the writer\n- Rita — added: the plough driver who strands them';
+  const p = parseProposal(content);
+  assert.equal(p.coreShare, '90%');
+  assert.equal(p.chapters, '2');
+  assert.match(p.timeline, /One night.*\n.*midnight/);
+  assert.deepEqual(p.cast, [{name: 'Ann', named: true, why: 'named by the writer'}, {name: 'Ben', named: true, why: 'named by the writer'}, {name: 'Rita', named: false, why: 'the plough driver who strands them'}]);
+  assert.doesNotThrow(() => validateProposal({updates: [{title: 'Storyloom Proposal', content}]}));
+  assert.throws(() => validateProposal({updates: [{title: 'Storyloom Proposal', content: 'CORE: x'}]}), /missing TIMELINE, WHAT HAPPENS, CAST/);
+  const brief = approvedBrief(p, ['Total: about 5,000 words.']);
+  assert.match(brief, /exactly these people, no others: Ann, Ben, Rita/);
+  assert.match(finalizeInstruction('simple', {}, undefined, 'plan', brief), /^APPROVED PROPOSAL/);
+});

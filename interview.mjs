@@ -36,7 +36,7 @@ export function requiredTitles(t=NOVEL,part='all') {
  * The final step is split so each reply fits the response budget:
  * part 'plan' = summary, planning entries, cast, directive; part 'outline' = the outline alone.
  */
-export function finalizeInstruction(mode,answers={},t=NOVEL,part='all') {
+export function finalizeInstruction(mode,answers={},t=NOVEL,part='all',approved='') {
   const unit=t.unit, units=unit.toLowerCase()+'s', count=unitCountField(t), voice=voiceEntry(t);
   const source=mode==='deep'?'The writer’s answers and the ideas they agreed to in the conversation':'The writer’s answers';
   const fill=`${source} are fixed facts; never contradict them. Hard limits: if the writer gave a number of ${units}, a length, or named who the characters are or how many there are, the plan uses exactly that — never more ${units}, never extra characters, never events that will not fit that length. ${P('fill')}${count?` If the writer did not specify how many ${units}, use six as an AI-suggested starting point, which they can change.`:''}`;
@@ -49,8 +49,9 @@ export function finalizeInstruction(mode,answers={},t=NOVEL,part='all') {
   const ask=`Return the following ${titles.length} complete ${titles.length===1?'entry':'entries'} as entry blocks, even if ${titles.length===1?'it already exists':'they already exist'}: ${titles.map(quote).join(', ')}.`;
   const extra='If the writer asked for something specific that an entry has no heading for, add a new capitalised heading line of your own for it in that entry rather than squeezing it under another heading. These entries are a starting point, not a limit: only if the story has something important that fits none of them, invent a new entry for it with your own title and name keys; otherwise do not add entries. ';
   const tail=`${extra}${keys} Reply conversationally. Answers by topic (null means skipped): ${JSON.stringify(answers)}`;
-  if(part==='plan')return `The interview is complete. ${fill} ${ask} ${planRules} The ${t.outline.title} is written in the next step; do not include it now. ${tail}`;
-  if(part==='outline')return `The plan is saved in the current entries (${t.summary.title}, ${t.entries.map(e=>e.title).join(', ')}, ${t.cast}). Now write the ${t.outline.title} from it, keeping every saved fact. ${ask} ${outlineRules} Return the outline entry; if writing it reveals something the story needs that no entry covers yet, add that as a new entry too. ${tail}`;
+  const brief=approved?`${approved}\n\n`:'';
+  if(part==='plan')return `${brief}The interview is complete. ${fill} ${ask} ${planRules} The ${t.outline.title} is written in the next step; do not include it now. ${tail}`;
+  if(part==='outline')return `${brief}The plan is saved in the current entries (${t.summary.title}, ${t.entries.map(e=>e.title).join(', ')}, ${t.cast}). Now write the ${t.outline.title} from it, keeping every saved fact. ${ask} ${outlineRules} Return the outline entry; if writing it reveals something the story needs that no entry covers yet, add that as a new entry too. ${tail}`;
   return `The interview is complete. ${fill} ${ask} ${planRules} ${outlineRules} ${tail}`;
 }
 /**
@@ -62,6 +63,57 @@ export function reviewInstruction(answers={},protectedTitles=REVIEW_PROTECTED) {
   return `${P('review')}
 For every change, your reply must point to the specific part of the story that requires it; if you cannot point to one, do not make the change. Never change: ${protectedTitles.join(', ')}. Never contradict established facts or the writer's answers.
 If nothing needs changing, reply with one sentence saying so and write no entry blocks. Writer's answers by topic (null means skipped): ${JSON.stringify(answers)}`;
+}
+/* ---------- Proposal: agreed with the writer before anything is built ---------- */
+export const PROPOSAL_TITLE='Storyloom Proposal';
+export function proposalInstruction(mode,answers={},t=NOVEL,{feedback='',previous=''}={}) {
+  const unit=t.unit, units=unit.toLowerCase()+'s';
+  const base=`Before anything is built, propose the story to the writer in brief so they can approve or change it. This is not the outline: no ${unit.toLowerCase()}-by-${unit.toLowerCase()} breakdown.
+Return exactly one entry block titled "${PROPOSAL_TITLE}" with these lines, in this order:
+CORE: what the story is about, in one or two sentences — the thing most of the words will be spent on.
+CORE SHARE: roughly what share of the words the core gets, as a percentage. Use the writer's own words if they said it (e.g. "the whole thing" means about 90%).
+TIMELINE: the span of story time and roughly where the main moments fall within it, in two to four short lines.
+WHAT HAPPENS: three to six sentences, start to finish, in general terms.
+${unit.toUpperCase()}S: a number (the writer's, if they gave one).
+WORDS PER ${unit.toUpperCase()}: a number (the writer's, if they gave one).
+CAST: one line per person who appears on the page — "- Name — named by the writer", or "- Name — added: why the story cannot work without them". Add nobody the story can do without; people who are only mentioned are not cast.
+The writer's chapter count, length and named people are fixed. Keep it short — the whole block under 300 words. Reply with one or two sentences.
+Writer's answers by topic (null means skipped): ${JSON.stringify(answers)}`;
+  if(!previous)return base;
+  return `${base}
+
+Your previous proposal:
+${previous}
+
+The writer asked for these changes — apply them exactly and keep everything else:
+${feedback}`;
+}
+/** Read the proposal block into fields. */
+export function parseProposal(content,unit='Chapter') {
+  const text=String(content||'');
+  const line=label=>(text.match(new RegExp(`^[\\s*_-]*${label}\\s*:\\s*(.*)$`,'mi'))||[])[1]?.trim()||'';
+  const block=label=>{const m=text.match(new RegExp(`^[\\s*_-]*${label}\\s*:\\s*([\\s\\S]*?)(?=^[\\s*_-]*[A-Z][A-Z ]{2,30}:|$(?![\\s\\S]))`,'m'));return m?m[1].trim():'';};
+  const cast=block('CAST').split('\n').map(l=>l.replace(/^[\s*•-]+/,'').trim()).filter(Boolean).map(l=>{
+    const [name,...rest]=l.split(/\s+[—–-]\s+/);const note=rest.join(' — ');
+    return {name:name.replace(/\*\*/g,'').trim(),named:/named by the writer/i.test(note),why:note.replace(/^added:\s*/i,'').trim()};
+  }).filter(c=>c.name && c.name.length<80);
+  return {core:block('CORE'),coreShare:line('CORE SHARE'),timeline:block('TIMELINE'),happens:block('WHAT HAPPENS'),chapters:line(`${unit.toUpperCase()}S`),wordsPerChapter:line(`WORDS PER ${unit.toUpperCase()}`),cast};
+}
+export function validateProposal(result,unit='Chapter') {
+  const u=(result?.updates||[]).find(x=>String(x.title).trim().toLocaleLowerCase()===PROPOSAL_TITLE.toLocaleLowerCase());
+  if(!u)throw Error(`The proposal is missing: return one entry block titled "${PROPOSAL_TITLE}".`);
+  const p=parseProposal(u.content,unit);
+  const missing=[['CORE',p.core],['TIMELINE',p.timeline],['WHAT HAPPENS',p.happens],['CAST',p.cast.length]].filter(([,v])=>!v).map(([k])=>k);
+  if(missing.length)throw Error(`The proposal is missing ${missing.join(', ')}.`);
+}
+/** Fixed brief for the plan and outline steps once the writer approved the proposal. */
+export function approvedBrief(p,budgetLines=[],unit='Chapter') {
+  return `APPROVED PROPOSAL — the writer approved this; build exactly this story, nothing more.
+Core: ${p.core} (${p.coreShare||'share not given'})
+Timeline: ${p.timeline}
+What happens: ${p.happens}
+Cast on the page — exactly these people, no others: ${p.cast.map(c=>c.name).join(', ')}. Anyone else may only be mentioned in passing.
+Word budget (calculated): ${budgetLines.join(' ')}`;
 }
 function fieldValue(content,label) {
   const lines=String(content).split('\n');const expected=label.toLocaleLowerCase()+':';

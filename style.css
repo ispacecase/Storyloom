@@ -183,3 +183,13 @@
 #na-panel .storyloom-mem-header-label small { font-weight:400; color:var(--sl-muted); }
 #na-panel .storyloom-memory-item textarea.na-mem-header { font-size:11px; min-height:2.6rem; }
 #na-panel .storyloom-memory-item textarea[readonly] { background:#faf6f1; color:#6b5c55; }
+#na-panel .storyloom-proposal { flex:none; margin:.5rem 0; padding:.7rem .8rem; border:1px solid #b5775c; border-radius:12px; background:#fffaf5; font-size:.78rem; color:#4f3f39; max-height:55vh; overflow:auto; }
+#na-panel .storyloom-proposal-text { margin:.2rem 0 .3rem; white-space:pre-wrap; line-height:1.45; }
+#na-panel .storyloom-proposal-text.storyloom-budget { font:11.5px/1.5 ui-monospace,monospace; background:#fff; padding:.4rem; border-radius:6px; }
+#na-panel .storyloom-proposal-text.is-warning { color:#a33a2a; font-weight:650; }
+#na-panel .storyloom-proposal textarea { width:100%; box-sizing:border-box; margin:.4rem 0; border:1px solid #d9cbbf; border-radius:8px; padding:.4rem; font-size:.8rem; background:#fff; color:var(--sl-ink); }
+#na-panel .storyloom-proposal button, #na-panel .storyloom-budget-box button { border:1px solid #dfd1c3; border-radius:8px; padding:.35rem .65rem; background:#fffaf5; color:#604b43; font-size:.74rem; }
+#na-panel #na-proposal-approve { background:var(--sl-accent); color:#fff; border-color:var(--sl-accent); }
+#na-panel .storyloom-budget-box { flex:none; margin:.4rem 0; border:1px solid var(--sl-line); border-radius:10px; background:#fffdf9; font-size:.75rem; }
+#na-panel .storyloom-budget-box pre { margin:0 .7rem .4rem; white-space:pre-wrap; font:11.5px/1.5 ui-monospace,monospace; color:var(--sl-ink); }
+#na-panel .storyloom-budget-box .storyloom-hint { margin:0 .7rem .6rem; }

@@ -24,7 +24,8 @@ import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPr
 import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
-import { requiredTitles, reviewInstruction, REVIEW_PROTECTED } from './interview.mjs';
+import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
+import { wordBudget, castFit, budgetLines, SCENE_MIN } from './budget.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
 
 const KEY = 'novelArchitect';
@@ -201,6 +202,8 @@ const TIPS={
   'na-tab-memory':'What the story chat remembers between chapters, and where it goes in the prompt. Also where you finish a chapter.',
   'na-finish-chapter':'Summarise this chapter’s chat, update Story so far, move to the next chapter and open a fresh chat with everything carried over.',
   'na-update':'A newer Storyloom is on GitHub. Click to install it and reload SillyTavern; your novels and settings stay as they are.',
+  'na-proposal-approve':'Build the plan, outline and characters exactly to this proposal.',
+  'na-proposal-revise':'Rewrite the proposal with the change you typed; nothing is built yet.',
   'na-chapter':'Which chapter the story is on. The main chat only gets this chapter’s plan (in the always-on “Current Chapter” entry), so it doesn’t run ahead.',
 };
 function showMessages() {
@@ -239,6 +242,8 @@ function options() {
   renderDirectConnection(d);
   renderTemplates(d);
   renderPromptEditor();
+  renderProposal();
+  renderBudget(d);
   renderLinks();
   renderSuggestions();
   showMessages();
@@ -705,6 +710,65 @@ async function updateStoryloom() {
   status('Updated. Reloading…');
   setTimeout(()=>location.reload(),800);
 }
+/* ---------- Proposal (approved before anything is built) and word budget ---------- */
+/** Approved cast = the people the writer named, plus added people only while they fit the word budget's room. */
+function allowedCast(d) {
+  const all=(d.proposal?.fields?.cast||[]).map(c=>c.name), named=new Set(d.budget?.namedCast||[]);
+  const added=all.filter(n=>!named.has(n)), room=Number.isFinite(d.budget?.room)?d.budget.room:added.length;
+  return [...all.filter(n=>named.has(n)),...added.slice(0,room)];
+}
+/** Names in the proposal that the writer actually named in their answers. */
+function writerNamed(d,cast) {
+  const said=Object.values(d.interview?.answers||{}).flat().filter(Boolean).join('\n').toLocaleLowerCase();
+  return cast.filter(c=>{const first=c.name.split(/\s+/)[0].toLocaleLowerCase();return first && new RegExp(`(^|[^\\p{L}])${first.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}([^\\p{L}]|$)`,'u').test(said);}).map(c=>c.name);
+}
+function proposalBudget(d) {
+  const f=d.proposal?.fields; if(!f)return null;
+  return wordBudget({chapters:f.chapters,wordsPerChapter:f.wordsPerChapter,coreText:`${f.coreShare} ${f.core}`,namedCast:writerNamed(d,f.cast)});
+}
+async function makeProposal(feedback='') {
+  requireIdle();
+  const d=data(), t=tpl(d), previous=d.proposal?.text||'';
+  const opts={silentUser:true,capture:[PROPOSAL_TITLE],dropTitles:[PROPOSAL_TITLE],loreBudget:20000,check:v=>validateProposal(v,t.unit),guidance:'Write a brief proposal for the writer to approve. Do not build the plan yet.'};
+  status(feedback?'Revising the proposal…':'Writing a short proposal for you to approve…');
+  await interact(proposalInstruction(d.interview.mode,d.interview.answers,t,feedback?{feedback,previous}:{}),false,null,null,'proposal',false,opts);
+  const block=opts.captured?.[0];
+  if(!block)throw Error('No proposal came back. Try “Create outline” again.');
+  d.proposal={text:block.content,fields:parseProposal(block.content,t.unit),at:new Date().toISOString(),feedback};
+  await persist(); options();
+  status('Here’s what I’d build. Approve it, or say what to change — nothing is built until you approve.');
+}
+function renderProposal() {
+  const box=document.getElementById('na-proposal'); if(!box)return;
+  let d; try{d=data();}catch{box.hidden=true;return;}
+  const show=d.interview?.phase==='outline' && d.proposal && !d.interview.proposalApproved;
+  box.hidden=!show; if(!show)return;
+  const f=d.proposal.fields, t=tpl(d), b=proposalBudget(d), fit=castFit(b,f.cast.map(c=>c.name));
+  const body=box.querySelector('.storyloom-proposal-body'); body.replaceChildren();
+  const add=(label,text,cls='')=>{if(!text)return;const l=document.createElement('div');l.className='storyloom-sugg-label';l.textContent=label;const p=document.createElement('p');p.className='storyloom-proposal-text '+cls;p.textContent=text;body.append(l,p);};
+  add('What it’s about',`${f.core}${f.coreShare?` (${f.coreShare} of the words)`:''}`);
+  add('Timeline',f.timeline);
+  add('What happens',f.happens);
+  add('Length',[f.chapters&&`${f.chapters} ${t.unit.toLowerCase()}s`,f.wordsPerChapter&&`about ${f.wordsPerChapter} words each`].filter(Boolean).join(', '));
+  const named=new Set(b.namedCast||[]);
+  add('Who’s in it',f.cast.map(c=>named.has(c.name)?`• ${c.name} — you named them`:`• ${c.name} — added: ${c.why||'no reason given'} (needs ~${SCENE_MIN} words)`).join('\n'));
+  add('Word budget (calculated)',budgetLines(b,t.unit).join('\n'),'storyloom-budget');
+  if(!fit.fits)add('Doesn’t fit',`This adds ${fit.added.length} character${fit.added.length===1?'':'s'} (${fit.added.join(', ')}), but there is room for ${fit.room}. Ask to drop them below, or approve anyway — extras beyond the room will wait as Suggestions.`,'is-warning');
+}
+async function approveProposal() {
+  const d=data(), t=tpl(d), b=proposalBudget(d);
+  d.interview={...d.interview,proposalApproved:true};
+  d.budget={...b,unit:t.unit};
+  await persist(); options();
+  await finishInterview();
+}
+function renderBudget(d) {
+  const box=document.getElementById('na-budget'); if(!box)return;
+  const show=!!d?.budget?.total && d.interview?.phase==='done';
+  box.hidden=!show; if(!show)return;
+  box.querySelector('pre').textContent=budgetLines(d.budget,d.budget.unit||tpl(d).unit).join('\n');
+}
+
 function renderChapters(d) {
   const label=document.getElementById('na-chapter-label'), select=document.getElementById('na-chapter');
   const chapters=d.outlineChapters||[];
@@ -934,6 +998,12 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if(controller.signal.aborted)throw Error('Stopped. Your message is still in the box.');
     document.getElementById('na-cancel-model').hidden=true;
     if(interview?.requiredCharacterTitle) result.updates=[requiredCharacterUpdate(result,interview.requiredCharacterTitle)];
+    if(interview?.check) result=await repairOutline(result,v=>interview.check(v),async (previous,issue)=>{
+      if(context().chatId!==chatId || data()!==d)throw Error('Chat changed; nothing saved.');
+      status('Fixing the answer’s format…');
+      return parseAssistant(await ask(`${prompt}\n\nYour previous answer needs correction: ${issue} Return it again in full.`,system));
+    });
+    if(interview?.capture) {const want=new Set(interview.capture.map(x=>x.toLocaleLowerCase()));interview.captured=(result.updates||[]).filter(u=>want.has(String(u.title).trim().toLocaleLowerCase()));}
     if(interview?.dropTitles) {const drop=new Set(interview.dropTitles.map(x=>x.toLocaleLowerCase()));result.updates=(result.updates||[]).filter(u=>!drop.has(String(u.title).trim().toLocaleLowerCase()));}
     if(interview?.collaborative && d.interview?.phase==='asking') {
       const prior=[...d.messages].reverse().find(m=>m.role==='assistant')?.content || '';
@@ -948,13 +1018,14 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if (JSON.stringify(fresh) !== JSON.stringify(before)) throw new Error('Lorebook changed while generating; nothing saved. Please retry.');
     // The writer named the characters: extra cast members wait for approval instead of getting profiles automatically.
     let castHeld=null;
-    const writerPeople=(d.interview?.answers?.people||[]).join('\n');
+    const approvedCast=d.interview?.proposalApproved?allowedCast(d).join(', '):'';
+    const writerPeople=approvedCast || (d.interview?.answers?.people||[]).join('\n');
     if(interview?.part==='plan' && writerPeople.trim()) {
       const castUpdate=(result.updates||[]).find(u=>String(u.title).trim().toLocaleLowerCase()===tpl(d).cast.toLocaleLowerCase());
       if(castUpdate) {
         const {kept,extras}=splitExtraCast(castUpdate.content,writerPeople);
         if(extras.length && kept.includes('|')) {
-          castHeld={title:castUpdate.title.trim(),content:`${kept}\n${extras.join('\n')}`,keys:castUpdate.keys||[castUpdate.title],kind:'change',source:'cast',reason:`You named the characters, so the cast list was saved with only them. The AI also wants to add: ${extras.map(l=>l.split('|')[0].replace(/\*\*/g,'').trim()).join(', ')}. Approve to add them (each gets a full profile); skip to keep the cast as you wrote it.`};
+          castHeld={title:castUpdate.title.trim(),content:`${kept}\n${extras.join('\n')}`,keys:castUpdate.keys||[castUpdate.title],kind:'change',source:'cast',reason:`${approvedCast?'The approved proposal fixed the cast':'You named the characters'}, so the cast list was saved with only them. The AI also wants to add (each needs ~${SCENE_MIN} words of the budget): ${extras.map(l=>l.split('|')[0].replace(/\*\*/g,'').trim()).join(', ')}. Approve to add them (each gets a full profile); skip to keep the cast as you wrote it.`};
           castUpdate.content=kept;
         }
       }
@@ -1285,15 +1356,18 @@ async function finishInterview() {
     requireIdle();const d=data(), interview=d.interview;
     if(interview?.phase!=='outline')throw Error('Finish the questions before creating the outline.');
     const t=tpl(d);
+    // Nothing is built until the writer approves a short proposal (core, timeline, cast, word budget).
+    if(!interview.proposalApproved){ if(!d.proposal)await makeProposal(); else {options();status('Approve the proposal, or say what to change.');} return; }
+    const brief=d.proposal?approvedBrief({...d.proposal.fields,cast:d.proposal.fields.cast.filter(c=>allowedCast(d).includes(c.name))},budgetLines(d.budget,t.unit),t.unit):'';
     // Two requests so each reply fits the response budget (reasoning models spend part of it thinking).
     if(!interview.planSaved) {
       status(`Step 1 of 2: filling in ${t.summary.title} and the planning entries…`);
-      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan'),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',holdForAuthor:'extras',silentUser:true,loreBudget:60000});
+      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan',brief),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',holdForAuthor:'extras',silentUser:true,loreBudget:60000});
       if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
       d.interview={...d.interview,planSaved:true}; await persist();
     }
     status(`Step 2 of 2: writing the ${t.outline.title}…`);
-    const result=await interact(finalizeInstruction(interview.mode,interview.answers,t,'outline'),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,holdForAuthor:'extras',part:'outline',silentUser:true,loreBudget:60000});
+    const result=await interact(finalizeInstruction(interview.mode,interview.answers,t,'outline',brief),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,holdForAuthor:'extras',part:'outline',silentUser:true,loreBudget:60000});
     if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
     const outline=result.updates.find(x=>x.title.trim().toLocaleLowerCase()===t.outline.title.toLocaleLowerCase());
     d.messages.push({role:'assistant',content:'Here is your outline:\n\n'+outline.content});
@@ -1436,6 +1510,7 @@ function init() {
         <button id="na-profiles" type="button" hidden title="Writes a full entry (history, personality, motivation, arc…) for every person in the cast list. Existing profiles are rewritten.">Write character profiles</button>
       </div>
     </div>
+    <details id="na-budget" class="storyloom-budget-box" hidden><summary>Story budget</summary><pre></pre><p class="storyloom-hint">Calculated from the approved proposal: length categories from SFWA, scene length ~750–2,000 words from writing-craft guides, core written as scene and the rest as summary (Genette).</p></details>
     <section id="na-suggestions" class="storyloom-suggestions" hidden><strong>Suggestions waiting for you (<span class="storyloom-sugg-count">0</span>)</strong><p class="storyloom-hint">Extra entries and changes the AI thinks the story needs. Nothing here is saved until you approve it.</p><ul></ul></section>
     <details class="storyloom-reference">
       <summary>Reference &amp; characters</summary><p class="storyloom-hint">Use another lorebook — say, an earlier book in a series or a world you already built — as source material. Storyloom reads it for ideas and to copy characters from. It only ever changes it if you choose “Keep in sync” for a character.</p>
@@ -1457,6 +1532,7 @@ function init() {
       <button id="na-deep" type="button" class="storyloom-mode"><span class="storyloom-mode-icon" aria-hidden="true">◇</span><strong>Deep</strong><small>Explore each part together, at your pace.</small><span class="storyloom-arrow" aria-hidden="true">↗</span></button>
     </div>
     <section id="na-progress" class="storyloom-question"><span id="na-step-label" class="storyloom-eyebrow"></span><p id="na-question"></p></section>
+    <section id="na-proposal" class="storyloom-proposal" hidden><strong>Here’s what I’d build</strong><p class="storyloom-hint">Nothing is built until you approve. To change something, say it below and I’ll revise the proposal.</p><div class="storyloom-proposal-body"></div><textarea id="na-proposal-feedback" rows="2" placeholder="What should change? e.g. “no other people”, “make it one night”"></textarea><div class="storyloom-row"><button id="na-proposal-approve" type="button">Approve and build</button><button id="na-proposal-revise" type="button">Revise</button></div></section>
     <div id="na-messages" role="log" aria-live="polite" aria-label="Storyloom conversation"></div>
     <div id="na-interview-controls" class="storyloom-flow"><button id="na-skip" type="button">Skip for now <span aria-hidden="true">→</span></button><button id="na-next" type="button">Next topic <span aria-hidden="true">→</span></button><button id="na-outline" type="button">Create outline <span aria-hidden="true">→</span></button></div>
     <div id="na-composer" class="storyloom-composer"><label class="storyloom-sr-only" for="na-input">Message Storyloom</label><textarea id="na-input" placeholder="Tell me what you’re thinking…"></textarea><div class="storyloom-compose-footer"><span>YOUR STORY, YOUR WAY</span><button id="na-send" type="button">Send <span aria-hidden="true">↗</span></button></div></div>
@@ -1641,6 +1717,8 @@ function init() {
     changeBook(name);await persist();options();await setupNovel();status('New lorebook linked to this chat.');
   }catch(e){fail(e)}};
   panel.querySelector('#na-profiles').onclick=()=>writeProfiles();
+  panel.querySelector('#na-proposal-approve').onclick=async()=>{lastAction='Approve and build';try{await approveProposal();}catch(e){fail(e);}};
+  panel.querySelector('#na-proposal-revise').onclick=async()=>{lastAction='Revise';const box=panel.querySelector('#na-proposal-feedback'),v=box.value.trim();if(!v){status('Say what should change first.');return;}try{await makeProposal(v);box.value='';}catch(e){fail(e);}};
   panel.querySelector('#na-update').onclick=()=>updateStoryloom().catch(fail);
   panel.querySelector('#na-tab-story').onclick=()=>{activeTab='story';settingsOpen=false;renderPanelView();};
   panel.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
