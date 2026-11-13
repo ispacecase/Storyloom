@@ -78,7 +78,7 @@ test('the cast list is labelled as an index, once', async () => {
 test('switched-off planning entries say why, once, without breaking the chapter list', () => {
   const book = {entries: {1: {uid: 1, comment: 'Novel Outline', content: outline}, 2: {uid: 2, comment: 'Story Scale', content: 'CHAPTERS: 2'}}};
   const out = layoutBook(layoutBook(book, {create: b => (b.entries[9] = {uid: 9})}), {create: () => null});
-  assert.match(out.entries[1].content, /^\(Storyloom: the full outline, kept for planning and switched off on purpose/);
+  assert.match(out.entries[1].content, /^\(Storyloom: switched off here on purpose\. The Memory tab sends it as “Whole outline”/);
   assert.equal(out.entries[1].content.match(/\(Storyloom:/g).length, 1);
   assert.match(out.entries[2].content, /^\(Storyloom: planning notes, switched off on purpose/);
   assert.deepEqual(chapterList(out.entries[1].content).map(c => c.number), [1, 2]);

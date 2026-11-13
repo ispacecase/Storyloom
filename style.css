@@ -179,3 +179,7 @@
 #na-panel .storyloom-suggestions pre { max-height:9rem; margin:.25rem 0 .35rem; }
 
 #na-panel #na-send:disabled, #na-panel #na-assistant-send:disabled { opacity:.55; cursor:wait; }
+#na-panel .storyloom-mem-header-label { display:flex; flex-direction:column; gap:.2rem; margin-top:.4rem; font-size:.68rem; font-weight:650; }
+#na-panel .storyloom-mem-header-label small { font-weight:400; color:var(--sl-muted); }
+#na-panel .storyloom-memory-item textarea.na-mem-header { font-size:11px; min-height:2.6rem; }
+#na-panel .storyloom-memory-item textarea[readonly] { background:#faf6f1; color:#6b5c55; }

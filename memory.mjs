@@ -14,10 +14,20 @@ export const MEMORY_ITEMS = Object.freeze([
     header: 'PREVIOUSLY (summary of the last chapter):',
     place: {where: 'chat-start', depth: 0, role: 'system'}},
   {key: 'chapter', title: 'Current Chapter', label: 'This chapter',
-    hint: 'The plan for the chapter you are on, from the outline. Updated automatically when you change chapter.',
-    header: '',
+    hint: 'The plan for the chapter you are on, from the outline, with its target length and a line for each later chapter. Updated automatically when you change chapter.',
+    header: 'THIS {UNIT} — what you are writing now:',
     place: {where: 'chat-depth', depth: 3, role: 'system'}},
+  {key: 'outline', title: null, label: 'Whole outline', fromOutline: true,
+    hint: 'The full outline, so the AI knows where the whole story is going. The instruction around it tells the AI it is for orientation and not to write ahead. Edit the outline itself in the lorebook.',
+    header: 'FULL OUTLINE — for orientation only. You are writing {Unit} {chapter}. Use this to know where the story is heading, to set up what later {units} need, and to avoid using up their events early. Never write past the end of {Unit} {chapter}.',
+    place: {where: 'system-end', depth: 0, role: 'system'}},
 ]);
+/** Fill {chapter}, {unit}, {Unit}, {units} in an instruction. */
+export function fillHeader(header, {chapter = 1, unit = 'Chapter'} = {}) {
+  return String(header || '').replace(/\{chapter\}/g, String(chapter)).replace(/\{Unit\}/g, unit).replace(/\{UNIT\}/g, unit.toUpperCase()).replace(/\{units\}/g, unit.toLowerCase() + 's').replace(/\{unit\}/g, unit.toLowerCase());
+}
+/** Text sent for an outline entry: without Storyloom's own "(Storyloom: …)" note line. */
+export const outlineBody = text => String(text || '').replace(/^\(Storyloom:[^\n]*\)\n?/, '').trim();
 export const WHERE = Object.freeze({
   off: 'Off — not sent',
   top: 'Top of the prompt (before everything)',
@@ -32,11 +42,12 @@ const ROLE = {system: 0, user: 1, assistant: 2};
 export function memoryKey(item) { return `storyloom_memory_${item.key}`; }
 
 /** Arguments for setExtensionPrompt(key, value, position, depth, scan, role). */
-export function injection(item, text, place = item.place) {
+export function injection(item, text, place = item.place, vars = {}) {
   const body = String(text || '').trim();
   const where = place?.where in WHERE ? place.where : item.place.where;
   if (!body || where === 'off') return {value: '', position: 0, depth: 0, role: 0};
-  const value = item.header ? `${item.header}\n${body}` : body;
+  const header = fillHeader(place?.header ?? item.header, vars).trim();
+  const value = header ? `${header}\n${body}` : body;
   const role = ROLE[place?.role] ?? 0;
   if (where === 'top') return {value, position: 2, depth: 0, role};
   if (where === 'system-end') return {value, position: 0, depth: 0, role};

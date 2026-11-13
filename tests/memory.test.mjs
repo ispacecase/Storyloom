@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MEMORY_ITEMS, injection, transcriptOf, chapterEndInstruction, summaryTitle, CHAT_START_DEPTH} from '../memory.mjs';
-const [sofar, previously, chapter] = MEMORY_ITEMS;
+const [sofar, previously, chapter, outline] = MEMORY_ITEMS;
 
 test('placements map to SillyTavern injection positions', () => {
   assert.deepEqual(injection(sofar, 'Ruth found the folio.'), {value: `${sofar.header}\nRuth found the folio.`, position: 1, depth: CHAT_START_DEPTH, role: 0});
-  assert.deepEqual(injection(chapter, 'Plan', {where: 'chat-depth', depth: 4, role: 'assistant'}), {value: 'Plan', position: 1, depth: 4, role: 2});
+  assert.deepEqual(injection(chapter, 'Plan', {where: 'chat-depth', depth: 4, role: 'assistant'}, {unit: 'Session'}), {value: 'THIS SESSION — what you are writing now:\nPlan', position: 1, depth: 4, role: 2});
+  assert.equal(injection(chapter, 'Plan', {where: 'chat-depth', depth: 4, header: ''}).value, 'Plan', 'an emptied instruction sends just the text');
+  assert.match(injection(outline, 'Chapter 1 — x', outline.place, {chapter: 2}).value, /^FULL OUTLINE — for orientation only\. You are writing Chapter 2\./);
+  assert.match(injection(outline, 'x', {where: 'top', header: 'Custom for {units} after {chapter}:'}, {chapter: 3}).value, /^Custom for chapters after 3:/);
   assert.equal(injection(previously, 'x', {where: 'top', role: 'user'}).position, 2);
   assert.equal(injection(previously, 'x', {where: 'system-end'}).position, 0);
   assert.equal(injection(sofar, 'x', {where: 'off'}).value, '');

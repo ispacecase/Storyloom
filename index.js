@@ -21,7 +21,7 @@ import { castNames, characterProfilesInstruction, validateCharacters, characterT
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
-import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState } from './memory.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED } from './interview.mjs';
@@ -358,15 +358,15 @@ async function storyloomManaged() {
   let d; try{d=data();}catch{return {managed,memory};}
   if(!d?.book)return {managed,memory};
   const t=tpl(d), c=context();
-  managed.push({title:t.outline.title,how:'the full outline is planning-only; only the current chapter’s plan is sent, from the Memory tab'});
+  managed.push({title:t.outline.title,how:'kept switched off in the lorebook; the Memory tab sends it (“Whole outline”) with an instruction not to write ahead, at the writer’s chosen position'});
   for(const e of t.entries)if(e.show==='off')managed.push({title:e.title,how:'planning notes the story does not need'});
   managed.push({title:t.cast,how:'the cast index Storyloom uses; full character entries are the “Character — Name” entries'});
   managed.push({title:'Current Writing Directive',how:'sent through the Author’s Note, which Storyloom keeps in sync'});
   managed.push({title:'Storyloom Interview Notes',how:'the planning interview record'});
   let book=null; try{if(c.getWorldInfoNames().includes(d.book))book=await freshBook(d.book);}catch{}
   for(const item of MEMORY_ITEMS) {
-    managed.push({title:item.title,how:`sent by the Memory tab as “${item.label}”`});
-    const e=book?findEntry(book,item.title):null, place=e?.storyloom_memory||item.place, w=(String(e?.content||'').match(/\S+/g)||[]).length;
+    if(!item.fromOutline)managed.push({title:item.title,how:`sent by the Memory tab as “${item.label}”`});
+    const e=book?findEntry(book,memoryTitle(item,d)):null, place=e?.storyloom_memory||item.place, w=(String(e?.content||'').match(/\S+/g)||[]).length;
     memory.push({label:item.label,words:place.where==='off'?0:w,where:place.where==='chat-depth'?`${place.depth} messages from the end as ${place.role}`:`${WHERE[place.where]||place.where} as ${place.role}`});
   }
   for(const e of Object.values(book?.entries||{}))if(/^storyloom memory\s*[—–-]/i.test(String(e.comment||'')) && !managed.some(m=>m.title===e.comment))managed.push({title:e.comment,how:'chapter memory kept for Storyloom'});
@@ -557,14 +557,18 @@ async function upgradeLayout(d=null,book=null) {
     return true;
   } catch(e) {console.warn('Storyloom layout upgrade:',e); return false;}
 }
+/** The lorebook entry behind a memory item (the outline item uses the template's outline entry). */
+const memoryTitle=(item,d)=>item.fromOutline?tpl(d).outline.title:item.title;
+const memoryText=(item,e)=>item.fromOutline?outlineBody(e?.content):String(e?.content||'');
 /** Send each memory item into the main chat's prompt with its chosen placement (or clear it). */
 async function applyMemory() {
   const c=context();
-  let book=null;
-  try {const d=data(); if(d.book && c.chatMetadata?.world_info===d.book && c.getWorldInfoNames().includes(d.book))book=await freshBook(d.book);} catch {}
+  let book=null, d=null;
+  try {d=data(); if(d.book && c.chatMetadata?.world_info===d.book && c.getWorldInfoNames().includes(d.book))book=await freshBook(d.book);} catch {}
+  const vars={chapter:d?.chapter||1,unit:d?tpl(d).unit:'Chapter'};
   for(const item of MEMORY_ITEMS) {
-    const e=book?findEntry(book,item.title):null;
-    const inj=injection(item,e?.content||'',e?.storyloom_memory||item.place);
+    const e=book&&d?findEntry(book,memoryTitle(item,d)):null;
+    const inj=injection(item,book?memoryText(item,e):'',e?.storyloom_memory||item.place,vars);
     c.setExtensionPrompt(memoryKey(item),inj.value,inj.position,inj.depth,false,inj.role);
   }
 }
@@ -578,9 +582,10 @@ async function saveMemoryItem(item,content,place) {
   syncing=true;
   try {
     const before=await freshBook(d.book), book=structuredClone(before);
-    let entry=findEntry(book,item.title);
-    if(!entry){entry=createWorldInfoEntry(d.book,book); if(!entry)throw Error('Could not create the memory entry.'); entry.comment=item.title; entry.key=[];}
-    if(content!==undefined)entry.content=content;
+    const title=memoryTitle(item,d);
+    let entry=findEntry(book,title);
+    if(!entry){if(item.fromOutline)throw Error('This novel has no outline entry yet.'); entry=createWorldInfoEntry(d.book,book); if(!entry)throw Error('Could not create the memory entry.'); entry.comment=title; entry.key=[];}
+    if(content!==undefined && !item.fromOutline)entry.content=content;
     if(place)entry.storyloom_memory=place;
     entry.disable=true; entry.constant=false;
     await c.saveWorldInfo(d.book,book,true);
@@ -604,8 +609,10 @@ async function renderMemory() {
   root_.querySelector('#na-finish-label').textContent=`You are on ${t.unit} ${n}${total?` of ${total}`:''}.`;
   root_.querySelector('#na-finish-chapter').textContent=n<total?`Finish ${t.unit} ${n} → start ${t.unit} ${n+1}`:`Finish ${t.unit} ${n}`;
   for(const item of MEMORY_ITEMS) {
-    const box=root_.querySelector(`[data-memory="${item.key}"]`), e=book?findEntry(book,item.title):null, place=e?.storyloom_memory||item.place;
-    box.querySelector('textarea').value=e?.content||'';
+    const box=root_.querySelector(`[data-memory="${item.key}"]`), e=book?findEntry(book,memoryTitle(item,d)):null, place=e?.storyloom_memory||item.place;
+    box.querySelector('.na-mem-text').value=memoryText(item,e);
+    box.querySelector('.na-mem-text').readOnly=!!item.fromOutline;
+    box.querySelector('.na-mem-header').value=place.header ?? item.header;
     box.querySelector('.na-mem-where').value=place.where;
     box.querySelector('.na-mem-depth').value=String(place.depth??3);
     box.querySelector('.na-mem-role').value=place.role||'system';
@@ -617,7 +624,8 @@ function memoryMarkup() {
   const opts=(o)=>Object.entries(o).map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
   return MEMORY_ITEMS.map(item=>`<div class="storyloom-memory-item" data-memory="${item.key}">
     <strong>${item.label}</strong><p class="storyloom-hint">${item.hint}</p>
-    <textarea rows="5"></textarea>
+    <label class="storyloom-mem-header-label">Instruction around it <small>({chapter}, {Unit}, {units} are filled in)</small><textarea class="na-mem-header" rows="2"></textarea></label>
+    <textarea class="na-mem-text" rows="5"></textarea>
     <div class="storyloom-row">
       <label>Where <select class="na-mem-where">${opts(WHERE)}</select></label>
       <label class="na-mem-depth-label">Messages from the end <input class="na-mem-depth" type="number" min="0" max="${CHAT_START_DEPTH}" step="1"></label>
@@ -1639,9 +1647,9 @@ function init() {
   panel.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
   for(const item of MEMORY_ITEMS) {
     const box=panel.querySelector(`[data-memory="${item.key}"]`);
-    const place=()=>({where:box.querySelector('.na-mem-where').value,depth:Number(box.querySelector('.na-mem-depth').value)||0,role:box.querySelector('.na-mem-role').value});
+    const place=()=>({where:box.querySelector('.na-mem-where').value,depth:Number(box.querySelector('.na-mem-depth').value)||0,role:box.querySelector('.na-mem-role').value,header:box.querySelector('.na-mem-header').value});
     box.querySelector('.na-mem-where').onchange=()=>{const p=place();box.querySelector('.na-mem-depth-label').hidden=p.where!=='chat-depth';box.querySelector('.na-mem-role-label').hidden=p.where==='off';};
-    box.querySelector('.na-mem-save').onclick=async()=>{lastAction=`Save ${item.label}`;try{await saveMemoryItem(item,box.querySelector('textarea').value,place());status(`${item.label} saved and in place for the next reply.`);}catch(e){fail(e);}};
+    box.querySelector('.na-mem-save').onclick=async()=>{lastAction=`Save ${item.label}`;try{await saveMemoryItem(item,item.fromOutline?undefined:box.querySelector('.na-mem-text').value,place());status(`${item.label} saved and in place for the next reply.`);}catch(e){fail(e);}};
   }
   panel.querySelector('#na-finish-chapter').onclick=()=>finishChapter().catch(fail);
   const sendAssistant=async()=>{const input=panel.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};

@@ -77,8 +77,8 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
   set(find(t.outline.title),{disable:true});
   if(hasProfiles)set(find(t.cast),{disable:true});
   // Planning-only entries are switched off on purpose; say so inside them, since the editor only shows "disabled".
-  const note=(entry,text)=>{if(entry && !String(entry.content||'').startsWith('(Storyloom:'))entry.content=`(Storyloom: ${text})\n${entry.content||''}`;};
-  note(find(t.outline.title),'the full outline, kept for planning and switched off on purpose so the story chat never sees future chapters. Only the current chapter’s plan is sent, from the Memory tab.');
+  const note=(entry,text)=>{if(entry)entry.content=`(Storyloom: ${text})\n${String(entry.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'')}`;};
+  note(find(t.outline.title),'switched off here on purpose. The Memory tab sends it as “Whole outline”, with an instruction to use it for direction and never write ahead.');
   for(const e of t.entries)if(e.show==='off')note(find(e.title),'planning notes, switched off on purpose — the story chat doesn’t need them.');
   // The cast list is only an index; label it so it isn't mistaken for thin character entries.
   const castEntry=find(t.cast), label='(Cast index for Storyloom — not sent to the story. Full profiles are the “Character — Name” entries.)';
