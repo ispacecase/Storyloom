@@ -20,6 +20,8 @@ export function parseNumber(text) {
   const s = String(text || '').toLocaleLowerCase();
   const k = s.match(/(\d+(?:\.\d+)?)\s*k\b/);
   if (k) return Math.round(Number(k[1]) * 1000);
+  const grouped = s.match(/\b\d{1,3}(?:[,.\s\u00a0\u202f]\d{3})+(?!\d)/);
+  if (grouped) return Number(grouped[0].replace(/[^\d]/g, ''));
   const n = s.match(/\d[\d,]*/);
   if (n) return Number(n[0].replace(/,/g, ''));
   const w = s.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|single)\b/);

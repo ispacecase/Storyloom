@@ -62,7 +62,7 @@ test('exact lint combines every check', () => {
 
 test('the book-facts check asks for quoted, sourced findings and is read back strictly', () => {
   const ask = lintInstruction({number: 2, chapterText: 'TEXT', facts: 'FACTS'});
-  for (const k of ['CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY']) assert.ok(ask.includes(`- ${k}:`), k);
+  for (const k of ['GRAMMAR', 'CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY']) assert.ok(ask.includes(`- ${k}:`), k);
   assert.match(ask, /do not rewrite/);
   const found = parseFindings('Here you go.\n- [PERIOD] [hard] line 4: "checked her phone for signal" — the story is set in 1970 (Novel Foundation)\n- [VOICE] [soft] line 9: “I have always believed” — Ben speaks in short, dry lines (Ben\'s profile)\n- [STYLE] "x" — not a kind\nBIGGEST PROBLEM: the phone in 1970.');
   assert.deepEqual(found.map(f => [f.kind, f.severity, f.where, f.quote]), [['PERIOD', 'hard', 'line 4', 'checked her phone for signal'], ['VOICE', 'soft', 'line 9', 'I have always believed']]);
@@ -77,11 +77,16 @@ test('report counts every bucket and the hard total; severities are set', async 
   assert.equal(all.find(f => f.kind === 'STOCK').severity, 'soft');
   assert.equal(all.find(f => f.kind === 'UNLISTED').severity, 'hard');
   const line = countsLine(all);
-  assert.match(line, /^CHARACTER 0 \/ VOICE 0 \/ CHAPTER ORDER 0 .* \/ UNLISTED 2 .*, hard \d+$/);
+  assert.match(line, /^GRAMMAR 0 \/ CHARACTER 0 \/ VOICE 0 \/ CHAPTER ORDER 0 .* \/ UNLISTED 2 .*, hard \d+$/);
   assert.equal(biggestProblem('x\nBIGGEST PROBLEM: Marge walks in.'), 'Marge walks in.');
 });
 
 test('endearments and names only spoken in dialogue are not counted as extra characters', () => {
   const t = 'Ann waited.\n\n“Darling, ask Gerald,” Ann said.\n\nPhil came in from the snow.';
   assert.deepEqual(unknownNames(paragraphs(t), ['Ann']).map(x => x.quote), ['Phil']);
+});
+
+test('findings are read whether or not the model brackets the severity', () => {
+  const f = parseFindings('- [CONTINUITY] hard line 1: "Her father was asleep" — the outline has a hospital bed\n- [VOICE] soft, line 5: "Darling" — not her voice');
+  assert.deepEqual(f.map(x => [x.kind, x.severity, x.where]), [['CONTINUITY', 'hard', 'line 1'], ['VOICE', 'soft', 'line 5']]);
 });

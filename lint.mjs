@@ -11,7 +11,7 @@ export function paragraphs(text) {
   return String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean)
     .map((p, i) => ({n: i + 1, text: p, narration: p.replace(/[“"][^”"]*[”"]/g, ' ').replace(/\s+/g, ' ').trim()}));
 }
-const quote = (s, max = 90) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max - 1) + '…' : t; };
+export const quote = (s, max = 90) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max - 1) + '…' : t; };
 
 const PRESENT = /\b(is|are|am|does|has|says|asks|looks|walks|turns|feels|knows|thinks|sees|stands|sits|takes|comes|goes|smiles|laughs|watches|waits|reaches|pulls|opens|shakes|nods)\b/gi;
 const PAST = /\b(was|were|did|had|said|asked|looked|walked|turned|felt|knew|thought|saw|stood|sat|took|came|went|smiled|laughed|watched|waited|reached|pulled|opened|shook|nodded)\b/gi;
@@ -131,13 +131,14 @@ export function exactLint(text, book = {}) {
   ].map(f => ({...f, severity: SEVERITY[f.kind] || 'soft'}));
 }
 
-export const LINT_KINDS = Object.freeze(['CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY']);
+export const LINT_KINDS = Object.freeze(['GRAMMAR', 'CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY']);
 /** The chapter with line numbers, matching the exact checks' line numbers. */
 export const numbered = text => paragraphs(text).map(p => `${p.n}| ${p.text}`).join('\n');
 /** Ask the model to check the chapter against the book's facts. */
-export function lintInstruction({unit = 'Chapter', number = 1, chapterText = '', facts = ''}) {
-  return `Check ${unit} ${number} below against the book's own facts and rules. You are a continuity editor: report problems, do not rewrite, do not praise.
+export function lintInstruction({unit = 'Chapter', number = 1, chapterText = '', facts = '', chapterNote = ''}) {
+  return `Check ${unit} ${number} below against the book's own facts and rules. Report problems; do not rewrite, do not praise.
 Check for exactly these kinds of problem:
+- GRAMMAR: spelling, punctuation, grammar, agreement, missing or doubled words in the narration (not deliberate voice in dialogue or in a narrator whose voice is meant to be rough).
 - CHARACTER: someone acts against their established personality, wants or history.
 - VOICE: someone's dialogue does not sound like the VOICE AND MANNERISMS in their profile.
 - CHAPTER ORDER: events, reveals or knowledge that the outline puts in a different ${unit.toLowerCase()} (later or earlier).
@@ -151,7 +152,7 @@ Mark it hard if it contradicts canon (the book's facts, the outline, a seal, the
 Quote exactly — no paraphrasing. Measure, don't rewrite: no replacement sentences, at most one short clause of fix.
 Only real problems you can quote. After the findings, write one line: BIGGEST PROBLEM: the single biggest problem in the chapter (or "none"). If there are no problems, write exactly: No problems found.
 
-THE BOOK'S FACTS
+${chapterNote ? `FOR THIS ${unit.toUpperCase()} ONLY (the writer's instruction; it overrides the book-wide voice rules where they differ):\n${chapterNote}\n\n` : ''}THE BOOK'S FACTS
 ${facts}
 
 ${unit.toUpperCase()} ${number} TEXT
@@ -161,7 +162,7 @@ ${numbered(chapterText)}`;
 export function parseFindings(text) {
   const out = [];
   for (const line of String(text || '').split('\n')) {
-    const m = line.match(/^\s*[-*•]?\s*\[([A-Z ]+)\]\s*(?:\[(hard|soft)\]\s*)?(?:line\s*(\d+)\s*:\s*)?[“"](.+?)[”"]\s*[—–-]+\s*(.+)$/i);
+    const m = line.match(/^\s*[-*•]?\s*\[([A-Z ]+)\]\s*(?:\[?(hard|soft)\]?\s*[:,-]?\s*)?(?:line\s*(\d+)\s*:?\s*)?[“"](.+?)[”"]\s*[—–-]+\s*(.+)$/i);
     if (m && LINT_KINDS.includes(m[1].trim())) out.push({kind: m[1].trim(), severity: (m[2] || 'hard').toLowerCase(), where: m[3] ? `line ${m[3]}` : '', quote: m[4].trim(), rule: m[5].trim()});
   }
   return out;

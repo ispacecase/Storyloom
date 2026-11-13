@@ -46,3 +46,11 @@ test('the same maths gives a longer story room for a crew', () => {
 test('a missing length says so instead of guessing', () => {
   assert.match(budgetLines(wordBudget({}))[0], /Length not set yet/);
 });
+
+test('numbers with space or dot thousands separators are read whole', async () => {
+  const {parseNumber} = await import('../budget.mjs');
+  assert.equal(parseNumber('about 2 000 words'), 2000);
+  assert.equal(parseNumber('2.000'), 2000);
+  assert.equal(parseNumber('1,500–2,500'), 1500);
+  assert.equal(parseNumber('15'), 15);
+});
