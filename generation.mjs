@@ -1,9 +1,26 @@
 import {directPayload} from './providers.mjs';
 /** Reply text, or a specific error when the model answered with nothing. */
+/**
+ * Some reasoning models never close their thinking, so the real answer arrives inside it.
+ * Recover the last full set of entry blocks (or the last JSON reply) from the thinking text.
+ */
+export function answerInThinking(thought) {
+  const text=String(thought||'');
+  const starts=[...text.matchAll(/^[\s*_#>]*=+\s*ENTRY\s*:\s*(.*?)[\s*_=]*$/gim)];
+  if(starts.length) {
+    const first=starts[0][1].trim().toLocaleLowerCase();
+    const restart=starts.filter(m=>m[1].trim().toLocaleLowerCase()===first).at(-1);
+    return 'Done.\n\n'+text.slice(restart.index).trim();
+  }
+  const json=text.lastIndexOf('{"reply"');
+  return json>=0 ? text.slice(json).trim() : '';
+}
 export function replyText(response) {
   const text=typeof response==='string'?response:response?.content;
   if(String(text||'').trim())return text;
   const thought=String(response?.reasoning||'').trim();
+  const recovered=answerInThinking(thought);
+  if(recovered){console.warn('Storyloom: the model wrote its answer inside its thinking; using that.');return recovered;}
   const error=Error(thought
     ? `the model spent its whole reply thinking (${thought.split(/\s+/).length} words of reasoning) and wrote no answer`
     : 'the model sent back an empty reply');

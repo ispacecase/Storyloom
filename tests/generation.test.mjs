@@ -109,3 +109,14 @@ test('planning requests override roleplay penalties that cause word salad', asyn
   await generate(c, 'x', 'profile');
   assert.equal(override.frequency_penalty, 0);
 });
+
+test('an answer written inside the thinking is recovered, using the last full draft', async () => {
+  const {replyText, answerInThinking} = await import('../generation.mjs');
+  const thinking = 'Plan it.\n=== ENTRY: Novel Foundation\nKEYS: a\ndraft one\n=== END\nHmm, redo.\n=== ENTRY: Novel Foundation\nKEYS: a\nfinal one\n=== END\n=== ENTRY: People\nKEYS: b\ncast\n=== END';
+  const got = replyText({content: '', reasoning: thinking});
+  assert.match(got, /final one/);
+  assert.doesNotMatch(got, /draft one/);
+  assert.match(got, /People/);
+  assert.equal(answerInThinking('just thoughts, no entries'), '');
+  assert.throws(() => replyText({content: '', reasoning: 'just thoughts'}), e => e.emptyReply);
+});

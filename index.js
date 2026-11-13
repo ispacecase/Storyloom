@@ -348,7 +348,8 @@ function showLive(data) {
     const d=live.data;
     if(!d){box.hidden=true;return;}
     box.hidden=false;
-    const answer=readable(d.text), thinking=String(d.reasoning||'');
+    const thinkingRaw=String(d.reasoning||''), inThought=!d.text && /^[\s*_#>]*=+\s*ENTRY\s*:/m.test(thinkingRaw);
+    const answer=readable(d.text) || (inThought ? thinkingRaw.slice(thinkingRaw.search(/^[\s*_#>]*=+\s*ENTRY\s*:/m)) : ''), thinking=thinkingRaw;
     const words=s=>(s.match(/\S+/g)||[]).length;
     box.querySelector('.storyloom-live-head').textContent=answer
       ? `Writing… ${words(answer).toLocaleString()} words`
