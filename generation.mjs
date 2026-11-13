@@ -33,16 +33,21 @@ export async function streamOrWait(run,onProgress,signal) {
     return replyText(await run(false));
   }
 }
+/**
+ * Storyloom's own sampling for planning: roleplay presets often use frequency/presence penalties,
+ * which make long structured replies degrade into word salad. The main chat's settings are untouched.
+ */
+export const PLANNING_SAMPLING=Object.freeze({temperature:0.7,frequency_penalty:0,presence_penalty:0});
 /** Generate without switching the main connection or mutating its response length. */
 export async function generate(c,prompt,profile,signal,maxTokens=6000,systemPrompt='',direct=null,onProgress=null) {
   if(!Number.isInteger(maxTokens) || maxTokens<256 || maxTokens>16000) throw Error('Response budget must be between 256 and 16000 tokens.');
   const messages=systemPrompt ? [{role:'system',content:systemPrompt},{role:'user',content:prompt}] : [{role:'user',content:prompt}];
   if(profile==='__direct__') {
     const payload=directPayload(direct);
-    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,max_tokens:maxTokens,...payload},{},true,signal),onProgress,signal);
+    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,max_tokens:maxTokens,...payload,...PLANNING_SAMPLING},{},true,signal),onProgress,signal);
   }
   if(profile) {
-    return streamOrWait(stream=>c.ConnectionManagerRequestService.sendRequest(profile,messages,maxTokens,{stream,extractData:true,includePreset:true,signal}),onProgress,signal);
+    return streamOrWait(stream=>c.ConnectionManagerRequestService.sendRequest(profile,messages,maxTokens,{stream,extractData:true,includePreset:true,signal},{...PLANNING_SAMPLING}),onProgress,signal);
   }
   if(c.mainApi==='openai' && c.ChatCompletionService && c.getChatCompletionModel) {
     const settings=c.chatCompletionSettings || {};
@@ -54,7 +59,7 @@ export async function generate(c,prompt,profile,signal,maxTokens=6000,systemProm
       ]),
     ) : {};
     const options={presetName:c.getPresetManager('openai')?.getSelectedPresetName()};
-    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom},options,true,signal),onProgress,signal);
+    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom,...PLANNING_SAMPLING},options,true,signal),onProgress,signal);
   }
   // Legacy APIs do not expose an equivalent isolated request service.
   // Respect their configured response length instead of changing shared settings.

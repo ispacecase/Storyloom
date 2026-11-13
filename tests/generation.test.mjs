@@ -100,3 +100,12 @@ test('a stream that ends with only thinking is an empty reply, not retried as no
   await assert.rejects(streamOrWait(run, () => {}), e => e.emptyReply && /thinking/.test(e.message));
   assert.equal(calls, 1);
 });
+
+test('planning requests override roleplay penalties that cause word salad', async () => {
+  let data, override;
+  const c = {mainApi: 'openai', chatCompletionSettings: {chat_completion_source: 'custom', custom_url: 'http://local'}, getChatCompletionModel: () => 'm', getPresetManager: () => ({getSelectedPresetName: () => 'p'}), ChatCompletionService: {processRequest: async d => { data = d; return {content: 'ok'}; }}, ConnectionManagerRequestService: {sendRequest: async (id, msgs, max, custom, o) => { override = o; return {content: 'ok'}; }}};
+  await generate(c, 'x', '');
+  assert.equal(data.frequency_penalty, 0); assert.equal(data.presence_penalty, 0); assert.equal(data.temperature, 0.7);
+  await generate(c, 'x', 'profile');
+  assert.equal(override.frequency_penalty, 0);
+});

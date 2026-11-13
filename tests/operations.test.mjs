@@ -70,3 +70,27 @@ test('shows a conversational reply even when its lorebook updates are invalid',(
  assert.equal(parsed.ignoredUpdates,true);
  assert.throws(()=>parseAssistant(raw));
 });
+
+test('plain-text entry blocks are read without any JSON', async () => {
+  const {parseAssistant, parseBlocks, toBlocks} = await import('../operations.mjs');
+  const text = `Here is the plan — "quotes" and \\ backslashes are fine.\n\n=== ENTRY: Novel Outline\nKEYS: Mara, Vell Hollow\nChapter 1 — Arrival\nEvents: She "arrives".\n=== END\n\n**=== ENTRY: People ===**\n**KEYS:** Mara\n**Mara | Age: 32\n=== END ===`;
+  const r = parseAssistant(text);
+  assert.match(r.reply, /quotes/);
+  assert.deepEqual(r.updates.map(u => u.title), ['Novel Outline', 'People']);
+  assert.deepEqual(r.updates[0].keys, ['Mara', 'Vell Hollow']);
+  assert.equal(r.updates[0].content, 'Chapter 1 — Arrival\nEvents: She "arrives".');
+  assert.deepEqual(r.updates[1].keys, ['Mara']);
+  assert.equal(parseBlocks('just chatting'), null);
+  assert.deepEqual(parseAssistant('just chatting', {allowProse: true}), {reply: 'just chatting', updates: []});
+  assert.deepEqual(parseAssistant(toBlocks(r.updates)).updates.map(u => u.content), r.updates.map(u => u.content));
+});
+
+test('a block without === END is reported as cut off', async () => {
+  const {parseAssistant} = await import('../operations.mjs');
+  assert.throws(() => parseAssistant('Reply\n=== ENTRY: Novel Outline\nKEYS: x\nChapter 1'), /cut off/);
+});
+
+test('old JSON replies still work', async () => {
+  const {parseAssistant} = await import('../operations.mjs');
+  assert.equal(parseAssistant('{"reply":"ok","updates":[{"title":"A","content":"B","keys":["k"]}]}').updates[0].title, 'A');
+});

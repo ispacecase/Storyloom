@@ -1,6 +1,6 @@
 import { doNewChat } from '../../../../script.js';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor } from '../../../world-info.js';
-import { parseAssistant, planWrites, readDirective, replaceDirective } from './operations.mjs';
+import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
 import { synchronize, resolveConflict, planInitialLink } from './sync.mjs';
 import { createNovel, selectNovel } from './state.mjs';
 import { enqueue, nextJob, requiresReview, wasApplied, changedProcessed } from './queue.mjs';
@@ -463,12 +463,12 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     catch(error) {
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
       console.warn('Storyloom: could not read the model reply ('+error.message+'). Start:',String(raw).slice(0,500),'… End:',String(raw).slice(-500));
-      const cutOff=/Unterminated string|Unexpected end of JSON|Expected .* after/i.test(String(error.message));
+      const cutOff=/Unterminated|Unexpected end of JSON|cut off|Expected .* after/i.test(String(error.message));
       status(cutOff?`The model’s reply was cut off before it finished (${String(raw).length.toLocaleString()} characters — it ran out of response budget); asking it to try again…`:`The model’s reply couldn’t be read (${String(error.message).slice(0,80)}); asking it to try again…`);
-      const retrySystem=system+'\nYour last response could not be read. Respond with exactly one valid JSON object, beginning with { and ending with }, and no surrounding prose or markdown. Escape line breaks inside strings.';
+      const retrySystem=system+'\nYour last response could not be read. Use the plain-text entry format exactly: your reply, then each entry as === ENTRY: title / KEYS: … / content / === END. Never JSON.';
       const retried=await ask(prompt,retrySystem);
       try {result=parseAssistant(retried,{allowProse});}
-      catch(second) {throw Error(/Unterminated string|Unexpected end of JSON/i.test(String(second?.message))?'The model’s reply was cut off twice — it is longer than the response budget allows. Raise “Response budget” in Settings (up to 16000) and try again. Nothing was saved.':'The model did not return a usable response after retrying. Nothing was saved; please try again.');}
+      catch(second) {throw Error(/Unterminated|Unexpected end of JSON|cut off/i.test(String(second?.message))?'The model’s reply was cut off twice — it is longer than the response budget allows. Raise “Response budget” in Settings (up to 16000) and try again. Nothing was saved.':'The model did not return a usable response after retrying. Nothing was saved; please try again.');}
     }
     if(interview?.collaborative && !isCollaborativeReply(result.reply)) {
       if(context().chatId!==chatId || data()!==d)throw Error('Chat changed; nothing saved.');
@@ -483,13 +483,13 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     },async (previous,issue)=>{
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
       status('Completing missing story details…');
-      const correction=`${prompt}\n\nYour previous plan needs correction: ${issue}. Return the complete corrected JSON object with all required entries, not just the missing part. Previous plan: ${JSON.stringify(previous)}`;
+      const correction=`${prompt}\n\nYour previous plan needs correction: ${issue}. Return all required entries again, complete and corrected, as entry blocks — not just the missing part. Your previous entries were:\n${toBlocks(previous.updates)}`;
       return parseAssistant(await ask(correction,system));
     });
     if(interview?.requireCharacters) result=await repairOutline(result,value=>validateCharacters(value,interview.requireCharacters,tpl(d).characterSections),async (previous,issue)=>{
       if(context().chatId!==chatId || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('Chat or lorebook changed; nothing saved.');
       status('Filling in thin character profiles…');
-      const correction=`${prompt}\n\nYour previous profiles need correction: ${issue}. Return every requested profile again in full, with every heading filled in. Previous profiles: ${JSON.stringify(previous)}`;
+      const correction=`${prompt}\n\nYour previous profiles need correction: ${issue}. Return every requested profile again in full, with every heading filled in. Your previous profiles were:\n${toBlocks(previous.updates)}`;
       return parseAssistant(await ask(correction,system));
     });
     if(controller.signal.aborted)throw Error('Stopped. Your message is still in the box.');
@@ -802,7 +802,7 @@ async function finishInterview() {
     // Two requests so each reply fits the response budget (reasoning models spend part of it thinking).
     if(!interview.planSaved) {
       status(`Step 1 of 2: filling in ${t.summary.title} and the planning entries…`);
-      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan'),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry in updates.',requireOutline:true,part:'plan',silentUser:true,loreBudget:60000});
+      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan'),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',silentUser:true,loreBudget:60000});
       if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
       d.interview={...d.interview,planSaved:true}; await persist();
     }
