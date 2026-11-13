@@ -79,3 +79,19 @@ export function validateCharacters(result,names,sections=PROFILE_SECTIONS) {
   }
   if(problems.length)throw Error('Character profiles incomplete: '+problems.join('; '));
 }
+
+/**
+ * When the writer named the characters, keep only those in the cast list; anyone else the AI added is returned
+ * separately so it can wait for the writer's approval. Names match on the first name, case-insensitively.
+ */
+export function splitExtraCast(castContent, writerText) {
+  const said = String(writerText || '').toLocaleLowerCase();
+  const kept = [], extras = [];
+  for (const line of String(castContent || '').split('\n')) {
+    if (!line.includes('|')) { kept.push(line); continue; }
+    const name = line.split('|')[0].replace(/\*\*/g, '').replace(/^\s*[-*•]\s*/, '').trim();
+    const first = name.split(/\s+/)[0].toLocaleLowerCase();
+    (first && new RegExp(`(^|[^\\p{L}])${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'u').test(said) ? kept : extras).push(line);
+  }
+  return {kept: kept.join('\n'), extras};
+}

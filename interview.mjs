@@ -39,7 +39,7 @@ export function requiredTitles(t=NOVEL,part='all') {
 export function finalizeInstruction(mode,answers={},t=NOVEL,part='all') {
   const unit=t.unit, units=unit.toLowerCase()+'s', count=unitCountField(t), voice=voiceEntry(t);
   const source=mode==='deep'?'The writer’s answers and the ideas they agreed to in the conversation':'The writer’s answers';
-  const fill=`${source} are fixed facts; never contradict them. ${P('fill')}${count?` If the writer did not specify how many ${units}, use six as an AI-suggested starting point, which they can change.`:''}`;
+  const fill=`${source} are fixed facts; never contradict them. Hard limits: if the writer gave a number of ${units}, a length, or named who the characters are or how many there are, the plan uses exactly that — never more ${units}, never extra characters, never events that will not fit that length. ${P('fill')}${count?` If the writer did not specify how many ${units}, use six as an AI-suggested starting point, which they can change.`:''}`;
   const titles=requiredTitles(t,part);
   const headingRule=(part,isSummary=false)=>{const req=requiredOf(part,isSummary), opt=part.fields.filter(f=>!req.includes(f));return `${req.length?`must contain nonempty lines ${lineList(req)}`:'has no required headings'}${opt.length?`; suggested headings: ${lineList(opt)} — use the ones that fit this story, leave out any that don’t apply, and add your own`:''}`;};
   const entryRules=t.entries.map(e=>`${e.title} ${headingRule(e)}.`).join(' ')+' Every entry may also have extra capitalised headings for anything specific the writer wants recorded there.';

@@ -17,7 +17,7 @@ import { characterImportRequest, requiredCharacterUpdate, selectCharacterSource 
 import { planningSystem } from './prompts.mjs';
 import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
 import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
-import { castNames, characterProfilesInstruction, validateCharacters, characterTitle } from './characters.mjs';
+import { castNames, characterProfilesInstruction, validateCharacters, characterTitle, splitExtraCast } from './characters.mjs';
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
@@ -905,6 +905,19 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if (guard && !guard()) throw Error('The source message changed; nothing was saved.');
     const fresh = await freshBook(bookName);
     if (JSON.stringify(fresh) !== JSON.stringify(before)) throw new Error('Lorebook changed while generating; nothing saved. Please retry.');
+    // The writer named the characters: extra cast members wait for approval instead of getting profiles automatically.
+    let castHeld=null;
+    const writerPeople=(d.interview?.answers?.people||[]).join('\n');
+    if(interview?.part==='plan' && writerPeople.trim()) {
+      const castUpdate=(result.updates||[]).find(u=>String(u.title).trim().toLocaleLowerCase()===tpl(d).cast.toLocaleLowerCase());
+      if(castUpdate) {
+        const {kept,extras}=splitExtraCast(castUpdate.content,writerPeople);
+        if(extras.length && kept.includes('|')) {
+          castHeld={title:castUpdate.title.trim(),content:`${kept}\n${extras.join('\n')}`,keys:castUpdate.keys||[castUpdate.title],kind:'change',source:'cast',reason:`You named the characters, so the cast list was saved with only them. The AI also wants to add: ${extras.map(l=>l.split('|')[0].replace(/\*\*/g,'').trim()).join(', ')}. Approve to add them (each gets a full profile); skip to keep the cast as you wrote it.`};
+          castUpdate.content=kept;
+        }
+      }
+    }
     // Anything beyond the planned entries waits for the author's approval instead of being saved.
     let held=[];
     if(interview?.holdForAuthor) {
@@ -926,6 +939,12 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
         await persist();
       }
       result.held=held;
+    }
+    if(castHeld) {
+      d.suggestions ??= [];
+      d.suggestions=d.suggestions.filter(x=>x.title.toLocaleLowerCase()!==castHeld.title.toLocaleLowerCase());
+      d.suggestions.push({id:crypto.randomUUID(),...castHeld,at:new Date().toISOString()});
+      held.push(castHeld); await persist();
     }
     let skippedFoundation=false;
     if(!fromMain && !interview?.requireOutline) {

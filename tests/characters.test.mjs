@@ -29,7 +29,8 @@ test('complete profiles pass; missing or thin ones fail with a specific reason',
 test('simple and deep both build out beyond the writer’s answers', () => {
   for (const mode of ['simple', 'deep']) {
     const text = finalizeInstruction(mode, {});
-    assert.match(text, /starting point, not the whole project/);
+    assert.match(text, /Hard limits: if the writer gave a number of chapters, a length, or named who the characters are or how many there are, the plan uses exactly that/);
+    assert.match(text, /Size everything to the story’s length/);
     assert.match(text, /Answer every interview question the writer skipped/);
     assert.doesNotMatch(text, /may be exactly Undecided/);
   }
@@ -39,4 +40,14 @@ test('overlong profiles are sent back to be shortened', () => {
   const long = full('Wren'); long.content += '\n' + 'word '.repeat(1100);
   assert.throws(() => validateCharacters({updates: [long]}, ['Wren']), /shorten it to under 800/);
   assert.match(characterProfilesInstruction(['Wren']), /between 450 and 650 words/);
+});
+
+test('when the writer named the cast, extra people are split out for approval', async () => {
+  const {splitExtraCast, castNames} = await import('../characters.mjs');
+  const cast = 'Cast index note\n**Lily | Age: 7 | Pronouns: she/her | Relationships: x | Wants: y\nJim | Age: 27 | Pronouns: he/him | Relationships: x | Wants: y\nCath | Age: 26 | Pronouns: she/her | Relationships: x | Wants: y\nMrs Ovey | Age: 71 | Pronouns: she/her | Relationships: x | Wants: y';
+  const {kept, extras} = splitExtraCast(cast, 'Two people: Lily, a seven-year-old, and jim the lodger.');
+  assert.deepEqual(castNames(kept), ['Lily', 'Jim']);
+  assert.match(kept, /^Cast index note/);
+  assert.deepEqual(extras.map(l => l.split('|')[0].trim()), ['Cath', 'Mrs Ovey']);
+  assert.deepEqual(splitExtraCast(cast, 'Jimmy and Lilyanne').extras.length, 4, 'partial name matches do not count');
 });
