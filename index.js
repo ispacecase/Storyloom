@@ -200,6 +200,7 @@ const TIPS={
   'na-assistant-send':'Send your question (Ctrl+Enter).',
   'na-tab-memory':'What the story chat remembers between chapters, and where it goes in the prompt. Also where you finish a chapter.',
   'na-finish-chapter':'Summarise this chapter’s chat, update Story so far, move to the next chapter and open a fresh chat with everything carried over.',
+  'na-update':'A newer Storyloom is on GitHub. Click to install it and reload SillyTavern; your novels and settings stay as they are.',
   'na-chapter':'Which chapter the story is on. The main chat only gets this chapter’s plan (in the always-on “Current Chapter” entry), so it doesn’t run ahead.',
 };
 function showMessages() {
@@ -629,6 +630,35 @@ async function startChapterChat() {
   await applyMemory();
 }
 
+/* ---------- Version and updates (installs only change when GitHub does) ---------- */
+const EXTENSION_FOLDER=decodeURIComponent(new URL(import.meta.url).pathname.split('/').at(-2));
+let updateCheckedAt=0, updateGlobal=false;
+async function showVersion() {
+  try {const m=await (await fetch(new URL('manifest.json',import.meta.url),{cache:'no-store'})).json(); const el=document.getElementById('na-version'); if(el)el.textContent=`v${m.version}`;} catch {}
+}
+async function versionInfo(global) {
+  const r=await fetch('/api/extensions/version',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({extensionName:EXTENSION_FOLDER,global})});
+  return r.ok?r.json():null;
+}
+/** Ask SillyTavern whether this install is behind GitHub; show the update button if so. */
+async function checkForUpdate(force=false) {
+  if(!force && Date.now()-updateCheckedAt<30*60*1000)return;
+  updateCheckedAt=Date.now();
+  try {
+    let info=await versionInfo(false);
+    if(!info?.currentCommitHash){const g=await versionInfo(true); if(g?.currentCommitHash){info=g;updateGlobal=true;}}
+    const btn=document.getElementById('na-update');
+    if(btn)btn.hidden=!info?.currentCommitHash || info.isUpToDate!==false;
+  } catch(e) {console.warn('Storyloom update check:',e);}
+}
+async function updateStoryloom() {
+  if(!await context().Popup.show.confirm('Update Storyloom?','Download the newest Storyloom from GitHub and reload SillyTavern. Your novels, lorebooks and settings are not touched.'))return;
+  status('Updating Storyloom from GitHub…');
+  const r=await fetch('/api/extensions/update',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({extensionName:EXTENSION_FOLDER,global:updateGlobal})});
+  if(!r.ok)throw Error(`SillyTavern could not update the extension (${r.status}). Try Extensions → Manage extensions.`);
+  status('Updated. Reloading…');
+  setTimeout(()=>location.reload(),800);
+}
 function renderChapters(d) {
   const label=document.getElementById('na-chapter-label'), select=document.getElementById('na-chapter');
   const chapters=d.outlineChapters||[];
@@ -1285,14 +1315,14 @@ async function writeProfiles(prefix='',{onlyMissing=false}={}) {
 }
 function init() {
   const button = document.createElement('button'); button.className='menu_button'; button.textContent='Storyloom';
-  const openPanel=()=>{try{options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
+  const openPanel=()=>{checkForUpdate().catch(()=>{});try{options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
   button.addEventListener('click',()=>{openPanel();document.querySelector('#extensions-settings-button .drawer-toggle')?.click();});
   const shortcut=document.createElement('button');shortcut.type='button';shortcut.id='storyloom-chat-shortcut';shortcut.title='Open Storyloom';shortcut.setAttribute('aria-label','Open Storyloom');shortcut.innerHTML='<i class="fa-solid fa-feather-pointed" aria-hidden="true"></i>';shortcut.addEventListener('click',openPanel);document.getElementById('leftSendForm')?.append(shortcut);
   document.querySelector('#extensions_settings2, #extensions_settings')?.append(button);
   const panel = document.createElement('aside'); panel.id='na-panel'; panel.hidden=true;
   panel.innerHTML=`
     <header class="storyloom-header">
-      <div class="storyloom-brand"><span class="storyloom-mark" aria-hidden="true">✦</span><div><strong>Storyloom</strong></div></div>
+      <div class="storyloom-brand"><span class="storyloom-mark" aria-hidden="true">✦</span><div><strong>Storyloom</strong><small id="na-version"></small></div><button id="na-update" type="button" class="storyloom-update" hidden>Update available</button></div>
       <div class="storyloom-header-actions">
         <button id="na-back" type="button">Back to start</button>
         <button id="na-settings-toggle" type="button" aria-controls="na-settings" aria-expanded="false">Settings</button>
@@ -1546,6 +1576,7 @@ function init() {
     changeBook(name);await persist();options();await setupNovel();status('New lorebook linked to this chat.');
   }catch(e){fail(e)}};
   panel.querySelector('#na-profiles').onclick=()=>writeProfiles();
+  panel.querySelector('#na-update').onclick=()=>updateStoryloom().catch(fail);
   panel.querySelector('#na-tab-story').onclick=()=>{activeTab='story';settingsOpen=false;renderPanelView();};
   panel.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
   panel.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
@@ -1600,6 +1631,8 @@ function init() {
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
   setTimeout(()=>applyMemory().catch(e=>console.warn('Storyloom memory:',e)),2500);
+  showVersion();
+  setTimeout(()=>checkForUpdate(true),8000);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,name=>{if(linkRunning)return;clearTimeout(linkTimer);linkTimer=setTimeout(()=>syncLinks(typeof name==='string'?name:null),1000);});
   setTimeout(()=>{if(storedLinks().length)syncLinks();},4000);
   c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;panel.querySelector('#na-session-key').value='';if(!panel.hidden){try{options();status('')}catch{panel.hidden=true}} queueSync(); scheduleDrain();});

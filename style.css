@@ -171,3 +171,5 @@
 #na-panel .storyloom-memory-item button, #na-panel .storyloom-finish button { border:1px solid #dfd1c3; border-radius:8px; padding:.35rem .6rem; background:#fffaf5; color:#604b43; font-size:.72rem; }
 #na-panel .storyloom-finish { padding:.6rem .7rem; border:1px solid #d9b9a6; border-radius:10px; background:#fff6ef; font-size:.78rem; }
 #na-panel .storyloom-finish p { margin:.2rem 0; }
+#na-panel #na-version { display:block; margin-top:.15rem; font-size:.58rem; font-weight:700; letter-spacing:.08em; color:var(--sl-muted); }
+#na-panel .storyloom-update { margin-left:.4rem; border:1px solid #b5775c; border-radius:999px; padding:.2rem .6rem; background:#b5775c; color:#fff; font-size:.66rem; font-weight:700; }
