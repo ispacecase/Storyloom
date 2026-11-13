@@ -26,6 +26,7 @@ import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor }
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
 import { wordBudget, castFit, budgetLines, SCENE_MIN } from './budget.mjs';
+import { exactLint, lintInstruction, parseFindings, countsLine, biggestProblem, ALL_BUCKETS } from './lint.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
 
 const KEY = 'novelArchitect';
@@ -204,6 +205,7 @@ const TIPS={
   'na-update':'A newer Storyloom is on GitHub. Click to install it and reload SillyTavern; your novels and settings stay as they are.',
   'na-proposal-approve':'Build the plan, outline and characters exactly to this proposal.',
   'na-proposal-revise':'Rewrite the proposal with the change you typed; nothing is built yet.',
+  'na-lint':'Check what’s written in this chat against the book and your rules. Reports only — nothing is changed.',
   'na-chapter':'Which chapter the story is on. The main chat only gets this chapter’s plan (in the always-on “Current Chapter” entry), so it doesn’t run ahead.',
 };
 function showMessages() {
@@ -608,6 +610,8 @@ async function renderMemory() {
   root_.querySelector('#na-memory-empty').hidden=ready;
   root_.querySelector('#na-memory-items').hidden=!ready;
   root_.querySelector('#na-finish-area').hidden=!ready;
+  root_.querySelector('#na-lint-area').hidden=!ready;
+  renderLint(d);
   if(!ready)return;
   if(await upgradeLayout(d,book))book=await freshBook(d.book);
   const t=tpl(d), n=d.chapter||1, total=d.outlineChapters?.length||0;
@@ -651,9 +655,11 @@ async function finishChapter() {
   const sofarTitle=MEMORY_ITEMS[0].title, sumTitle=summaryTitle(t.unit,n);
   const castTitles=Object.values(book.entries||{}).map(e=>String(e.comment||'')).filter(x=>/^character\s*[—–-]/i.test(x));
   status(`Reading ${t.unit} ${n} and writing its summary…`);
-  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles}),false,null,null,`${t.unit} ${n} ending`,false,{silentUser:true,loreBudget:20000,holdForAuthor:'allExcept',keep:[sofarTitle,sumTitle],mergeState:true,guidance:'Summarise only what happened in the transcript.'});
+  const facts=await bookFacts(d);
+  const sealedNotes=facts.seals.filter(e=>e.comment!==sumTitle).map(e=>e.content).join('\n\n');
+  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles,sealedNotes,focus:facts.focus||'the focus character',narrator:facts.pov?`the ${facts.pov} narrator`:'the narrator',title:facts.chapterTitle}),false,null,null,`${t.unit} ${n} ending`,false,{silentUser:true,loreBudget:20000,holdForAuthor:'allExcept',keep:[sofarTitle,sumTitle],mergeState:true,guidance:'Summarise only what happened in the transcript.'});
   const summary=(result.updates||[]).find(u=>u.title.trim().toLocaleLowerCase()===sumTitle.toLocaleLowerCase());
-  if(!summary)throw Error(`The AI did not return the ${t.unit.toLowerCase()} summary. Nothing was moved on; try again.`);
+  if(!summary)throw Error(`The AI did not return the ${t.unit.toLowerCase()} seal note. Nothing was moved on; try again.`);
   await saveMemoryItem(MEMORY_ITEMS[1],summary.content);
   if(next) {
     await organizeBook(n+1);
@@ -769,6 +775,82 @@ function renderBudget(d) {
   box.querySelector('pre').textContent=budgetLines(d.budget,d.budget.unit||tpl(d).unit).join('\n');
 }
 
+/* ---------- Lint: check the current chapter against the book ---------- */
+const sectionOf=(text,label)=>{const m=String(text||'').match(new RegExp(`^[\\s*_#-]*${label}\\s*:\\s*([\\s\\S]*?)(?=^[\\s*_#-]*[A-Z][A-Z &/'-]{2,40}:|$(?![\\s\\S]))`,'mi'));return m?m[1].trim():'';};
+/** Everything lint needs from the lorebook, gathered once. */
+async function bookFacts(d) {
+  const t=tpl(d), book=await freshBook(d.book), entries=Object.values(book.entries||{});
+  const find=title=>entries.find(e=>String(e.comment||'').trim().toLocaleLowerCase()===String(title).toLocaleLowerCase());
+  const voice=entries.find(e=>/^POV\s*:/mi.test(String(e.content||'')) && !/^Current Writing Directive$/i.test(e.comment||''));
+  const directive=find('Current Writing Directive');
+  const pov=sectionOf(voice?.content,'POV')||sectionOf(directive?.content,'POV');
+  const tense=sectionOf(voice?.content,'TENSE')||sectionOf(directive?.content,'Tense');
+  const characters=entries.filter(e=>/^character\s*[—–-]/i.test(String(e.comment||'')));
+  const cast=castNames(find(t.cast)?.content);
+  const castNamesAll=[...new Set([...cast,...characters.map(e=>String(e.comment).replace(/^character\s*[—–-]\s*/i,''))])];
+  const knownNames=[...castNamesAll,...entries.flatMap(e=>[e.comment,...(e.key||[])]).filter(Boolean)];
+  const seals=entries.filter(e=>/^storyloom memory\s*[—–-].*seal$/i.test(String(e.comment||''))).sort((a,b)=>String(a.comment).localeCompare(String(b.comment),undefined,{numeric:true}));
+  const outline=find(t.outline.title)?.content||'';
+  const n=d.chapter||1;
+  const focusLine=String(find(t.cast)?.content||'').split('\n').find(l=>/^\s*\*\*/.test(l));
+  const focus=focusLine?focusLine.replace(/\*\*/g,'').split('|')[0].trim():'';
+  const target=d.budget?.perChapter || (Number(String(sectionOf(entries.find(e=>/WORDS PER/i.test(String(e.content||'')))?.content,`WORDS PER ${t.unit.toUpperCase()}`)).replace(/[^\d]/g,''))||null);
+  const answers=Object.entries(d.interview?.answers||{}).filter(([,v])=>v).map(([k,v])=>`${k}: ${[].concat(v).join(' ')}`).join('\n');
+  const facts=[
+    `SETTING AND PERIOD (${t.summary.title}): ${sectionOf(find(t.summary.title)?.content,'SETTING')||'(not stated)'}`,
+    `VOICE: ${String(voice?.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'').slice(0,1500)}`,
+    `WRITING DIRECTIVE: ${String(directive?.content||'').slice(0,1500)}`,
+    d.proposal?.fields?`APPROVED PROPOSAL — core: ${d.proposal.fields.core}\nTimeline: ${d.proposal.fields.timeline}`:'',
+    `THE OUTLINE (this is ${t.unit} ${n}; events planned for other ${t.unit.toLowerCase()}s must not happen here):\n${outlineBody(outline).slice(0,9000)}`,
+    `CHARACTERS (only these people exist on the page):\n${characters.map(e=>`${e.comment}\nPERSONALITY: ${sectionOf(e.content,'PERSONALITY').slice(0,600)}\nVOICE AND MANNERISMS: ${sectionOf(e.content,'VOICE AND MANNERISMS').slice(0,600)}\nCURRENT STATE: ${sectionOf(e.content,'CURRENT STATE').slice(0,400)}`).join('\n\n').slice(0,9000)}`,
+    `THE WRITER'S RULES AND ANSWERS:\n${answers.slice(0,3000)}`,
+    seals.length?`SEALED ${t.unit.toUpperCase()}S — MUST NOT DRIFT:\n${seals.map(e=>`${e.comment}: ${sectionOf(e.content,'MUST NOT DRIFT')}`).join('\n').slice(0,5000)}`:'',
+  ].filter(Boolean).join('\n\n');
+  return {pov,tense,castNames:castNamesAll,knownNames,target,facts,seals,focus,unit:t.unit,chapterTitle:(d.outlineChapters||[]).find(c=>c.number===n)?.title||''};
+}
+async function lintChapter() {
+  requireIdle();
+  const c=context(), d=data();
+  if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
+  const {text,messages}=transcriptOf(c.chat,60000,{prose:true});
+  if(messages<1)throw Error('There is nothing written in this chat yet.');
+  const f=await bookFacts(d), n=d.chapter||1;
+  const exact=exactLint(text,{tense:f.tense,pov:f.pov,knownNames:f.knownNames,castNames:f.castNames,targetWords:f.target});
+  let ai=[], aiNote='', biggest='';
+  const controller=new AbortController(); renderModelWork(controller); busy=true;
+  try {
+    status(`Checking ${f.unit} ${n} against the book…`);
+    let profile='',direct=null,tokens=12000; try{profile=d.profile||'';direct=directSnapshot(d,c);tokens=Number(d.responseTokens||12000);}catch{}
+    const raw=await llm(c,lintInstruction({unit:f.unit,number:n,chapterText:text,facts:f.facts}),profile,controller.signal,tokens,'You are a careful continuity editor. Report problems only, with exact quotes.',direct);
+    ai=parseFindings(raw); biggest=biggestProblem(raw);
+    if(!ai.length && !/no problems found/i.test(raw))aiNote='The book-facts check returned nothing readable; only the exact checks are shown.';
+  } catch(e) {aiNote=`The book-facts check failed (${e.message}); only the exact checks are shown.`;}
+  finally {busy=false;renderModelWork(null);}
+  const findings=[...ai,...exact];
+  if(!biggest || /^none$/i.test(biggest)){const h=findings.find(x=>x.severity==='hard');biggest=h?`${LINT_LABELS[h.kind]||h.kind}: “${h.quote}” — ${h.rule}`:(findings.length?'Only matters of taste.':'none');}
+  d.lint={at:new Date().toISOString(),chapter:n,words:(text.match(/\S+/g)||[]).length,findings,note:aiNote,biggest};
+  await persist(); renderLint(d);
+  status(d.lint.findings.length?`${d.lint.findings.length} thing${d.lint.findings.length===1?'':'s'} to look at in ${f.unit} ${n} — see the report in the Memory tab.`:`${f.unit} ${n}: no problems found.`);
+}
+const LINT_LABELS={CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
+function renderLint(d) {
+  const box=document.getElementById('na-lint-report'); if(!box)return;
+  const r=d?.lint; box.replaceChildren();
+  if(!r || r.chapter!==(d.chapter||1))return;
+  const add=(tag,cls,text)=>{const el=document.createElement(tag);if(cls)el.className=cls;el.textContent=text;box.append(el);return el;};
+  add('div','storyloom-lint-counts',countsLine(r.findings));
+  for(const kind of ALL_BUCKETS) {
+    const list=r.findings.filter(f=>f.kind===kind);
+    add('div','storyloom-sugg-label',`${LINT_LABELS[kind]||kind}${list.length?` (${list.length})`:' — clean'}`);
+    if(!list.length)continue;
+    const ul=document.createElement('ul'); ul.className='storyloom-lint-list';
+    for(const f of list){const li=document.createElement('li');const sev=document.createElement('b');sev.className=`is-${f.severity}`;sev.textContent=f.severity;const w=document.createElement('small');w.textContent=f.where?` ${f.where}: `:' ';const q=document.createElement('q');q.textContent=f.quote;const why=document.createElement('div');why.textContent=f.rule;li.append(sev,w,q,why);ul.append(li);}
+    box.append(ul);
+  }
+  add('p','storyloom-hint',`${r.words.toLocaleString()} words. Checked ${new Date(r.at).toLocaleString()}. Nothing was changed.${r.note?` ${r.note}`:''}`);
+  add('p','storyloom-lint-biggest',`Biggest problem: ${r.biggest||'none'}`);
+}
+
 function renderChapters(d) {
   const label=document.getElementById('na-chapter-label'), select=document.getElementById('na-chapter');
   const chapters=d.outlineChapters||[];
@@ -866,6 +948,7 @@ function readable(text) {
   return String(text||'').replace(/^\s*```(?:json)?\s*/,'').replace(/^\s*\{\s*"reply"\s*:\s*"/,'')
     .replace(/\\n/g,'\n').replace(/\\"/g,'"').replace(/"\s*,\s*"updates"\s*:\s*\[\s*\{\s*"title"\s*:\s*"/,'\n\n— ').replace(/"\s*,\s*"content"\s*:\s*"/g,'\n').replace(/"\s*,\s*"keys"\s*:\s*\[[^\]]*\]\s*\}\s*,?\s*\{?\s*(?:"title"\s*:\s*")?/g,'\n\n— ');
 }
+const ANSWER_NOW='Your last reply was only reasoning, with no answer. Keep your thinking brief this time and write the answer itself, in the format asked for above.';
 async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct) {
   const progress=data=>showLive(data);
   showLive({text:'',reasoning:''});
@@ -881,7 +964,8 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct) {
           console.warn('Storyloom: empty model reply, retrying once:',error.message);
           const el=document.getElementById('na-status'); if(el)el.textContent=`The model answered with nothing (${error.message.replace(/^the model /,'')}); asking once more…`;
           showLive({text:'',reasoning:''});
-          return await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress);
+          // The second try asks for the answer directly, so a model that only reasoned last time writes it out.
+          return await generate(c,`${prompt}\n\n${ANSWER_NOW}`,profile,requestSignal,tokens,systemPrompt,direct,progress);
         }
       } catch(error) {
         if(requestSignal.aborted)throw requestSignal.reason;
@@ -1539,7 +1623,8 @@ function init() {
     </div>
     <section id="na-memory" class="storyloom-memory" hidden>
       <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
-      <div id="na-finish-area" class="storyloom-finish"><p id="na-finish-label"></p><button id="na-finish-chapter" type="button">Finish chapter</button><p class="storyloom-hint">When a chapter is done in the main chat: writes its summary, updates Story so far, moves to the next chapter and opens a fresh chat with everything carried over. This chat is kept.</p></div>
+      <div id="na-finish-area" class="storyloom-finish"><p id="na-finish-label"></p><button id="na-finish-chapter" type="button">Finish chapter</button><p class="storyloom-hint">When a chapter is done in the main chat: seals it (a note of what changed, what must not drift, and open threads), updates Story so far, moves to the next chapter and opens a fresh chat with everything carried over. This chat is kept.</p></div>
+      <div id="na-lint-area" class="storyloom-finish"><button id="na-lint" type="button">Check this chapter</button><p class="storyloom-hint">Reads this chat’s chapter against the book: characters and their voices, the outline (nothing from another chapter), the timeline, the period and setting, your rules and the sealed notes — plus exact checks for tense, point of view, names not in the book, repetition, stock phrasing and length. It only reports; nothing is changed.</p><div id="na-lint-report"></div></div>
       <div id="na-memory-items">${memoryMarkup()}</div>
     </section>
     <section id="na-assistant" class="storyloom-assistant" hidden>
@@ -1730,6 +1815,7 @@ function init() {
     box.querySelector('.na-mem-save').onclick=async()=>{lastAction=`Save ${item.label}`;try{await saveMemoryItem(item,item.fromOutline?undefined:box.querySelector('.na-mem-text').value,place());status(`${item.label} saved and in place for the next reply.`);}catch(e){fail(e);}};
   }
   panel.querySelector('#na-finish-chapter').onclick=()=>finishChapter().catch(fail);
+  panel.querySelector('#na-lint').onclick=()=>lintChapter().catch(fail);
   const sendAssistant=async()=>{const input=panel.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
   panel.querySelector('#na-assistant-send').onclick=sendAssistant;
   panel.querySelector('#na-assistant-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();sendAssistant();}});

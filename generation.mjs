@@ -13,7 +13,12 @@ export function answerInThinking(thought) {
     return 'Done.\n\n'+text.slice(restart.index).trim();
   }
   const json=text.lastIndexOf('{"reply"');
-  return json>=0 ? text.slice(json).trim() : '';
+  if(json>=0)return text.slice(json).trim();
+  // Lint findings ("- [KIND] …") or an explicit all-clear written inside the thinking.
+  const lines=[...text.matchAll(/^\s*[-*•]\s*\[[A-Z ]+\].*$/gm)];
+  if(lines.length)return text.slice(lines[0].index).trim();
+  const clear=text.lastIndexOf('No problems found');
+  return clear>=0 ? 'No problems found.' : '';
 }
 export function replyText(response) {
   const text=typeof response==='string'?response:response?.content;

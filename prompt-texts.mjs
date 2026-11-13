@@ -56,8 +56,8 @@ export const PROMPT_DEFAULTS = Object.freeze({
   },
   chapterEnd: {
     label: 'Finishing a chapter',
-    locked: 'Always added: the entry titles to return, that the ledger keeps every earlier item, that only real changes go into character entries, and the chapter transcript.',
-    text: 'Write the chapter summary as what a reader would need to remember: the scenes in order, what each character did, decided and learned, what changed between people, and what is left open. Be concrete and brief — a few short paragraphs. In the story-so-far ledger, record settled facts as short lines (events that happened, things characters now know, where people and objects are, promises and debts), so a writer can check what must not happen again.',
+    locked: 'Always added: the seal-note headings and word limits, what not to include, never repairing canon, the ledger, character states, earlier seals and the chapter transcript.',
+    text: 'Be exact and brief. Ambiguity that survives is a bug; length that duplicates is a bug. Be most exact in MUST NOT DRIFT — that section is what later chapters are checked against, and loose wording there becomes the next chapter’s contradiction. In the story-so-far ledger, record settled facts as short lines (events that happened, things characters now know, where people and objects are, promises and debts).',
   },
   background: {
     label: 'Following the main chat',

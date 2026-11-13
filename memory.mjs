@@ -57,25 +57,44 @@ export function injection(item, text, place = item.place, vars = {}) {
 }
 
 /** Main-chat messages as a transcript, newest kept when too long. */
-export function transcriptOf(chat, maxChars = 60000) {
-  const lines = (chat || []).filter(m => m && !m.is_system && String(m.mes || '').trim()).map(m => `${m.is_user ? 'USER' : (m.name || 'STORY')}: ${String(m.mes).trim()}`);
+/**
+ * The chat as text. With prose: true, only the story's own messages, without speaker labels —
+ * what a reader would see on the page (used by lint, so line numbers match the prose and labels are not read as names).
+ */
+export function transcriptOf(chat, maxChars = 60000, {prose = false} = {}) {
+  const lines = (chat || []).filter(m => m && !m.is_system && String(m.mes || '').trim() && !(prose && m.is_user))
+    .map(m => prose ? String(m.mes).trim() : `${m.is_user ? 'USER' : (m.name || 'STORY')}: ${String(m.mes).trim()}`);
   let text = lines.join('\n\n');
   if (text.length > maxChars) text = '…(earlier part of this chapter omitted)…\n\n' + text.slice(-maxChars);
   return {text, messages: lines.length};
 }
 
-export const summaryTitle = (unit, n) => `Storyloom Memory — ${unit} ${n} Summary`;
+/** The sealed note for a chapter. Re-sealing replaces only that chapter's note. */
+export const summaryTitle = (unit, n) => `Storyloom Memory — ${unit} ${n} Seal`;
+export const SEAL_SECTIONS = Object.freeze(['SUMMARY', 'WHAT CHANGED', 'WHAT THE NARRATOR NOW KNOWS', 'MUST NOT DRIFT', 'OPEN THREADS', 'CONTRADICTION']);
 
-/** What the model is asked when a chapter ends. */
-export function chapterEndInstruction({unit = 'Chapter', number, transcript, storySoFar = '', castTitles = []}) {
+/** What the model is asked when a chapter ends: a seal note (writer's format), the ledger, and character states. */
+export function chapterEndInstruction({unit = 'Chapter', number, transcript, storySoFar = '', castTitles = [], sealedNotes = '', focus = 'the focus character', narrator = 'the narrator', title = ''}) {
   const u = unit.toLowerCase();
-  return `${unit} ${number} is finished. Below is everything written in its chat.
+  return `${unit} ${number}${title ? ` — ${title}` : ''} is finished. Below is everything written in its chat. Seal it.
 ${P('chapterEnd')}
 Return these entry blocks:
-1. "${summaryTitle(unit, number)}" — what happened in this ${u}.
+1. "${summaryTitle(unit, number)}" — the seal note, exactly these headings and limits:
+${unit.toUpperCase()} ${number} — ${title || 'its own title'} (when it happens, e.g. Day 1, evening)
+SUMMARY: the ${u}'s shape in two sentences, ending where the page ends. 60 words max.
+WHAT CHANGED: what is new in ${focus} against the previous seal — deltas only. 90 words max.
+WHAT THE NARRATOR NOW KNOWS: ${narrator}'s knowledge, and where that reading was wrong, in the page's terms. 60 words max.
+MUST NOT DRIFT: page-specific facts a later ${u} could contradict or must carry — times, standing instructions, promises, objects left somewhere in a state, who was told what, holes opened. Exact wording; only these. 100 words max.
+OPEN THREADS: bullets, eight max, twelve words each.
+CONTRADICTION: none — or one line, only if this page conflicts with an earlier sealed note.
+Do not include: the sequence of events (that is SUMMARY); traits or places the character and place entries already fix, unless this ${u} changed them; dialogue beyond a six-word handle, and only for lines a later scene turns on (a standing instruction, a promise, a lie); a body inventory; anything interpreted rather than read; anything already in an earlier seal unless this ${u} moved it.
+Only what is on the page. If the page fights an earlier seal, record the page's version and flag it under CONTRADICTION — never silently choose, never repair canon.
 2. "${MEMORY_ITEMS[0].title}" — the complete updated story-so-far ledger: everything from the current version below, plus what this ${u} settled. Keep it as a list grouped by ${u}; never drop earlier items.
 3. Only if this ${u} changed a character's situation (injury, relationship, knowledge, location, possessions): a block with that character's exact entry title containing ONLY their current state as short lines — not the rest of their profile; the extension adds it to their existing entry. Existing character entries: ${castTitles.join(', ') || 'none'}.
-Do not invent anything that did not happen in the transcript.
+In your reply, report briefly: the word count of the ${u}, when it happens, the open threads, any contradiction, then one line — the first thing the next drafting pass needs.
+
+Earlier sealed notes:
+${sealedNotes || '(none — this is the first sealed ' + u + ')'}
 
 Current story-so-far ledger:
 ${storySoFar || '(empty — this is the first ' + u + ')'}

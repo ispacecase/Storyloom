@@ -193,3 +193,12 @@
 #na-panel .storyloom-budget-box { flex:none; margin:.4rem 0; border:1px solid var(--sl-line); border-radius:10px; background:#fffdf9; font-size:.75rem; }
 #na-panel .storyloom-budget-box pre { margin:0 .7rem .4rem; white-space:pre-wrap; font:11.5px/1.5 ui-monospace,monospace; color:var(--sl-ink); }
 #na-panel .storyloom-budget-box .storyloom-hint { margin:0 .7rem .6rem; }
+#na-panel .storyloom-lint-list { margin:.2rem 0 .5rem; padding-left:1rem; font-size:.74rem; color:#4f3f39; }
+#na-panel .storyloom-lint-list li { margin:.25rem 0; }
+#na-panel .storyloom-lint-list q { font-style:italic; }
+#na-panel .storyloom-lint-list small { color:var(--sl-muted); }
+#na-panel .storyloom-lint-counts { font:11px/1.5 ui-monospace,monospace; color:var(--sl-ink); background:#fff; padding:.35rem .45rem; border-radius:6px; margin:.4rem 0; }
+#na-panel .storyloom-lint-list b { font-size:.62rem; text-transform:uppercase; letter-spacing:.06em; margin-right:.3rem; }
+#na-panel .storyloom-lint-list b.is-hard { color:#a33a2a; }
+#na-panel .storyloom-lint-list b.is-soft { color:#9a8d86; }
+#na-panel .storyloom-lint-biggest { font-weight:700; color:#4f3f39; margin:.3rem 0; }

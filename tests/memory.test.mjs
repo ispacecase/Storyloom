@@ -31,7 +31,9 @@ test('the chapter-end request names its outputs and keeps earlier ledger items',
   assert.match(text, /never drop earlier items/);
   assert.match(text, /- Ch1: Ruth arrives\./);
   assert.match(text, /Character — Ruth Aldiss/);
-  assert.match(text, /Do not invent anything that did not happen/);
+  for (const h of ['SUMMARY:', 'WHAT CHANGED:', 'WHAT THE NARRATOR NOW KNOWS:', 'MUST NOT DRIFT:', 'OPEN THREADS:', 'CONTRADICTION:']) assert.ok(text.includes(h), h);
+  assert.match(text, /never silently choose, never repair canon/);
+  assert.match(chapterEndInstruction({number: 2, transcript: 'x', sealedNotes: 'CHAPTER 1 — …'}), /Earlier sealed notes:\nCHAPTER 1/);
 });
 
 test('a character update only adds or replaces CURRENT STATE; the profile stays', async () => {
@@ -44,4 +46,11 @@ test('a character update only adds or replaces CURRENT STATE; the profile stays'
   assert.match(twice, /CURRENT STATE:\n- Told Ollie about the blade\.\n\nSECRETS: none$/);
   assert.doesNotMatch(twice, /Has the razor blade/);
   assert.equal(mergeCurrentState(profile, '   '), profile);
+});
+
+test('prose transcript drops speaker labels and the writer’s own messages', async () => {
+  const {transcriptOf} = await import('../memory.mjs');
+  const chat = [{name: 'Novel Engine', mes: 'Ruth came home.'}, {is_user: true, name: 'Me', mes: 'continue'}, {name: 'Novel Engine', mes: 'It rained.'}];
+  assert.deepEqual(transcriptOf(chat, 60000, {prose: true}), {text: 'Ruth came home.\n\nIt rained.', messages: 2});
+  assert.match(transcriptOf(chat).text, /^Novel Engine: Ruth/);
 });

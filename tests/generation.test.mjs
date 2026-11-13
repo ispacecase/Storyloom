@@ -120,3 +120,9 @@ test('an answer written inside the thinking is recovered, using the last full dr
   assert.equal(answerInThinking('just thoughts, no entries'), '');
   assert.throws(() => replyText({content: '', reasoning: 'just thoughts'}), e => e.emptyReply);
 });
+
+test('lint findings written inside the thinking are recovered too', async () => {
+  const {answerInThinking} = await import('../generation.mjs');
+  assert.match(answerInThinking('Let me check.\n- [PERIOD] [hard] line 6: "smartwatch" — not in 1979\nBIGGEST PROBLEM: x'), /^- \[PERIOD\]/);
+  assert.equal(answerInThinking('Checked everything. No problems found.'), 'No problems found.');
+});
