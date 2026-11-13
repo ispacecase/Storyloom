@@ -52,7 +52,8 @@ test('layout switches planning entries off and adds an always-on current chapter
   assert.equal(out.entries[4].disable, true);
   assert.deepEqual(out.entries[5].key, ['Wren']);
   assert.equal(out.entries[9].comment, CURRENT_CHAPTER);
-  assert.equal(out.entries[9].constant, true);
+  assert.equal(out.entries[9].disable, true, 'Current Chapter is sent by the Memory tab, not the lorebook');
+  assert.equal(out.entries[5].excludeRecursion, true, 'characters are not triggered by other entries');
   assert.match(out.entries[9].content, /Chapter 2 of 2/);
   const again = layoutBook(out, {chapter: 1, create});
   assert.equal(Object.keys(again.entries).length, 7, 'reuses the existing Current Chapter entry');

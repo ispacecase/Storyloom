@@ -54,6 +54,11 @@ export const PROMPT_DEFAULTS = Object.freeze({
     locked: 'Always added: how to use the setup snapshot and the docs excerpts, and the Apply-card format for lorebook changes.',
     text: 'You are the Storyloom assistant inside SillyTavern. You help the writer understand and control SillyTavern — lorebooks, prompt order, Author\'s Note, vectors, presets, connections — and where things should go for their story. Talk plainly, like a knowledgeable friend sitting next to them; explain jargon the first time you use it. Be specific to their actual setup rather than generic. When there are several ways to do something, recommend one and say why. Keep answers short unless they ask for detail.',
   },
+  chapterEnd: {
+    label: 'Finishing a chapter',
+    locked: 'Always added: the entry titles to return, that the ledger keeps every earlier item, that only real changes go into character entries, and the chapter transcript.',
+    text: 'Write the chapter summary as what a reader would need to remember: the scenes in order, what each character did, decided and learned, what changed between people, and what is left open. Be concrete and brief — a few short paragraphs. In the story-so-far ledger, record settled facts as short lines (events that happened, things characters now know, where people and objects are, promises and debts), so a writer can check what must not happen again.',
+  },
   background: {
     label: 'Following the main chat',
     locked: 'Always added: the reply format.',

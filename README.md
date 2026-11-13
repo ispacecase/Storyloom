@@ -20,6 +20,20 @@ Designed for SillyTavern 1.19.0. In **Extensions → Install extension**, use `h
 
 Every button has a tooltip. Errors at the bottom of the panel say which button failed and why; full details go to the browser console.
 
+## Memory tab: one chat per chapter
+
+Write each chapter in its own SillyTavern chat. The **Memory** tab holds what the story chat should remember, and Storyloom sends it into the prompt itself, with the placement you choose for each item: the top of the prompt, the end of the system prompt, the start of the chat, or N messages from the end, as a system, user or assistant message.
+
+- **Story so far:** what has happened and is settled, so nothing repeats or contradicts it.
+- **Previously:** the last chapter's summary.
+- **This chapter:** the current chapter's plan from the outline.
+
+**Finish chapter** reads the chapter's chat, writes its summary, updates Story so far, offers character changes (a CURRENT STATE section) as Suggestions, moves to the next chapter and opens a fresh chat with the lorebook, Author's Note and memory carried over. The memory is stored as switched-off entries in the novel's lorebook, so it travels with the book.
+
+## Assistant tab
+
+Ask about SillyTavern or your setup. Each question gets a snapshot of your live settings (prompt order, lorebook scanning, Vector Storage, active lorebooks and their entries, Author's Note; never API keys) and the relevant sections of the official SillyTavern docs. The docs are downloaded from GitHub and indexed with your Vector Storage embedding source into a separate collection that story replies never use. Lorebook changes come back as cards; nothing changes until you click **Apply**, and **Undo** reverses it.
+
 ## Templates
 
 **Settings → Templates** shows what each template asks and saves, as plain text. Built-in templates can't be changed. **Save as new** makes your own copy that you can edit: questions, entries and their fields, whether each entry is always on, by name or off, the outline unit (Chapter, Session…) and the character headings. A project keeps the template it was started with.

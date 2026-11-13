@@ -65,6 +65,7 @@ test('layout follows the template’s show settings', () => {
   assert.equal(by('Cast').disable, true);
   assert.equal(by('Factions').constant, false);
   assert.match(by('Current Chapter').content, /Session 2 of 2/);
+  assert.equal(by('World and Locations').excludeRecursion, true);
 });
 
 test('only starred headings are required; the rest are suggestions the model may skip or extend', async () => {

@@ -161,3 +161,13 @@
 #na-panel .storyloom-action pre { white-space:pre-wrap; max-height:9rem; overflow:auto; font:11px/1.45 ui-monospace,monospace; background:#fff; padding:.4rem; border-radius:6px; }
 #na-panel .storyloom-action button { border:1px solid #dfd1c3; border-radius:7px; padding:.25rem .55rem; background:#fffaf5; color:#604b43; font-size:.7rem; }
 #na-panel .storyloom-action-error { display:block; color:#a33a2a; margin-top:.3rem; }
+#na-panel .storyloom-memory { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; overflow:auto; gap:.6rem; }
+#na-panel .storyloom-memory[hidden] { display:none; }
+#na-panel .storyloom-memory-item { padding:.6rem .7rem; border:1px solid var(--sl-line); border-radius:10px; background:#fffdf9; font-size:.75rem; color:#5a463e; }
+#na-panel .storyloom-memory-item textarea { width:100%; box-sizing:border-box; margin:.4rem 0; font:12px/1.5 Georgia,serif; color:var(--sl-ink); background:#fff; border:1px solid #d9cbbf; border-radius:8px; padding:.45rem; resize:vertical; }
+#na-panel .storyloom-memory-item label { display:flex; align-items:center; gap:.3rem; font-size:.7rem; }
+#na-panel .storyloom-memory-item select, #na-panel .storyloom-memory-item input { width:auto; padding:.25rem; }
+#na-panel .storyloom-memory-item input { width:4rem; }
+#na-panel .storyloom-memory-item button, #na-panel .storyloom-finish button { border:1px solid #dfd1c3; border-radius:8px; padding:.35rem .6rem; background:#fffaf5; color:#604b43; font-size:.72rem; }
+#na-panel .storyloom-finish { padding:.6rem .7rem; border:1px solid #d9b9a6; border-radius:10px; background:#fff6ef; font-size:.78rem; }
+#na-panel .storyloom-finish p { margin:.2rem 0; }

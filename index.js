@@ -21,6 +21,7 @@ import { castNames, characterProfilesInstruction, validateCharacters, characterT
 import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED } from './interview.mjs';
@@ -197,6 +198,8 @@ const TIPS={
   'na-docs-update':'Download the newest SillyTavern docs from GitHub and re-index them.',
   'na-assistant-new':'Clear this conversation and its summary. Applied changes stay.',
   'na-assistant-send':'Send your question (Ctrl+Enter).',
+  'na-tab-memory':'What the story chat remembers between chapters, and where it goes in the prompt. Also where you finish a chapter.',
+  'na-finish-chapter':'Summarise this chapter’s chat, update Story so far, move to the next chapter and open a fresh chat with everything carried over.',
   'na-chapter':'Which chapter the story is on. The main chat only gets this chapter’s plan (in the always-on “Current Chapter” entry), so it doesn’t run ahead.',
 };
 function showMessages() {
@@ -505,9 +508,125 @@ async function askAssistant(text) {
 }
 function renderTabs() {
   const panel=document.getElementById('na-panel'); if(!panel)return;
-  for(const tab of ['story','assistant'])panel.querySelector('#na-tab-'+tab).classList.toggle('is-active',activeTab===tab);
+  for(const tab of ['story','memory','assistant'])panel.querySelector('#na-tab-'+tab).classList.toggle('is-active',activeTab===tab);
   panel.querySelector('#na-assistant').hidden=settingsOpen || activeTab!=='assistant';
+  panel.querySelector('#na-memory').hidden=settingsOpen || activeTab!=='memory';
+  if(activeTab==='memory')renderMemory().catch(fail);
   if(activeTab==='assistant'){renderAssistant();renderDocsStatus();}
+}
+
+/* ---------- Memory tab ---------- */
+/** Send each memory item into the main chat's prompt with its chosen placement (or clear it). */
+async function applyMemory() {
+  const c=context();
+  let book=null;
+  try {const d=data(); if(d.book && c.chatMetadata?.world_info===d.book && c.getWorldInfoNames().includes(d.book))book=await freshBook(d.book);} catch {}
+  for(const item of MEMORY_ITEMS) {
+    const e=book?findEntry(book,item.title):null;
+    const inj=injection(item,e?.content||'',e?.storyloom_memory||item.place);
+    c.setExtensionPrompt(memoryKey(item),inj.value,inj.position,inj.depth,false,inj.role);
+  }
+}
+let memoryTimer;
+const queueMemory=()=>{clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>applyMemory().catch(e=>console.warn('Storyloom memory:',e)),400);};
+/** Save one memory item's text and placement into its (switched-off) lorebook entry. */
+async function saveMemoryItem(item,content,place) {
+  requireIdle();
+  const c=context(), d=data();
+  if(!d.book || c.chatMetadata.world_info!==d.book)throw Error('Link this novel’s lorebook to the chat first.');
+  syncing=true;
+  try {
+    const before=await freshBook(d.book), book=structuredClone(before);
+    let entry=findEntry(book,item.title);
+    if(!entry){entry=createWorldInfoEntry(d.book,book); if(!entry)throw Error('Could not create the memory entry.'); entry.comment=item.title; entry.key=[];}
+    if(content!==undefined)entry.content=content;
+    if(place)entry.storyloom_memory=place;
+    entry.disable=true; entry.constant=false;
+    await c.saveWorldInfo(d.book,book,true);
+    if(JSON.stringify(await freshBook(d.book))!==JSON.stringify(book))throw Error('The save could not be verified.');
+    d.history ??= []; d.history.push({id:crypto.randomUUID(),book:d.book,changes:buildChange(before,book),source:`memory: ${item.label}`,at:new Date().toISOString()}); if(d.history.length>30)d.history.shift();
+    await persist();
+  } finally {syncing=false;queueSync();}
+  await applyMemory();
+}
+async function renderMemory() {
+  const root_=document.getElementById('na-memory'); if(!root_ || root_.hidden)return;
+  let d=null,book=null;
+  try{d=data(); if(d.book && context().getWorldInfoNames().includes(d.book))book=await freshBook(d.book);}catch{}
+  const ready=!!(d?.book && d.interview?.phase==='done');
+  root_.querySelector('#na-memory-empty').hidden=ready;
+  root_.querySelector('#na-memory-items').hidden=!ready;
+  root_.querySelector('#na-finish-area').hidden=!ready;
+  if(!ready)return;
+  // Books arranged before the Memory tab still send Current Chapter through the lorebook: re-arrange once.
+  const cc=book?findEntry(book,'Current Chapter'):null;
+  if(cc && !cc.disable){try{await organizeBook();book=await freshBook(d.book);}catch(e){console.warn('Storyloom layout:',e);}}
+  const t=tpl(d), n=d.chapter||1, total=d.outlineChapters?.length||0;
+  root_.querySelector('#na-finish-label').textContent=`You are on ${t.unit} ${n}${total?` of ${total}`:''}.`;
+  root_.querySelector('#na-finish-chapter').textContent=n<total?`Finish ${t.unit} ${n} → start ${t.unit} ${n+1}`:`Finish ${t.unit} ${n}`;
+  for(const item of MEMORY_ITEMS) {
+    const box=root_.querySelector(`[data-memory="${item.key}"]`), e=book?findEntry(book,item.title):null, place=e?.storyloom_memory||item.place;
+    box.querySelector('textarea').value=e?.content||'';
+    box.querySelector('.na-mem-where').value=place.where;
+    box.querySelector('.na-mem-depth').value=String(place.depth??3);
+    box.querySelector('.na-mem-role').value=place.role||'system';
+    box.querySelector('.na-mem-depth-label').hidden=place.where!=='chat-depth';
+    box.querySelector('.na-mem-role-label').hidden=place.where==='off';
+  }
+}
+function memoryMarkup() {
+  const opts=(o)=>Object.entries(o).map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
+  return MEMORY_ITEMS.map(item=>`<div class="storyloom-memory-item" data-memory="${item.key}">
+    <strong>${item.label}</strong><p class="storyloom-hint">${item.hint}</p>
+    <textarea rows="5"></textarea>
+    <div class="storyloom-row">
+      <label>Where <select class="na-mem-where">${opts(WHERE)}</select></label>
+      <label class="na-mem-depth-label">Messages from the end <input class="na-mem-depth" type="number" min="0" max="${CHAT_START_DEPTH}" step="1"></label>
+      <label class="na-mem-role-label">Sent as <select class="na-mem-role"><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option></select></label>
+      <button class="na-mem-save" type="button">Save</button>
+    </div></div>`).join('');
+}
+async function finishChapter() {
+  requireIdle();
+  const c=context(), d=data(), t=tpl(d);
+  if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
+  const n=d.chapter||1, total=d.outlineChapters?.length||0;
+  const {text,messages}=transcriptOf(c.chat);
+  if(messages<2)throw Error(`This chat has almost nothing in it yet. Write ${t.unit} ${n} in the main chat first.`);
+  const next=n<total;
+  if(!await c.Popup.show.confirm(`Finish ${t.unit} ${n}?`,`<p>Storyloom will:</p><ol><li>Read this chat (${messages} messages) and write a ${t.unit.toLowerCase()} summary.</li><li>Update <b>Story so far</b> with what this ${t.unit.toLowerCase()} settled.</li><li>Offer any changes to character entries as Suggestions for you to approve.</li>${next?`<li>Move to ${t.unit} ${n+1} and open a fresh chat with the novel, lorebook and memory carried over.</li>`:''}</ol><p>This chat stays as it is.</p>`))return;
+  const book=await freshBook(d.book);
+  const sofarTitle=MEMORY_ITEMS[0].title, sumTitle=summaryTitle(t.unit,n);
+  const castTitles=Object.values(book.entries||{}).map(e=>String(e.comment||'')).filter(x=>/^character\s*[—–-]/i.test(x));
+  status(`Reading ${t.unit} ${n} and writing its summary…`);
+  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles}),false,null,null,`${t.unit} ${n} ending`,false,{silentUser:true,loreBudget:20000,holdForAuthor:'allExcept',keep:[sofarTitle,sumTitle],mergeState:true,guidance:'Summarise only what happened in the transcript.'});
+  const summary=(result.updates||[]).find(u=>u.title.trim().toLocaleLowerCase()===sumTitle.toLocaleLowerCase());
+  if(!summary)throw Error(`The AI did not return the ${t.unit.toLowerCase()} summary. Nothing was moved on; try again.`);
+  await saveMemoryItem(MEMORY_ITEMS[1],summary.content);
+  if(next) {
+    await organizeBook(n+1);
+    await startChapterChat();
+    status(`${t.unit} ${n} is summarised. This is a fresh chat for ${t.unit} ${n+1}; Story so far, Previously and the ${t.unit.toLowerCase()} plan are already in place.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
+  } else {
+    try{await organizeBook();}catch{}
+    status(`${t.unit} ${n} is summarised. That was the last ${t.unit.toLowerCase()} in the outline.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
+  }
+  options(); renderMemory();
+}
+/** Open a new chat with the same character and carry the novel over: lorebook link, Author's Note directive, memory. */
+async function startChapterChat() {
+  const c=context(), d=data(), bookName=d.book, previous=c.chatId;
+  const copy=structuredClone(d);
+  for(const k of ['directive','pending','processed','review','queueError','pendingContinuity','pendingWrite'])delete copy[k];
+  await doNewChat();
+  if(context().chatId===previous)throw Error('SillyTavern could not open a new chat. Close any character editor or stop the main chat’s generation, then use “Start a new novel”… or open a new chat and choose this lorebook.');
+  const state=root();
+  Object.defineProperty(state.novels,bookName,{value:copy,writable:true,enumerable:true,configurable:true});
+  state.selected=bookName;
+  await persist();
+  if(!await attachBook(bookName,context()))throw Error('The new chat could not be linked to the novel’s lorebook.');
+  await setupNovel();
+  await applyMemory();
 }
 
 function renderChapters(d) {
@@ -756,13 +875,16 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if(interview?.holdForAuthor) {
       const planned=new Set([...requiredTitles(tpl(d)),'Storyloom Interview Notes'].map(x=>x.toLocaleLowerCase()));
       const exists=title=>Object.values(fresh.entries||{}).some(e=>String(e.comment||'').trim().toLocaleLowerCase()===title);
-      const isExtra=u=>{const t=String(u.title).trim().toLocaleLowerCase();return interview.holdForAuthor==='all' || (!planned.has(t) && !exists(t) && !/^character\s*[—–-]/i.test(t));};
+      const keep=new Set((interview.keep||[]).map(x=>x.toLocaleLowerCase()));
+      const isExtra=u=>{const t=String(u.title).trim().toLocaleLowerCase();if(interview.holdForAuthor==='allExcept')return !keep.has(t);return interview.holdForAuthor==='all' || (!planned.has(t) && !exists(t) && !/^character\s*[—–-]/i.test(t));};
       held=(result.updates||[]).filter(u=>u.storyloomKind!=='interview_notes' && isExtra(u));
       result.updates=(result.updates||[]).filter(u=>!held.includes(u));
       if(held.length) {
         d.suggestions ??= [];
         for(const u of held) {
           const title=u.title.trim(), kind=exists(title.toLocaleLowerCase())?'change':'new';
+          // Chapter endings send only a character's CURRENT STATE; merge it into their full entry.
+          if(interview.mergeState && kind==='change' && /^character\s*[—–-]/i.test(title)){const cur=Object.values(fresh.entries||{}).find(e=>String(e.comment||'').trim().toLocaleLowerCase()===title.toLocaleLowerCase());u.content=mergeCurrentState(cur?.content,u.content);u.keys=cur?.key?.length?cur.key:u.keys;}
           d.suggestions=d.suggestions.filter(x=>x.title.toLocaleLowerCase()!==title.toLocaleLowerCase());
           d.suggestions.push({id:crypto.randomUUID(),title,content:u.content,keys:u.keys||[title],kind,source:sourceKind||'planning',reason:String(result.reply||'').slice(0,2000),at:new Date().toISOString()});
         }
@@ -1177,7 +1299,7 @@ function init() {
         <button id="na-close" type="button" class="storyloom-close" aria-label="Close Storyloom">×</button>
       </div>
     </header>
-    <nav class="storyloom-tabs" role="tablist"><button id="na-tab-story" type="button" role="tab" class="is-active">Story</button><button id="na-tab-assistant" type="button" role="tab">Assistant</button></nav>
+    <nav class="storyloom-tabs" role="tablist"><button id="na-tab-story" type="button" role="tab" class="is-active">Story</button><button id="na-tab-memory" type="button" role="tab">Memory</button><button id="na-tab-assistant" type="button" role="tab">Assistant</button></nav>
     <section id="na-settings" class="storyloom-settings" aria-label="Storyloom settings" hidden>
       <div class="storyloom-settings-body">
         <label>AI connection<select id="na-profile"></select></label><p class="storyloom-hint">Which AI Storyloom talks to. “Use current connection” uses whatever is set in SillyTavern’s API Connections; pick another to use a different model just for Storyloom.</p>
@@ -1244,6 +1366,11 @@ function init() {
     <div id="na-interview-controls" class="storyloom-flow"><button id="na-skip" type="button">Skip for now <span aria-hidden="true">→</span></button><button id="na-next" type="button">Next topic <span aria-hidden="true">→</span></button><button id="na-outline" type="button">Create outline <span aria-hidden="true">→</span></button></div>
     <div id="na-composer" class="storyloom-composer"><label class="storyloom-sr-only" for="na-input">Message Storyloom</label><textarea id="na-input" placeholder="Tell me what you’re thinking…"></textarea><div class="storyloom-compose-footer"><span>YOUR STORY, YOUR WAY</span><button id="na-send" type="button">Send <span aria-hidden="true">↗</span></button></div></div>
     </div>
+    <section id="na-memory" class="storyloom-memory" hidden>
+      <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
+      <div id="na-finish-area" class="storyloom-finish"><p id="na-finish-label"></p><button id="na-finish-chapter" type="button">Finish chapter</button><p class="storyloom-hint">When a chapter is done in the main chat: writes its summary, updates Story so far, moves to the next chapter and opens a fresh chat with everything carried over. This chat is kept.</p></div>
+      <div id="na-memory-items">${memoryMarkup()}</div>
+    </section>
     <section id="na-assistant" class="storyloom-assistant" hidden>
       <div class="storyloom-assistant-bar"><small id="na-docs-status" class="storyloom-hint"></small><div class="storyloom-row"><button id="na-docs-update" type="button">Update docs</button><button id="na-assistant-new" type="button">New conversation</button></div></div>
       <div id="na-assistant-log" role="log" aria-live="polite" aria-label="Assistant conversation"></div>
@@ -1421,6 +1548,14 @@ function init() {
   panel.querySelector('#na-profiles').onclick=()=>writeProfiles();
   panel.querySelector('#na-tab-story').onclick=()=>{activeTab='story';settingsOpen=false;renderPanelView();};
   panel.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
+  panel.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
+  for(const item of MEMORY_ITEMS) {
+    const box=panel.querySelector(`[data-memory="${item.key}"]`);
+    const place=()=>({where:box.querySelector('.na-mem-where').value,depth:Number(box.querySelector('.na-mem-depth').value)||0,role:box.querySelector('.na-mem-role').value});
+    box.querySelector('.na-mem-where').onchange=()=>{const p=place();box.querySelector('.na-mem-depth-label').hidden=p.where!=='chat-depth';box.querySelector('.na-mem-role-label').hidden=p.where==='off';};
+    box.querySelector('.na-mem-save').onclick=async()=>{lastAction=`Save ${item.label}`;try{await saveMemoryItem(item,box.querySelector('textarea').value,place());status(`${item.label} saved and in place for the next reply.`);}catch(e){fail(e);}};
+  }
+  panel.querySelector('#na-finish-chapter').onclick=()=>finishChapter().catch(fail);
   const sendAssistant=async()=>{const input=panel.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
   panel.querySelector('#na-assistant-send').onclick=sendAssistant;
   panel.querySelector('#na-assistant-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();sendAssistant();}});
@@ -1463,9 +1598,11 @@ function init() {
   const c=context();
   setPromptOverrides(c.extensionSettings.storyloom?.prompts);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
+  c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
+  setTimeout(()=>applyMemory().catch(e=>console.warn('Storyloom memory:',e)),2500);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,name=>{if(linkRunning)return;clearTimeout(linkTimer);linkTimer=setTimeout(()=>syncLinks(typeof name==='string'?name:null),1000);});
   setTimeout(()=>{if(storedLinks().length)syncLinks();},4000);
-  c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;panel.querySelector('#na-session-key').value='';if(!panel.hidden){try{options();status('')}catch{panel.hidden=true}} queueSync(); scheduleDrain();});
+  c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;panel.querySelector('#na-session-key').value='';if(!panel.hidden){try{options();status('')}catch{panel.hidden=true}} queueSync(); scheduleDrain();});
   const sourceChanged=(id,deleted=false)=>{try {const d=data(); if(d.watch && (requiresReview(d.processed||[],id) || requiresReview(d.pending||[],id) || (deleted && [...(d.processed||[]),...(d.pending||[])].some(x=>x.index>=id)))) {d.review={index:id}; persist(); status('A previously processed chat message changed. Review your lore before resuming tracking.');}}catch(e){console.warn('Storyloom:',e.message)}};
   c.eventSource.on(c.event_types.MESSAGE_EDITED,id=>sourceChanged(id));
   c.eventSource.on(c.event_types.MESSAGE_DELETED,id=>sourceChanged(id,true));

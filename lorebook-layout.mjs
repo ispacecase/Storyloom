@@ -56,11 +56,14 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
   for(const e of t.entries) {
     if(e.show==='always')set(find(e.title),{constant:true,disable:false,order:ORDER.voice});
     else if(e.show==='off')set(find(e.title),{disable:true});
-    else set(find(e.title),{constant:false,disable:false,order:ORDER.place});
+    else set(find(e.title),{constant:false,disable:false,order:ORDER.place,excludeRecursion:true});
   }
   set(find(t.outline.title),{disable:true});
   if(hasProfiles)set(find(t.cast),{disable:true});
-  for(const e of entries)if(/^character\s*[—–-]/i.test(String(e.comment||'')))set(e,{constant:false,order:ORDER.character});
+  // Characters are pulled in when named in the chat (or by vectors), not because an always-on entry mentions them.
+  for(const e of entries)if(/^character\s*[—–-]/i.test(String(e.comment||'')))set(e,{constant:false,order:ORDER.character,excludeRecursion:true});
+  // Memory entries are sent by Storyloom itself (Memory tab), never by lorebook scanning.
+  for(const e of entries)if(/^storyloom memory\s*[—–-]/i.test(String(e.comment||'')))set(e,{disable:true,constant:false});
   cleanCharacterKeys(entries);
   const outline=find(t.outline.title)?.content;
   const content=currentChapterContent(outline,chapter,t.unit);
@@ -72,7 +75,8 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
       if(!entry)throw Error('Could not add the Current Chapter entry.');
       entry.comment=CURRENT_CHAPTER;
     }
-    set(entry,{content,key:[],constant:true,disable:false,order:ORDER.chapter});
+    // Kept as a record; the Memory tab injects it with the placement the writer chose.
+    set(entry,{content,key:[],constant:false,disable:true,order:ORDER.chapter});
   }
   return book;
 }
