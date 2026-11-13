@@ -130,19 +130,30 @@ export function syncDecision(base, book, note) {
   if (note === base) return 'book';
   return 'conflict';
 }
-const START = '<!-- Novel Architect -->';
-const END = '<!-- /Novel Architect -->';
+/** Markers around Storyloom's part of the Author's Note. The old "Novel Architect" pair is still read, and replaced on the next write. */
+export const DIRECTIVE_MARKERS = Object.freeze({
+  start: '<!-- Storyloom writing directive: edit it here or in the lorebook, they stay in sync -->',
+  end: '<!-- end of Storyloom writing directive -->',
+});
+const MARKER_PAIRS = [[DIRECTIVE_MARKERS.start, DIRECTIVE_MARKERS.end], ['<!-- Novel Architect -->', '<!-- /Novel Architect -->']];
+function findBlock(note) {
+  for (const [START, END] of MARKER_PAIRS) {
+    const start = note.indexOf(START), end = note.indexOf(END);
+    if (start < 0 && end < 0) continue;
+    if (start < 0 || end < start || note.indexOf(START, start + START.length) !== -1 || note.indexOf(END, end + END.length) !== -1) throw new Error('Invalid Storyloom directive markers in the Author’s Note');
+    return {start, end, START, END};
+  }
+  return null;
+}
 export function readDirective(note) {
   note = String(note ?? '');
-  const start = note.indexOf(START), end = note.indexOf(END);
-  if (start < 0 && end < 0) return null;
-  if (start < 0 || end < start || note.indexOf(START, start + START.length) !== -1 || note.indexOf(END, end + END.length) !== -1) throw new Error('Invalid Novel Architect directive markers');
-  return note.slice(start + START.length, end).trim();
+  const b = findBlock(note);
+  return b ? note.slice(b.start + b.START.length, b.end).trim() : null;
 }
 export function replaceDirective(note, directive) {
   note = String(note ?? '');
-  const old = readDirective(note);
-  const block = `${START}\n${directive}\n${END}`;
-  if (old === null) return note.trimEnd() ? `${note.trimEnd()}\n\n${block}` : block;
-  return note.slice(0, note.indexOf(START)) + block + note.slice(note.indexOf(END) + END.length);
+  const b = findBlock(note);
+  const block = `${DIRECTIVE_MARKERS.start}\n${directive}\n${DIRECTIVE_MARKERS.end}`;
+  if (!b) return note.trimEnd() ? `${note.trimEnd()}\n\n${block}` : block;
+  return note.slice(0, b.start) + block + note.slice(b.end + b.END.length);
 }

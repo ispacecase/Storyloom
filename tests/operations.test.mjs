@@ -101,3 +101,14 @@ test('common END variations and missing ENDs are accepted', async () => {
   assert.deepEqual(r.updates.map(u => [u.title, u.content]), [['A', 'First entry.'], ['B', 'Second entry.'], ['C', 'Third entry, no end marker.']]);
   assert.equal(parseAssistant('x\n=== ENTRY: D\nKEYS: d\nText\n=== END: D').updates[0].content, 'Text');
 });
+
+test('the Author’s Note marker has a readable name, and the old one is still read and replaced', async () => {
+  const {readDirective, replaceDirective, DIRECTIVE_MARKERS} = await import('../operations.mjs');
+  const old = 'My own note.\n\n<!-- Novel Architect -->\nCURRENT WRITING DIRECTIVE\nChapter: 1\n<!-- /Novel Architect -->';
+  assert.equal(readDirective(old), 'CURRENT WRITING DIRECTIVE\nChapter: 1');
+  const updated = replaceDirective(old, 'CURRENT WRITING DIRECTIVE\nChapter: 2');
+  assert.equal(updated, `My own note.\n\n${DIRECTIVE_MARKERS.start}\nCURRENT WRITING DIRECTIVE\nChapter: 2\n${DIRECTIVE_MARKERS.end}`);
+  assert.doesNotMatch(updated, /Novel Architect/);
+  assert.equal(readDirective(updated), 'CURRENT WRITING DIRECTIVE\nChapter: 2');
+  assert.match(DIRECTIVE_MARKERS.start, /Storyloom writing directive/);
+});

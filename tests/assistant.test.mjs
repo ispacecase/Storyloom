@@ -79,6 +79,9 @@ test('the assistant knows what Storyloom delivers itself and cannot switch it on
   assert.match(snap, /Start of the text of “Voice”:\npsychologica\n\[…shortened here for space/);
   assert.match(assistantSystem(), /switched off in the lorebook ON PURPOSE/);
   const book = {entries: {1: {uid: 1, comment: 'Current Chapter', disable: true}}};
-  assert.throws(() => applyAction(book, {type: 'set-placement', book: 'B', title: 'Current Chapter', strategy: 'always'}, () => null, managed), /switched off on purpose.*send it twice/);
-  assert.doesNotThrow(() => applyAction(book, {type: 'set-placement', book: 'B', title: 'Current Chapter', strategy: 'off'}, () => null, managed));
+  assert.throws(() => applyAction(book, {type: 'set-placement', book: 'B', title: 'Current Chapter', strategy: 'always'}, () => null, managed), /managed by Storyloom.*can’t change it/);
+  assert.throws(() => applyAction(book, {type: 'edit-entry', book: 'B', title: 'Current Chapter', content: 'x'}, () => null, managed), /managed by Storyloom/);
+  const long = {entries: {1: {uid: 1, comment: 'Voice', content: 'POV: First person.\nTone: A slow, psychological unease that builds across the afternoon.'}}};
+  assert.throws(() => applyAction(long, {type: 'edit-entry', book: 'B', title: 'Voice', content: 'POV: First person.\nTone: A'}, () => null), /cut “Voice” from .* — it looks like the assistant only saw part of it/);
+  assert.doesNotThrow(() => applyAction(long, {type: 'edit-entry', book: 'B', title: 'Voice', content: 'POV: Third person.\nTone: Bright.'}, () => null), 'a genuinely different shorter text is allowed');
 });

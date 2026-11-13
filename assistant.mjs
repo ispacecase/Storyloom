@@ -31,7 +31,8 @@ const STORYLOOM_DESIGN = `How Storyloom sets up a novel's lorebook (deliberate �
 - Entries marked "managed by Storyloom" are switched off in the lorebook ON PURPOSE. The full outline and planning notes are off so the story never sees future chapters. "Current Chapter", "Story so far" and "Previously" are sent by Storyloom itself as injected prompts (Storyloom panel → Memory tab, where the writer chooses position and role). "Current Writing Directive" reaches the chat through the Author's Note, which Storyloom keeps in sync. Switching any of these on would send them twice.
 - Character and place entries are keyword entries that other entries cannot trigger (excludeRecursion), so they arrive only when named in recent messages or matched by Vector Storage.
 - To change what the story sees each chapter, the writer uses the Memory tab or the chapter picker, not these entries' settings.
-- Long entry texts in the snapshot may be shortened for space; a marked "[…shortened here…]" is not a problem in the real entry.`;
+- Never propose cards for entries managed by Storyloom; they will be refused. Point the writer to the Memory tab or the Author's Note instead.
+- Long entry texts in the snapshot may be shortened for space; a marked "[…shortened here…]" is not a problem in the real entry. Never put a shortened text into an edit-entry card — you would cut the real entry short. If you only see part of an entry, describe the change in words instead.`;
 
 export function assistantSystem() {
   return `${P('assistant')}\n\nYou are given (1) a snapshot of the writer's live SillyTavern setup, (2) excerpts from the official SillyTavern documentation chosen for this question, and (3) the conversation so far. Base answers about how SillyTavern works on the documentation excerpts and name the page you used, like (Docs: Usage › worldinfo). If the excerpts don't cover something, say so rather than guessing. Base answers about the writer's setup on the snapshot.\n\n${STORYLOOM_DESIGN}\n\n${ACTION_FORMAT}`;
@@ -58,7 +59,7 @@ export function formatSnapshot(s) {
   if (s.vectors) lines.push(`Vector Storage: source ${s.vectors.source || 'none'}; for lorebooks ${s.vectors.enabled_world_info ? 'on' : 'off'}${s.vectors.enabled_for_all ? ' (all entries)' : ''}, max ${s.vectors.max_entries} entries, threshold ${s.vectors.score_threshold}; for chats ${s.vectors.enabled_chats ? 'on' : 'off'}`);
   if (s.prompts?.length) lines.push(`Prompt order (chat completion): ${s.prompts.map(p => `${p.enabled ? '' : '[off] '}${p.name}`).join(' → ')}`);
   for (const p of s.prompts || []) if (p.content && p.enabled) lines.push(`${p.name} text: ${p.content.slice(0, 1200)}`);
-  if (s.authorsNote) lines.push(`Author's Note: ${s.authorsNote.text ? `${words(s.authorsNote.text)} words${/Novel Architect/.test(s.authorsNote.text) ? ', contains the Storyloom writing directive' : ''}` : 'empty'}, position ${s.authorsNote.position}, depth ${s.authorsNote.depth}, role ${s.authorsNote.role}`);
+  if (s.authorsNote) lines.push(`Author's Note: ${s.authorsNote.text ? `${words(s.authorsNote.text)} words${/Novel Architect|Storyloom writing directive/.test(s.authorsNote.text) ? ', contains the Storyloom writing directive' : ''}` : 'empty'}, position ${s.authorsNote.position}, depth ${s.authorsNote.depth}, role ${s.authorsNote.role}`);
   if (s.memory?.length) lines.push(`Sent by Storyloom itself each reply (Memory tab): ${s.memory.map(m => `${m.label} — ${m.words ? `${m.words} words, ${m.where}` : 'empty, not sent'}`).join('; ')}`);
   if (s.connection) lines.push(`Main connection: ${s.connection}`);
   if (s.novel) lines.push(`Storyloom project: ${s.novel}`);
@@ -132,7 +133,7 @@ export function describeAction(a) {
  * `managed` lists entries Storyloom delivers itself; switching those on is refused (it would send them twice). */
 export function applyAction(source, a, create, managed = []) {
   const guard = managed.find(m => m.title.toLocaleLowerCase() === a.title.trim().toLocaleLowerCase());
-  if (guard && a.strategy && a.strategy !== 'off') throw Error(`“${a.title}” is switched off on purpose: ${guard.how}. Switching it on would send it twice. Change it in Storyloom’s Memory tab instead.`);
+  if (guard) throw Error(`“${a.title}” is managed by Storyloom (${guard.how}), so the assistant can’t change it. Edit it in Storyloom’s Memory tab or the Author’s Note instead.`);
   const book = structuredClone(source);
   const matches = Object.values(book.entries || {}).filter(e => String(e.comment || '').trim().toLocaleLowerCase() === a.title.trim().toLocaleLowerCase());
   let entry;
@@ -145,7 +146,13 @@ export function applyAction(source, a, create, managed = []) {
     if (matches.length !== 1) throw Error(matches.length ? `“${a.book}” has more than one “${a.title}”.` : `“${a.book}” has no entry called “${a.title}”.`);
     entry = matches[0];
   }
-  if (a.content !== undefined) entry.content = a.content;
+  if (a.content !== undefined) {
+    // The assistant may only see a shortened copy of an entry; refuse an edit that would cut the real one short.
+    const old = String(entry.content || '').trim(), next = String(a.content).trim();
+    if (a.type === 'edit-entry' && old && next.length < old.length * 0.8 && old.startsWith(next.slice(0, Math.min(120, next.length))))
+      throw Error(`This would cut “${a.title}” from ${old.length.toLocaleString()} to ${next.length.toLocaleString()} characters — it looks like the assistant only saw part of it. Nothing was changed.`);
+    entry.content = a.content;
+  }
   if (a.keys) entry.key = a.keys;
   if (a.strategy) { entry.disable = a.strategy === 'off'; entry.constant = a.strategy === 'always'; }
   if (a.position) entry.position = POSITIONS[a.position];
