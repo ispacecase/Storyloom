@@ -63,3 +63,13 @@ test('layout switches planning entries off and adds an always-on current chapter
 test('directive chapter line moves and scene resets', () => {
   assert.equal(directiveForChapter('X\nChapter: 1\nScene: 4\nPOV: Third', 3), 'X\nChapter: 3\nScene: 1\nPOV: Third');
 });
+
+test('the cast list is labelled as an index, once', async () => {
+  const {castNames} = await import('../characters.mjs');
+  const book = {entries: {1: {uid: 1, comment: 'People', content: '**Lily | Age: 7 | Pronouns: she/her | Relationships: x | Wants: y'}, 2: {uid: 2, comment: 'Character — Lily', content: 'x'}}};
+  const once = layoutBook(book, {});
+  const twice = layoutBook(once, {});
+  assert.match(twice.entries[1].content, /^\(Cast index for Storyloom/);
+  assert.equal(twice.entries[1].content.match(/Cast index/g).length, 1);
+  assert.deepEqual(castNames(twice.entries[1].content), ['Lily'], 'the label does not become a cast member');
+});

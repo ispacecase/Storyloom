@@ -123,3 +123,11 @@ test('the review pass shows no template and makes "no change" the default', asyn
   assert.match(text, /Never change: Current Writing Directive, Novel Outline/);
   assert.doesNotMatch(text, /NOVEL TITLE|GENRE|REGISTER|Story Scale/, 'no template headings are shown');
 });
+
+test('the cast list holds only on-page characters, with no minimum', async () => {
+  const {finalizeInstruction} = await import('../interview.mjs');
+  const text = finalizeInstruction('simple', {}, undefined, 'plan');
+  assert.match(text, /no minimum, no padding/);
+  assert.match(text, /never appears in person is not on the cast list/);
+  assert.doesNotMatch(text, /at least three/);
+});

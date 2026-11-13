@@ -60,6 +60,9 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
   }
   set(find(t.outline.title),{disable:true});
   if(hasProfiles)set(find(t.cast),{disable:true});
+  // The cast list is only an index; label it so it isn't mistaken for thin character entries.
+  const castEntry=find(t.cast), label='(Cast index for Storyloom — not sent to the story. Full profiles are the “Character — Name” entries.)';
+  if(castEntry && !String(castEntry.content||'').startsWith('(Cast index'))castEntry.content=`${label}\n${castEntry.content||''}`;
   // Characters are pulled in when named in the chat (or by vectors), not because an always-on entry mentions them.
   for(const e of entries)if(/^character\s*[—–-]/i.test(String(e.comment||'')))set(e,{constant:false,order:ORDER.character,excludeRecursion:true});
   // Memory entries are sent by Storyloom itself (Memory tab), never by lorebook scanning.
