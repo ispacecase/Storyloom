@@ -32,7 +32,7 @@ export const PROMPT_DEFAULTS = Object.freeze({
   fill: {
     label: 'Building the plan from your answers',
     locked: 'Always added: that your answers are fixed facts, the required entries and headings, the cast list format, and the directive rules.',
-    text: 'They are a starting point, not the whole project: build out everything around them so the plan feels real and complete — invent supporting characters, history, places, events and relationships the story needs, and develop each thing the writer mentioned beyond what they said. Fill in every skipped or undecided detail, including the title, with your own coherent choices. Mark details you invented as AI-suggested so the writer can revise them. Do not leave placeholders such as untitled, undecided or to be chosen.',
+    text: 'They are a starting point, not the whole project: build out everything around them so the plan feels real and complete — invent supporting characters, history, places, events and relationships the story needs, and develop each thing the writer mentioned beyond what they said. Answer every interview question the writer skipped or left undecided, including the title, with your own coherent choices. Mark details you invented as AI-suggested so the writer can revise them. Do not leave placeholders such as untitled, undecided or to be chosen.',
   },
   outlineStyle: {
     label: 'How the outline is written',

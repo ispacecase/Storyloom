@@ -30,7 +30,7 @@ test('simple and deep both build out beyond the writer’s answers', () => {
   for (const mode of ['simple', 'deep']) {
     const text = finalizeInstruction(mode, {});
     assert.match(text, /starting point, not the whole project/);
-    assert.match(text, /Fill in every skipped or undecided detail/);
+    assert.match(text, /Answer every interview question the writer skipped/);
     assert.doesNotMatch(text, /may be exactly Undecided/);
   }
 });
