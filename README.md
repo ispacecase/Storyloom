@@ -1,31 +1,46 @@
 # Storyloom
 
-Storyloom is a standalone SillyTavern extension for planning a novel in a separate side conversation, maintaining its lorebook and writing directive, and drafting story segments.
+Storyloom is a SillyTavern extension that acts as an assistant for your lorebooks. In a side panel, it interviews you about a novel, roleplay or campaign, then builds and organises the lorebook that SillyTavern's main chat uses. The story itself is written in the main chat; Storyloom keeps it supplied with the right information.
 
 ## Compatibility and installation
 
-Designed for SillyTavern 1.19.0. In **Extensions → Install extension**, use `https://github.com/ispacecase/Storyloom`, then reload SillyTavern. Storyloom does not require the reference extensions.
+Designed for SillyTavern 1.19.0. In **Extensions → Install extension**, use `https://github.com/ispacecase/Storyloom`, then reload SillyTavern.
 
-## Start a novel
+## Start a project
 
-1. Open the SillyTavern chat you want to use for your book, then click the feather beside the message box to open Storyloom.
-2. The lorebook picker shows which book Storyloom is using and whether it is linked to this chat. If none exists, starting an interview creates and links one. If the chat already has a Storyloom writing directive, open a different chat before choosing another novel. Otherwise, replacing an existing chat lorebook requires confirmation.
-3. Choose **Simple** to answer or skip a sequence of questions, or **Deep** to explore each topic together. In Deep mode use **Next topic** when you're ready. At the end, Storyloom creates a chapter-by-chapter outline and saves the plan in the lorebook. You can keep talking afterward.
-4. In **Settings**, use the current AI connection, a supported Connection Manager profile, or choose another provider and model. A manually entered session key is not saved. Supported direct providers depend on SillyTavern's backend and your available credentials; individual providers and models may behave differently.
-5. Turn on **Follow the main chat** to capture established developments as the story progresses. The **Writing desk** can generate draft segments, draft one chapter toward an approximate word target, and download the saved prose as text. Chapter targets are approximate and you can stop a run at any time. If a continuity update fails, retry it in **More options**.
+1. Open the chat you want to use and click the feather beside the message box.
+2. In **Lorebook for this chat**, pick an existing lorebook or **＋ Start a new novel**. A new lorebook is renamed to the project's title once the outline is done.
+3. Pick a **Template** (Novel, or Campaign for roleplay / D&D), then **Simple** (answer or skip a few questions; the AI fills in the rest) or **Deep** (talk through each topic). Both end with the same full plan.
+4. Storyloom saves a summary entry, the template's planning entries, a cast list, an outline, and then a full profile for each character (about 500–800 words each).
+5. Storyloom then arranges the lorebook for the main chat:
+   - **Always on:** the summary, voice/rules entries, and **Current Chapter**, which holds only the plan for the chapter you're on.
+   - **By name:** characters and places, triggered by their names only.
+   - **Off (planning only):** the full outline, scale and cast list.
+6. Use **Now on** to move to the next chapter. Current Chapter and the writing directive in the Author's Note follow along.
 
-## Reuse a character
+Every button has a tooltip. Errors at the bottom of the panel say which button failed and why; full details go to the browser console.
 
-Select a previous book under **Use another book for reference**, then choose **Bring a character into this book** and enter the character's name. Storyloom creates a character entry in the current novel and a separate character lorebook, preserving the source as a reference. The two copies are independent: later edits are not automatically synchronized. Review the imported facts and any marked suggestions.
+## Templates
 
-To attach a reference lorebook to the currently open SillyTavern character card, choose **Link reference to character card** and confirm the card and book names. Character-card links can apply to that character's other chats; a novel character does not have to be a SillyTavern character card.
+**Settings → Templates** shows what each template asks and saves, as plain text. Built-in templates can't be changed. **Save as new** makes your own copy that you can edit: questions, entries and their fields, whether each entry is always on, by name or off, the outline unit (Chapter, Session…) and the character headings. A project keeps the template it was started with.
+
+## Characters from another lorebook
+
+Under **Reference & characters**, choose a reference lorebook, then **Copy a character into this novel**:
+
+- **Just copy:** the AI writes a fresh entry for this project from what the reference says. The two are separate afterwards.
+- **Keep in sync:** the entry is copied exactly, and a shared `Shared — A ↔ B` lorebook is created for it. Editing any copy updates the others. If two copies are edited differently, nothing is overwritten; choose which version to keep under **Linked characters**. **Unlink** stops syncing and leaves every copy in place.
+
+Syncing runs while SillyTavern is open with Storyloom loaded. Edits made while it isn't running are synced the next time it starts.
+
+**Attach reference to this character card** is different: it links the whole reference lorebook to the SillyTavern character you're chatting with, so that character can use it in all their chats.
 
 ## Notes and recovery
 
-- The writing directive is stored in the lorebook and in a marked part of the chat's Author's Note. Edits synchronize in either direction; if both changed independently, resolve the conflict in **More options**. Other Author's Note text is preserved.
-- Storyloom records changes and can undo the last update if its entries have not changed since. SillyTavern does not offer an atomic compare-and-swap for lorebooks, so simultaneous edits from different clients can still race.
-- Edited, deleted, or swiped tracked chat messages can require review before tracking resumes. Context is bounded; a partially supplied entry is not automatically rewritten.
-- Model output can be incomplete, inconsistent, or misattribute suggestions. Review the plan and memories, keep backups, and check your provider's privacy and pricing terms.
+- The writing directive is stored in the lorebook and in a marked part of the chat's Author's Note. Edits synchronize in either direction; if both changed independently, resolve it in **Settings → More options**.
+- **Undo last lorebook change** restores the entries from before Storyloom's last save, as long as you haven't edited them since.
+- **Follow the main chat** (off by default) reads new main-chat messages and adds what happens to the lorebook.
+- Model output can be incomplete or inconsistent. Review entries, keep backups, and check your provider's privacy and pricing terms.
 
 ## Development checks
 

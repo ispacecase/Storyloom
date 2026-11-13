@@ -20,7 +20,7 @@ test('a selected response budget is used for both connection paths',async()=>{
 });
 
 test('Storyloom sends its own system prompt separately from the story input',async()=>{
- let request;const c={mainApi:'openai',chatCompletionSettings:{chat_completion_source:'custom'},getChatCompletionModel:()=> 'model',getPresetManager:()=>({getSelectedPresetName:()=> 'preset'}),ChatCompletionService:{processRequest:async(d)=>{request=d;return {content:'ok'}}}};
+ let request;const c={mainApi:'openai',chatCompletionSettings:{chat_completion_source:'custom',custom_url:'http://local'},getChatCompletionModel:()=> 'model',getPresetManager:()=>({getSelectedPresetName:()=> 'preset'}),ChatCompletionService:{processRequest:async(d)=>{request=d;return {content:'ok'}}}};
  await generate(c,'Writer input','',undefined,6000,'Independent Storyloom instructions');
  assert.deepEqual(request.messages,[{role:'system',content:'Independent Storyloom instructions'},{role:'user',content:'Writer input'}]);
 });
@@ -47,4 +47,22 @@ test('a custom connection can use a session-only key without saving it',async()=
 test('provider URL cannot contain embedded credentials',async()=>{
  const c={ChatCompletionService:{processRequest:async()=>({content:'ok'})}};
  await assert.rejects(()=>generate(c,'idea','__direct__',undefined,2048,'Own system',{provider:'custom',model:'m',url:'https://user:password@example.test',keyId:''}),/without embedded credentials/i);
+});
+
+test('current custom connection forwards the same custom body and headers', async()=>{
+ let sent;
+ const c={mainApi:'openai',chatCompletionSettings:{chat_completion_source:'custom',custom_url:'http://local',custom_include_body:'reasoning: false',custom_exclude_body:'top_p',custom_include_headers:'X-Test: yes'},getChatCompletionModel:()=> 'model',getPresetManager:()=>null,ChatCompletionService:{processRequest:async d=>{sent=d;return {content:'ok'};}}};
+ await generate(c,'hello','');
+ assert.equal(sent.custom_include_body,'reasoning: false');
+ assert.equal(sent.custom_exclude_body,'top_p');
+ assert.equal(sent.custom_include_headers,'X-Test: yes');
+});
+test('stopping or timing out releases the caller even if the transport hangs',async()=>{
+ const {requestModel}=await import('../generation.mjs');
+ const controller=new AbortController();
+ const stalled=()=>new Promise(()=>{});
+ const pending=requestModel(stalled,controller.signal);
+ controller.abort();
+ await assert.rejects(pending,/Stopped/);
+ await assert.rejects(requestModel(stalled,undefined,5),/too long/);
 });

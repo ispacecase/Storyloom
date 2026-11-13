@@ -1,6 +1,6 @@
 /** When the model bolds every name, retain the explicit writer's focus or the first person. */
-export function normalizePeopleFocus(result,answers={}) {
- const entry=result?.updates?.find(x=>String(x.title).trim().toLowerCase()==='people');
+export function normalizePeopleFocus(result,answers={},castTitle='People') {
+ const entry=result?.updates?.find(x=>String(x.title).trim().toLowerCase()===castTitle.toLowerCase());
  if(!entry || typeof entry.content!=='string')return result;
  const lines=entry.content.split('\n');
  const rows=lines.map((s,i)=>({s,i})).filter(x=>x.s.includes('|') && /^\s*\*\*/.test(x.s));

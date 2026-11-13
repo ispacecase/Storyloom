@@ -61,3 +61,12 @@ test('extracts structured reply when a model prefixes it with prose', () => {
   const value=parseAssistant('Here is my answer.\n\n{"reply":"Here is my answer.","updates":[]}');
   assert.equal(value.reply,'Here is my answer.');
 });
+
+test('shows a conversational reply even when its lorebook updates are invalid',()=>{
+ const raw='Here is the answer. { "reply": "Mara has a deadline.", "updates": [{"title":"Mara"}] }';
+ const parsed=parseAssistant(raw,{allowProse:true});
+ assert.equal(parsed.reply,'Mara has a deadline.');
+ assert.deepEqual(parsed.updates,[]);
+ assert.equal(parsed.ignoredUpdates,true);
+ assert.throws(()=>parseAssistant(raw));
+});

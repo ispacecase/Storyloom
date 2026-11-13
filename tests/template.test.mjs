@@ -9,3 +9,15 @@ test('foundation includes all agreed headings with blank values', () => {
 test('writing directive preserves the specified starting settings',()=>{
  const v=initialDirective(); for (const item of ['Chapter: 1','Scene: 1','POV: Third-person limited','Tense: Past','Tone: Atmospheric, intimate, psychologically complex','Pacing: Slow development with purposeful plot progression','Continue the current scene without recapping or prematurely ending it.']) assert.ok(v.includes(item));
 });
+
+
+test('reads markdown headings and preserves fields omitted by the model', async () => {
+  const {normalizeFoundation, validFoundation, foundationTitle} = await import('../template.mjs');
+  const prior = foundationTemplate().replace('GENRE:', 'GENRE: Mystery');
+  const normalized = normalizeFoundation('## **Novel title:** Salt Ledger\n**Premise**: Mara finds a ledger.', prior);
+  assert.equal(validFoundation(normalized), true);
+  assert.equal(foundationTitle(normalized), 'Salt Ledger');
+  assert.equal(foundationTitle('NOVEL TITLE: The Salt Index [AI-suggested]'), 'The Salt Index');
+  assert.match(normalized, /GENRE: Mystery/);
+  assert.equal(validFoundation(normalizeFoundation('A chat reply with no fields.')), false);
+});
