@@ -71,7 +71,7 @@ On the Memory tab, **Writing setup…** does three things, each with its own tic
 
 ## 3. Writing a chapter
 
-- **Starting:** press **Send with an empty box** and the narrator writes from the chapter plan and memory, or type a direction ("Tom comes back at dusk").
+- **Starting:** press **Send with an empty box** and the narrator writes the chapter from its plan and memory, through to its planned ending, in one reply. Or type a direction ("Tom comes back at dusk"). Prefer to build a chapter over several replies? Turn on *Write each chapter over several replies* in Extensions → Storyloom.
 - **Length:** each reply aims for the chapter's planned length (WORDS PER CHAPTER from setup, or this chapter's own number from Book settings), as far as your **Max Response Length** fits it. Set your own in Extensions → Storyloom → **Words per narrator reply**.
   - **Your direction always wins.** If your message asks for a length ("about 200 words", "keep it short", "one paragraph"), Storyloom leaves its own length instruction out for that reply.
 - **Under each reply** you'll see a small line, e.g. *1,014 words · 1,320 tokens · thinking 850 · 2,170 of 8,196*. It turns orange near the response limit. (With Dials installed, Dials shows its own line instead.)
@@ -199,6 +199,7 @@ Extensions → Storyloom:
 |---|---|
 | **Live memory** | Scene now (every N replies), Earlier this chapter (every N messages), and sending on-stage characters' entries. |
 | **Dials** (shown when installed) | Use the same Dials settings as SillyTavern's chat; Dials settings…. |
+| **Write each chapter over several replies** | Off (default): one reply is a whole chapter, written to its planned ending. On: a passage at a time, and you steer between replies. Run Writing setup… afterwards so the preset matches. |
 | **Words per narrator reply** | How long each reply should be. Blank: the chapter's planned length, within what your Max Response Length fits. |
 | **Send SillyTavern's Reasoning Effort to Custom endpoints** | SillyTavern leaves its Reasoning Effort out for Custom endpoints such as Venice. This sends it. (Dials does it instead when installed.) |
 | **Keep Storyloom's own thinking short** | Asks thinking models for low effort on Storyloom's own calls. (Dials decides instead when installed.) |

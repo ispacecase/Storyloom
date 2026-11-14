@@ -77,8 +77,8 @@ export function bookValues({voice = '', summary = '', directive = '', focus = ''
  * The "Storyloom Novel" preset: a copy of the writer's preset with the prompts rewritten for writing a book.
  * Sampling and everything else stay as the writer's. Returns a new object; the input is untouched.
  */
-export function novelPreset(presetBody, {roleplay = false} = {}) {
-  const kit = writingKit(roleplay);
+export function novelPreset(presetBody, {roleplay = false, passages = false} = {}) {
+  const kit = writingKit(roleplay, {passages});
   const p = structuredClone(presetBody || {});
   p.prompts = Array.isArray(p.prompts) ? p.prompts : [];
   const set = (identifier, name, content) => {
@@ -160,8 +160,20 @@ ${VALUES.map(v => `${v.label}: {{getvar::${varName(v.key)}}}`).join('\n')}
 HOW THE GAME MASTER WORKS
 Hold this point of view, tense and voice in every reply. Play everyone except {{user}}; never speak, act, think or decide for {{user}}. The people, places, factions and plan of the campaign come from the lorebook: use them exactly and add nothing that contradicts them. What has happened stays true; carry its consequences forward.`;
 
-/** Everything Storyloom writes for one kind of book: novel or roleplay. */
-export function writingKit(roleplay = false) {
+/**
+ * Optional way of working (off by default): a chapter written over several replies, a passage at a time.
+ * The default is one reply = one whole chapter, the owner's way of working.
+ */
+export const CRAFT_MAIN_PASSAGES = CRAFT_MAIN
+  .replace('chapter by chapter, together with its author', 'one passage at a time, together with its author')
+  .replace(/Each reply is a whole chapter:[^.]*\.[^.]*\./, 'Write only the passage the direction asks for, at the pace it implies; a reply covers minutes of story, and the chapter is built over several replies.')
+  .replace('End the chapter where its plan ends, on a finished sentence', 'End each reply on a finished sentence')
+  .replace('because the book goes on in the next chapter', 'because the book goes on in the next reply');
+export const POST_HISTORY_PASSAGES = `Continue the book from exactly where it stopped, as live scene, in the point of view and tense the book uses. Write the next passage of the chapter, not the whole chapter. Carry out the author's direction in the prose without mentioning it. Stop on an open beat, not a summary.`;
+
+/** Everything Storyloom writes for one kind of book: novel or roleplay (and, optionally, a chapter in passages). */
+export function writingKit(roleplay = false, {passages = false} = {}) {
+  if (!roleplay && passages) return {roleplay: false, passages: true, presetName: PRESET_NAME, narratorName: NARRATOR_NAME, card: NARRATOR_CARD, main: CRAFT_MAIN_PASSAGES, postHistory: POST_HISTORY_PASSAGES, continueNudge: CONTINUE_NUDGE, newChat: NEW_CHAT_PROMPT};
   return roleplay
     ? {roleplay: true, presetName: RP_PRESET_NAME, narratorName: RP_NARRATOR_NAME, card: RP_NARRATOR_CARD, main: RP_MAIN, postHistory: RP_POST_HISTORY, continueNudge: CONTINUE_NUDGE, newChat: RP_NEW_CHAT_PROMPT}
     : {roleplay: false, presetName: PRESET_NAME, narratorName: NARRATOR_NAME, card: NARRATOR_CARD, main: CRAFT_MAIN, postHistory: POST_HISTORY, continueNudge: CONTINUE_NUDGE, newChat: NEW_CHAT_PROMPT};

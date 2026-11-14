@@ -743,7 +743,7 @@ function applyReplyLength(on=null, unit='Chapter') {
   // The writer's own direction wins: if the message being sent (or the last one) asks for a length, Storyloom says nothing.
   const said=[document.getElementById('send_textarea')?.value||'', (()=>{const m=c.chat?.at(-1); return m?.is_user?m.mes:'';})()].join('\n');
   const asked=asksForLength(said);
-  const note=on && !asked?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords(),{roleplay:isRP()}):'';
+  const note=on && !asked?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords(),{roleplay:isRP(),passages:writePassages()}):'';
   if(on && asked)logEvent('info','Reply length','your message sets the length, so Storyloom’s own length note was left out');
   c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
 }
@@ -1237,7 +1237,9 @@ function openStoryloomSettings(section='') {
 /** True for a roleplay / campaign book (its template counts sessions, or says campaign / roleplay). */
 function isRP(d=null){try{d ??= data(); const t=tpl(d); return t.unit!=='Chapter' || /campaign|role-?play|rpg|d&d/i.test(t.name||'');}catch{return false;}}
 /** The preset, narrator and prompts Storyloom writes for this book. */
-const kit=(d=null)=>writingKit(isRP(d));
+const kit=(d=null)=>writingKit(isRP(d),{passages:writePassages()});
+/** Optional (off by default): write each chapter over several replies, a passage at a time. */
+const writePassages=()=>{try{return context().extensionSettings.storyloom?.passages===true;}catch{return false;}};
 /** Roleplay: the steps that make sense when the player writes half the text (no prose rewriting). */
 const teamSteps=(d,rs=teamSettings())=>activeSteps(rs).filter(s=>!isRP(d) || ['lint','seal'].includes(s.key));
 /** Roleplay: this session's text with the player's turns marked with their character's name. */
@@ -1570,7 +1572,7 @@ async function createNovelPreset() {
   const k=kit(), name=k.presetName;
   const existing=pm.getPresetList().preset_names?.[name]!==undefined?pm.getCompletionPresetByName(name):null;
   if(existing)backup({kind:'preset',label:`Preset “${name}” (before it was rebuilt)`,target:{name},before:existing});
-  await pm.savePreset(name,novelPreset(getChatCompletionPreset(),{roleplay:k.roleplay}));
+  await pm.savePreset(name,novelPreset(getChatCompletionPreset(),{roleplay:k.roleplay,passages:!!k.passages}));
   logEvent('info','Writing setup',`made the “${name}” preset from “${from}” and switched to it`);
   return from;
 }
@@ -2875,6 +2877,7 @@ function renderExtSettings() {
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
   const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
+  const ps=document.getElementById('sl-passages'); if(ps)ps.checked=writePassages();
   {const o=liveOpts(), set=(id,v)=>{const e=document.getElementById(id); if(e && document.activeElement!==e){if(e.type==='checkbox')e.checked=v; else e.value=v;}}; set('sl-live-scene',o.scene); set('sl-live-session',o.session); set('sl-live-stage',o.stage); set('sl-live-scene-every',o.sceneEvery); set('sl-live-session-every',o.sessionEvery);}
   const dr=document.getElementById('sl-dials-row'); if(dr){dr.hidden=!dialsOn(); const ds=document.getElementById('sl-dials-same'); if(ds)ds.checked=dialsSameAsChat();}
   for(const [id,text,off] of [['sl-send-effort',' — Dials is installed and sends SillyTavern’s settings itself.',true],['sl-short-thinking',' — Dials is installed and decides this (it knows what each model supports).',true]]){const box=document.getElementById(id), lab=box?.closest('label'); if(!lab)continue; box.disabled=off && dialsOn(); let n=lab.querySelector('.sl-dials-note'); if(dialsOn() && !n){n=document.createElement('small');n.className='sl-dials-note storyloom-hint';n.textContent=text;lab.append(n);} if(!dialsOn())n?.remove();}
@@ -2888,6 +2891,7 @@ function buildExtSettings(openButton,panel) {
     <div class="storyloom-row" title="Kept up while you write, not only when you Seal. Each one is a small, quick call to your model every few replies (with Dials, set Storyloom’s thinking to none to keep them fast)."><b>Live memory</b> <label class="checkbox_label"><input id="sl-live-scene" type="checkbox"> Scene now (every <input id="sl-live-scene-every" class="text_pole" type="number" min="1" max="20" style="width:3.5em"> replies)</label> <label class="checkbox_label"><input id="sl-live-session" type="checkbox"> Earlier this chapter (every <input id="sl-live-session-every" class="text_pole" type="number" min="6" max="100" style="width:3.5em"> messages)</label> <label class="checkbox_label"><input id="sl-live-stage" type="checkbox"> Always send the lorebook entries of whoever is in the scene</label></div>
     <div id="sl-dials-row" class="storyloom-row" hidden><b>Dials</b> <label class="checkbox_label" title="Storyloom’s own AI calls (Lint, Editor, Reader, Seal, planning, the Assistant) use the options you set in Dials for SillyTavern’s chat on the same connection. Anything you set for Storyloom itself in Dials (“Settings for: Storyloom”) wins."><input id="sl-dials-same" type="checkbox"> Use the same Dials settings as SillyTavern’s chat</label><button id="sl-dials-open" type="button" class="menu_button">Dials settings…</button></div>
     <div class="storyloom-row"><label title="How long each of the narrator’s replies should be. Storyloom tells the narrator to aim for this many words per reply. Blank: the chapter’s planned length from the book’s setup, or as much as your Max Response Length fits.">Words per narrator reply <input id="sl-reply-words" class="text_pole" type="number" min="0" step="100" placeholder="auto" style="width:7em"></label><small id="sl-reply-words-hint" class="storyloom-hint"></small></div>
+    <label class="checkbox_label" title="Off (the default): each reply is a whole chapter, written to the ending its plan describes. On: the narrator writes a chapter over several replies, one passage at a time, and you steer between them. After changing this, run Writing setup… (first box only) so the preset’s Main Prompt and Post-History match."><input id="sl-passages" type="checkbox"> Write each chapter over several replies, a passage at a time (off: one reply = one whole chapter)</label>
     <label class="checkbox_label" title="SillyTavern ignores its own Reasoning Effort setting on Custom (OpenAI-compatible) endpoints such as Venice, unless the model is one of OpenAI’s. This sends it anyway, through the request’s body — only when it is set to something other than Auto, and never over a reasoning_effort you put in Include Body yourself."><input id="sl-send-effort" type="checkbox"> Send SillyTavern’s Reasoning Effort to Custom endpoints (Venice and others) in the story chat</label>
     <label class="checkbox_label" title="Thinking models (deepseek and others) can spend a whole reply thinking and write nothing. This asks them for low reasoning effort on Storyloom’s own work — Lint, Editor, Reader, Seal, planning, the Assistant. Your story chat keeps your preset’s setting."><input id="sl-short-thinking" type="checkbox"> Keep Storyloom’s own thinking short (low reasoning effort; never your story chat)</label>
     <details id="sl-team" open><summary>Chapter team</summary><p class="storyloom-hint">The people who work on each chapter after it’s written: Lint → Editor → Reader → Revise → Seal (Memory tab). Switch a role off to skip its step. Each can use its own model — a fast, cheap one for the Checker, a stronger one for the Editor. If a role’s model fails or answers in a form Storyloom can’t read, Storyloom asks its own connection once and says so in the log. Their jobs are fixed so the steps can’t break; their personalities are yours to change.</p>${teamMarkup()}</details>
@@ -2929,6 +2933,7 @@ function buildExtSettings(openButton,panel) {
   for(const [id,key,num] of [['sl-live-scene','scene'],['sl-live-session','session'],['sl-live-stage','stage'],['sl-live-scene-every','sceneEvery',true],['sl-live-session-every','sessionEvery',true]])wrap.querySelector('#'+id).onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};const l=c.extensionSettings.storyloom.live ??= {};l[key]=num?Math.max(1,Math.round(Number(e.target.value)||0)):e.target.checked;saveSettings();logEvent('info','Settings',`live memory ${key}: ${l[key]}`);};
   wrap.querySelector('#sl-dials-same').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.dialsSameAsChat=e.target.checked;saveSettings();logEvent('info','Settings',`Storyloom uses ${e.target.checked?'the same Dials settings as SillyTavern’s chat':'only its own Dials settings'}`);};
   wrap.querySelector('#sl-dials-open').onclick=()=>openDials();
+  wrap.querySelector('#sl-passages').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.passages=e.target.checked;saveSettings();applyReplyLength();logEvent('info','Settings',`chapters ${e.target.checked?'over several replies (passages)':'in one reply each'}`);toastr.info('Run Writing setup… (first box only) on the Memory tab so your Storyloom Novel preset matches.','Storyloom',{timeOut:8000});};
   wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};

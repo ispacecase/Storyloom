@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.20 (2026-11-14)
+- **One reply = one whole chapter** by default: the narrator's instructions no longer say "one passage at a time", and the hidden 1,500-word cap is gone. Writing a chapter over several replies is now an option (Extensions → Storyloom), off by default. Existing Storyloom Novel presets: run Writing setup… (first box) to update them.
+
 ## 0.19 (2026-11-14)
 - Fixed: a chapter length written in words ("one evening's worth") was read as 1 word, so replies were asked for "about 1 word". Lengths under 200 words are now ignored, roleplay replies don't follow the session length, and the line under *Words per narrator reply* says exactly what cap is used and why.
 - **Compare narrators fixes your narrator:** *Fix mine* and *Fix everything* edit your own text to fix only what's flagged, with a change view before anything is saved, and a backup of the old version.

@@ -54,3 +54,15 @@ test('a campaign’s table rules fill the genre and rules blanks', () => {
   assert.equal(v.genre, 'Narrative, low fantasy mystery.');
   assert.equal(v.rules, 'No graphic gore. The narrator never decides what Kel does.');
 });
+
+test('a chapter per reply is the default; passages are an option', async () => {
+  const {writingKit, CRAFT_MAIN_PASSAGES, POST_HISTORY_PASSAGES} = await import('../novelist.mjs');
+  const {replyLengthNote} = await import('../memory.mjs');
+  assert.match(writingKit().main, /Each reply is a whole chapter/);
+  assert.doesNotMatch(writingKit().main, /one passage at a time/);
+  assert.match(writingKit(false, {passages: true}).main, /one passage at a time/);
+  assert.doesNotMatch(CRAFT_MAIN_PASSAGES, /Each reply is a whole chapter/);
+  assert.equal(writingKit(false, {passages: true}).postHistory, POST_HISTORY_PASSAGES);
+  assert.match(replyLengthNote(8196, 'Chapter', 3000), /write this whole chapter/);
+  assert.match(replyLengthNote(8196, 'Chapter', 0, {passages: true}), /one passage of the chapter/);
+});

@@ -148,8 +148,12 @@ export function replyWords(maxTokens) {
   const thinking = Math.min(1500, Math.round(t / 4));
   return Math.max(100, Math.floor((t - thinking) * 100 / 135 / 100) * 100);
 }
-export function replyLengthNote(maxTokens, unit = 'Chapter', target = 0, {roleplay = false} = {}) {
+export function replyLengthNote(maxTokens, unit = 'Chapter', target = 0, {roleplay = false, passages = false} = {}) {
   const u = unit.toLowerCase(), want = Math.round(Number(target) || 0);
+  if (passages && !roleplay) { // optional: the chapter over several replies
+    const w = want || replyWords(maxTokens);
+    return w ? `REPLY LENGTH: ${want ? `aim for about ${w} words in this reply` : `this reply has room for about ${w} words`} — one passage of the ${u}, not the whole ${u}; the ${u} is built over several replies. Finish your last sentence. If the author's latest message asks for a different length, follow the author.` : '';
+  }
   if (roleplay) { // a reply is one turn of the game, not a whole session
     const w = want || replyWords(maxTokens);
     return w ? `REPLY LENGTH: ${want ? `aim for about ${w} words` : `this reply has room for about ${w} words`}. Answer the player's turn, move the scene a step, and stop where it's their move. Finish your last sentence. If the player asks for a different length, follow the player.` : '';
