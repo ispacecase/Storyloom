@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.19 (2026-11-14)
-- **Compare narrators fixes your narrator:** *Fix mine* and *Fix everything* edit your own text to fix only what's flagged, with a change view before anything is saved (and a backup after).
+- **Compare narrators fixes your narrator:** *Fix mine* and *Fix everything* edit your own text to fix only what's flagged, with a change view before anything is saved, and a backup of the old version.
 - The Compare window follows your SillyTavern theme, so its buttons are readable.
 
 ## 0.18 (2026-11-14)
