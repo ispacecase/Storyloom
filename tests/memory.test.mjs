@@ -57,12 +57,12 @@ test('prose transcript drops speaker labels and the writer’s own messages', as
 
 test('the narrator is told how much fits in one reply', async () => {
   const {replyWords, replyLengthNote} = await import('../memory.mjs');
-  assert.equal(replyWords(2000), 1200);
-  assert.equal(replyWords(300), 150);
+  assert.equal(replyWords(2000), 1100);
+  assert.equal(replyWords(300), 100);
   assert.equal(replyWords(0), 0);
-  assert.equal(replyWords(8196), 1500);
-  assert.match(replyLengthNote(2000), /about 1200 words/);
-  assert.match(replyLengthNote(2000), /not the whole chapter/);
+  assert.equal(replyWords(8196), 4900);
+  assert.match(replyLengthNote(2000), /about 1100 words/);
+  assert.match(replyLengthNote(2000), /ending its plan describes/);
   assert.equal(replyLengthNote(undefined), '');
 });
 
@@ -96,8 +96,17 @@ test('hand-off sections are read back whole, lower-case labels included', async 
 
 test('a chosen words-per-reply is asked for, not capped', async () => {
   const {replyLengthNote, tokensFor} = await import('../memory.mjs');
-  assert.match(replyLengthNote(8196, 'Chapter', 3000), /aim for about 3000 words/);
+  assert.match(replyLengthNote(8196, 'Chapter', 3000), /about 3000 words/);
   assert.doesNotMatch(replyLengthNote(8196, 'Chapter', 3000), /no more/);
-  assert.match(replyLengthNote(2000, 'Chapter', 0), /about 1200 words, no more/);
+  assert.match(replyLengthNote(2000, 'Chapter', 0), /room for about 1100 words/);
+  assert.match(replyLengthNote(8196, 'Chapter', 3000), /write this whole chapter in this reply, about 3000 words/);
   assert.equal(tokensFor(3000), 5550);
+});
+
+test('in roleplay a reply is one turn, not a whole session', async () => {
+  const {replyLengthNote} = await import('../memory.mjs');
+  const n = replyLengthNote(8196, 'Session', 0, {roleplay: true});
+  assert.match(n, /stop where it's their move/);
+  assert.doesNotMatch(n, /whole session/);
+  assert.match(replyLengthNote(8196, 'Chapter', 3000), /write this whole chapter/);
 });

@@ -40,7 +40,7 @@ export function storyloomPlaces(filledCard = null, {roleplay = false} = {}) {
 }
 
 const ROLEPLAY = /\{\{user\}\}|\brole-?play(?:ing)?\b|\bRP\b|\bin character\b|\breply as\b|\{\{char\}\}'s next reply\b|\byour next reply\b|\bfictional chat\b|\byou (?:are|play|will play|portray)\b(?! a novelist| the narrator| writing)|\bnever (?:speak|act|write) for (?:the user|\{\{user\}\})/i;
-const LONG = /\b(?:whole|entire|full|complete) chapter\b|\bat least \d[\d,]* words\b|\b(?:long|lengthy|verbose|extensive)\s+(?:responses?|replies|reply|outputs?)\b|\bas (?:long|much|many words) as (?:possible|you can)\b|\b\d{4,}[\d,]*\s*(?:\+\s*)?words? (?:per|each|every) (?:reply|response)\b/i;
+const LONG = /\bas (?:long|much|many words) as (?:possible|you can)\b/i; // a whole chapter per reply is fine (the writer's way of working); only open-ended 'as long as possible' runs off
 const povOf = t => {
   const s = String(t || '');
   if (/\bfirst[- ]person\b|\b1st person\b/i.test(s)) return 'first';
@@ -68,7 +68,7 @@ export function findProblems(yours, {values = {}, names = [], roleplay = false} 
     const m = roleplay ? null : t.match(ROLEPLAY);
     if (m) add(k, `Roleplay wording (“${m[0]}”): it tells the model it is in a chat with you, so it answers you instead of writing the book.`);
     const l = t.match(LONG), negated = l && /\b(?:not|never|don'?t|no)\b[^.]{0,25}$/i.test(t.slice(Math.max(0, l.index - 30), l.index));
-    if (l && !negated) add(k, `Asks for very long replies (“${l[0]}”). A chapter is written over many replies; asking for it all at once is what gets replies cut off part-way.`);
+    if (l && !negated) add(k, `Asks for open-ended length (“${l[0]}”): with no target the model runs until it hits the limit and gets cut off mid-sentence. Give a number of words instead.`);
     if (['main', 'postHistory', 'continueNudge', 'newChat', 'auxiliary'].includes(k)) {
       const hit = names.filter(n => n && n.length > 2 && new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(t));
       if (hit.length) add(k, `Names story people (${hit.slice(0, 4).join(', ')}). This layer is for how to write; facts about the story belong in the lorebook, where they can change per chapter.`);

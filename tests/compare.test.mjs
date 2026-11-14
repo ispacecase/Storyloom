@@ -14,10 +14,11 @@ test('the writer’s places are read from the card and preset', () => {
 });
 
 test('roleplay wording, long-reply demands, missing POV and Enhance Definitions are flagged', () => {
-  const y = yourPlaces({description: 'Narrate the story of Mara. Write the whole chapter in each reply, at least 4000 words.'}, rpPreset);
+  const y = yourPlaces({description: 'Narrate the story of Mara. Write as long as possible.'}, rpPreset);
   const p = findProblems(y, {values: {pov: 'Third-person limited', tense: 'Past'}, names: ['Mara']});
   assert.ok(p.main.some(x => /Roleplay/.test(x.text)));
-  assert.ok(p.description.some(x => /very long replies/.test(x.text)));
+  assert.ok(p.description.some(x => /open-ended length/.test(x.text)));
+  assert.ok(!findProblems(yourPlaces({description: 'Write the whole chapter in each reply, about 4000 words. Close third, past tense.'}, rpPreset), {}).description.some(x => /length/.test(x.text)), 'a whole chapter per reply is the writer’s choice, not a problem');
   assert.ok(p.description.some(x => /No point of view/.test(x.text)));
   assert.ok(p.description.some(x => /No tense/.test(x.text)));
   assert.ok(p.enhanceDefinitions.length);

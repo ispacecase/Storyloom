@@ -144,14 +144,20 @@ export function mergeCurrentState(existing, update) {
 export function replyWords(maxTokens) {
   const t = Number(maxTokens) || 0;
   if (t <= 0) return 0;
-  return Math.min(1500, Math.max(50, Math.floor(t * 0.6 / 50) * 50)); // a passage, not a chapter; thinking shares the limit
+  // What the writer's own Max Response Length fits: room kept for thinking (a quarter, at most 1,500 tokens), ~1.35 tokens a word.
+  const thinking = Math.min(1500, Math.round(t / 4));
+  return Math.max(100, Math.floor((t - thinking) * 100 / 135 / 100) * 100);
 }
-export function replyLengthNote(maxTokens, unit = 'Chapter', target = 0) {
+export function replyLengthNote(maxTokens, unit = 'Chapter', target = 0, {roleplay = false} = {}) {
   const u = unit.toLowerCase(), want = Math.round(Number(target) || 0);
-  if (want > 0) return `REPLY LENGTH: aim for about ${want} words in this reply — a full passage of the ${u}, not the whole ${u}, and not much shorter than that. Finish your last sentence. The ${u}'s full length comes from many replies. If the author's latest message asks for a different length, follow the author.`;
+  if (roleplay) { // a reply is one turn of the game, not a whole session
+    const w = want || replyWords(maxTokens);
+    return w ? `REPLY LENGTH: ${want ? `aim for about ${w} words` : `this reply has room for about ${w} words`}. Answer the player's turn, move the scene a step, and stop where it's their move. Finish your last sentence. If the player asks for a different length, follow the player.` : '';
+  }
+  if (want > 0) return `REPLY LENGTH: write this whole ${u} in this reply, about ${want} words — not much shorter than that — through to the ending its plan describes. Finish your last sentence. If the author's latest message asks for a different length or only part of the ${u}, follow the author.`;
   const w = replyWords(maxTokens);
   if (!w) return '';
-  return `REPLY LENGTH: this reply has room for about ${w} words, no more. Write one passage of the ${u} that fits in that — not the whole ${u} — and finish your last sentence before you reach it. The ${u}'s full length comes from many replies. If the author's latest message asks for a different length, follow the author.`;
+  return `REPLY LENGTH: this reply has room for about ${w} words. Write the ${u} through to the ending its plan describes within that, and finish your last sentence before you reach it. If the author's latest message asks for a different length or only part of the ${u}, follow the author.`;
 }
 /** Tokens a reply of `words` needs, with room for thinking: ~1.35 tokens a word plus `thinking` tokens. */
 export const tokensFor = (words, thinking = 1500) => Math.ceil((Number(words) || 0) * 135 / 100) + thinking;
