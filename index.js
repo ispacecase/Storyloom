@@ -803,12 +803,15 @@ async function startChapterChat(narrator=null) {
   if(!await attachBook(bookName,context()))throw Error('The new chat could not be linked to the novel’s lorebook.');
   await setupNovel();
   try {if(usesGeneralNarrator())await organizeBook(n); await fillBookValues({quiet:true});} catch(e){warnLog('Storyloom book settings:',e);}
-  for(let i=0;i<20 && !context().chat.length;i++)await new Promise(r=>setTimeout(r,150)); // the greeting arrives a moment after the chat opens
-  const c2=context(), title=(copy.outlineChapters||[]).find(x=>x.number===n)?.title||'', heading=`${t.unit} ${n}${title?` — ${title}`:''}`;
-  if(c2.chat.length===1 && !c2.chat[0].is_user && c2.chat[0].mes!==heading) {
+  const title=(copy.outlineChapters||[]).find(x=>x.number===n)?.title||'', heading=`${t.unit} ${n}${title?` — ${title}`:''}`;
+  // The greeting arrives a moment after the chat opens (and can be re-rendered once more); set the heading, then check it held.
+  for(let attempt=0;attempt<3;attempt++) {
+    for(let i=0;i<40 && !context().chat.length;i++)await new Promise(r=>setTimeout(r,150));
+    const c2=context(); if(c2.chat.length!==1 || c2.chat[0].is_user || c2.chat[0].mes===heading)break;
     const m=c2.chat[0]; m.mes=heading; if(Array.isArray(m.swipes)){m.swipes=[heading];m.swipe_id=0;m.swipe_info=[m.swipe_info?.[0]||{}];}
-    await c2.saveChat(); await c2.reloadCurrentChat();
+    await c2.saveChat(); await c2.reloadCurrentChat(); await new Promise(r=>setTimeout(r,600));
   }
+  if(context().chat[0]?.mes!==heading)logEvent('warn','Next chapter',`couldn’t set the first message to “${heading}”`,String(context().chat[0]?.mes||'').slice(0,100));
   await applyMemory();
   try {
     const name=`${bookName} — ${t.unit} ${n}${title?` — ${title}`:''}`.replace(/[\\/:*?"<>|]/g,'-').slice(0,120);
@@ -901,6 +904,7 @@ async function askCompare(problems) {
   await new c.Popup(el('div',{},el('h3',{textContent:'What the Assistant thinks of your narrator'}),el('pre',{className:'storyloom-compare-review',textContent:String(reply).trim()})),c.POPUP_TYPE.TEXT,'',{okButton:'Close',wide:true,allowVerticalScrolling:true}).show();
 }
 /* ---------- Cut-off replies: marked in the chat (display only, never sent to the model), left out on export ---------- */
+const isHeading=t=>{t=String(t||'').trim(); return !t.includes('\n') && (t.match(/\S+/g)||[]).length<=12;};
 function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatMetadata?.world_info===d.book);}catch{return false;}}
 /** Say why a reply stopped mid-sentence: the response limit (thinking counts against it) or the provider ending it early. */
 async function explainCutOff(id,m) {
@@ -918,7 +922,7 @@ function markCutOffs() {
   const c=context(), on=inBookChat();
   for(const el of document.querySelectorAll('#chat .mes[mesid]')) {
     const m=c.chat?.[Number(el.getAttribute('mesid'))];
-    el.classList.toggle('storyloom-cutoff',on && !!m && !m.is_user && !m.is_system && endsCutOff(m.mes));
+    el.classList.toggle('storyloom-cutoff',on && !!m && !m.is_user && !m.is_system && !isHeading(m.mes) && endsCutOff(m.mes));
   }
 }
 /* ---------- Export book: the narration of every chapter, in order, as .docx or .txt ---------- */
@@ -1143,6 +1147,8 @@ async function acceptRevision() {
   renderTeam();
 }
 /** Auto: run every step that's left — Lint, Editor, Reader, Revise (keeping every note), accept the revision — then Seal. Only the what-next choice is asked. */
+/** Lint kinds Auto never sends on: mechanical style checks and guesses. */
+const AUTO_SKIP=['REPEAT','STOCK','LENGTH','UNLISTED'];
 async function autoChapter() {
   const d=data(); readyForTeam(d);
   const u=tpl(d).unit, n=d.chapter||1, run={lint:stepLint,markup:stepMarkup,reader:stepReader};
@@ -1153,10 +1159,20 @@ async function autoChapter() {
     if(run[s]){
       await run[s]();
       if(s==='lint' && teamState(data()).lint?.findings?.some(f=>f.kind==='CUT OFF'))throw Error(`${u} ${n} stops mid-sentence — the narrator’s last reply was cut off. Press Continue in the chat (or raise Max Response Length), then Auto again. Auto stopped after Lint; nothing was changed.`);
+      if(s==='lint') { // Auto is lenient: only hard problems go to the Editor, not the mechanical style checks
+        const lt=teamState(data()), keep=(lt.lint?.findings||[]).filter(f=>f.severity==='hard' && !AUTO_SKIP.includes(f.kind));
+        lt.picks=keep.map(f=>f.id); await persist();
+        logEvent('info','Auto',`Lint: ${keep.length} of ${(lt.lint?.findings||[]).length} findings sent on (hard ones only)`);
+      }
       continue;
     }
     if(s==='revise') {
-      if(!t.revision){ if(!allNotes(t).length){status('No notes to fix — going straight to Seal.');continue;} t.notePicks=null; await stepRevise(); }
+      if(!t.revision){
+        const must=allNotes(t).filter(x=>x.weight==='must');
+        logEvent('info','Auto',`Revise: ${must.length} of ${allNotes(t).length} notes kept (“must” only)`);
+        if(!must.length){status('Nothing serious to fix — going straight to Seal.');markDone(t,'revise');await persist();continue;}
+        t.notePicks=must.map(x=>x.id); await persist(); await stepRevise();
+      }
       if(!teamState(data()).accepted)await acceptRevision();
       continue;
     }
@@ -1217,7 +1233,7 @@ function renderTeam(d=null) {
     row.append(el('li',{},b));
   }
   if(!t.done.includes('seal')) {
-    const a=el('button',{type:'button',className:'storyloom-step storyloom-auto',title:'Runs every step that’s left on its own: Lint, Editor, Reader, Revise (keeping every note), accepts the revision and seals. The originals stay as swipes and Backups keep the chapter as it was. You only choose what comes next.'},'Auto ▶');
+    const a=el('button',{type:'button',className:'storyloom-step storyloom-auto',title:'Runs every step that’s left on its own: Lint, Editor, Reader, Revise, accepts the revision and seals. Auto is lenient: only hard Lint findings and the notes marked MUST are fixed — style suggestions, repeated phrases and the like are skipped. The originals stay as swipes and Backups keep the chapter as it was. You only choose what comes next.'},'Auto ▶');
     a.onclick=()=>{lastAction='Auto';autoChapter().catch(fail);};
     row.append(el('li',{},a));
   }
@@ -3034,7 +3050,7 @@ function init() {
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED,(id,type)=>{try{
     if(type==='first_message'||type==='quiet')return;
     const m=context().chat[id]; if(!m||m.is_user||m.is_system||!inBookChat())return;
-    if(endsCutOff(m.mes))explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
+    if(!isHeading(m.mes) && endsCutOff(m.mes))explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
   }catch(e){warnLog('Storyloom cut-off check:',e);}});
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED, (id,type)=>{try {
     if(type==='first_message') return;

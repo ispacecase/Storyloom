@@ -107,3 +107,14 @@ test('a chapter that stops mid-sentence is flagged', async () => {
   assert.equal(endsCutOff('and then she'), true);
   assert.equal(exactLint('One.\n\nAnd then she').some(f => f.kind === 'CUT OFF' && f.severity === 'hard'), true);
 });
+
+test('a capital at the start of a sentence is not taken for a name', async () => {
+  const {unknownNames, paragraphs} = await import('../lint.mjs');
+  const f = unknownNames(paragraphs('Below the ledge the rock went down. She read the letter from Truro twice.'), []);
+  assert.deepEqual(f.map(x => x.quote), ['Truro']);
+});
+
+test('common sentence openers are not taken for names', async () => {
+  const {unknownNames, paragraphs} = await import('../lint.mjs');
+  assert.deepEqual(unknownNames(paragraphs('Below the ledge the rock went down. Phil read the letter from Truro.'), []).map(x => x.quote), ['Phil', 'Truro']);
+});
