@@ -693,6 +693,8 @@ function replyWordsHint() {
   const c=context(), want=replyTarget(), max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
   if(!want){h.textContent='Auto: sized to fit your Max Response Length.';h.classList.remove('is-warning');return;}
   const need=tokensFor(want);
+  let per=0; try{per=Number(data().budget?.perChapter)||0;}catch{}
+  if(per && want>per){h.textContent=`This book’s ${(()=>{try{return tpl(data()).unit.toLowerCase();}catch{return 'chapter';}})()}s are planned at about ${per.toLocaleString()} words in total, so the narrator will write less than ${want.toLocaleString()} per reply. Raise WORDS PER in the book’s Story Scale (or ask the Assistant) for longer chapters.`;h.classList.add('is-warning');return;}
   h.textContent=max && need>max?`Your Max Response Length is ${max.toLocaleString()} tokens; ${want.toLocaleString()} words plus thinking needs about ${need.toLocaleString()}. Raise it, or replies will be cut off.`:`Needs about ${need.toLocaleString()} tokens with thinking${max?` — your limit (${max.toLocaleString()}) is enough`:''}.`;
   h.classList.toggle('is-warning',!!max && need>max);
 }

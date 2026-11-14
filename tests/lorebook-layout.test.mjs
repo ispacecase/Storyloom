@@ -118,3 +118,9 @@ test('lint sees every later chapter, in full while it fits and as gists after th
   assert.match(text, /Chapter 20 — T20 — Event 20 happens\./);
   assert.doesNotMatch(text, /Event 3 happens/);
 });
+
+test('the chapter length reads cleanly even with a stray full stop', async () => {
+  const {currentChapterContent} = await import('../lorebook-layout.mjs');
+  const c = currentChapterContent('Chapter 1 — A\nEvents: x\n\nChapter 2 — B\nEvents: y', 1, 'Chapter', {wordsPerChapter: '1,250.'});
+  assert.match(c, /about 1,250 words in total/);
+});

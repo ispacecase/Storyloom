@@ -33,7 +33,7 @@ export function currentChapterContent(outline,number,unit='Chapter',{wordsPerCha
   if(index<0)return '';
   const now=chapters[index], later=chapters.slice(index+1);
   const u=unit.toLowerCase();
-  const length=String(wordsPerChapter||'').replace(/\(.*?\)/g,'').replace(/^(approximately|approx\.?|about|around|roughly|~)\s*/i,'').trim();
+  const length=String(wordsPerChapter||'').replace(/\(.*?\)/g,'').replace(/^(approximately|approx\.?|about|around|roughly|~)\s*/i,'').trim().replace(/[.;,:]+$/,'');
   const size=length && !/word/i.test(length) ? `${length} words` : length;
   const parts=[`The story is currently in ${unit} ${now.number} of ${chapters.length}. Follow this plan for the ${u}; let scenes unfold naturally rather than rushing through every event.${size?` This ${u} should run about ${size} in total, across all the replies that make it up.`:''}`, now.text];
   parts.push(later.length
