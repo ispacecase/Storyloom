@@ -10,7 +10,7 @@ export const SCENE_FIELDS = Object.freeze(['WHEN', 'WHERE', "WHO'S HERE", 'CONDI
 
 /** Ask for the scene card as it stands after the latest messages. */
 export function sceneInstruction({scene = '', recent = '', roleplay = false, player = ''} = {}) {
-  return `Keep a small card of the scene as it stands right now, at the end of the messages below, so the next reply stays consistent. Update the card you're given: change only what the messages changed, keep everything else exactly, and never invent anything that isn't on the page.
+  return `Keep a small card of the scene as it stands right now, at the end of the messages below. Another language model reads it before writing the next reply, to stay consistent — so write plain facts it can use. Update the card you're given: change only what the messages changed, keep everything else exactly, and never invent anything that isn't on the page. Trackers built on language models drift in known ways: they drop people who are still present, forget injuries and objects, and let someone know what they never saw — keep everyone who is still there, and note who knows what when it matters.
 
 Reply with exactly these lines and nothing else:
 WHEN: day and time of day (and how long since the last change of scene, if known)
@@ -58,9 +58,9 @@ export function foldRange(chatLength, {start = 0, upto = 0, keep = 16, every = 2
 /** Ask for the rolling summary to be extended with the next stretch of the chat. */
 export function sessionInstruction({summary = '', messages = '', unit = 'Chapter', roleplay = false} = {}) {
   const u = roleplay ? 'session' : unit.toLowerCase();
-  return `Keep a running record of this ${u} so far, so nothing early on is forgotten as it grows. Below is the record up to now and the next stretch of the ${u}. Return the whole updated record.
+  return `Keep a running record of this ${u} so far, so nothing early on is forgotten as it grows. Another language model reads it while writing the rest of the ${u}, so write plain, specific statements — names, times, places, objects — never style or commentary. Below is the record up to now and the next stretch of the ${u}. Return the whole updated record.
 
-Write it as short lines in story order, one per significant moment: what was done, said, decided, discovered or noticed, and anything left in a state a later page could pick up (injuries, promises, objects, weather, who knows what). Keep every line from the record up to now; add the new stretch after it. If the record grows past about 50 lines, merge the oldest ones into fewer lines without losing a fact. Only what is on the page. No headings, no commentary.
+Write it as short lines in story order, one per significant moment: what was done, said, decided, discovered or noticed, and anything left in a state a later page could pick up (injuries, promises, objects, weather, who knows what). Keep every line from the record up to now; add the new stretch after it. If the record grows past about 50 lines, merge the oldest ones into fewer lines without losing a fact. Only what is on the page: keep "doesn't know" and "isn't sure" exactly, never turn a guess into a fact, never merge two people. No headings, no commentary.
 
 THE RECORD UP TO NOW
 ${String(summary || '').trim() || '(empty — the start of the ' + u + ')'}

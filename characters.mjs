@@ -28,26 +28,26 @@ export function castNames(people) {
 }
 
 const HELP={
-  'ROLE IN THE STORY':'why this person matters to the plot and to the focus character.',
+  'ROLE IN THE STORY':'why this person matters to the plot and to the focus character when the story opens — not what they will do later.',
   'BASICS':'age, pronouns, occupation, where they live.',
-  'APPEARANCE':'how they look, dress and carry themselves, in concrete detail.',
+  'APPEARANCE':'one or two distinctive details of how they look and dress, not an inventory — the narrator repeats every detail it is given.',
   'BACKGROUND AND HISTORY':'where they come from, the formative events of their past, and the history that shapes who they are when the story opens.',
-  'PERSONALITY':'temperament, habits, contradictions, what others like or dislike about them.',
+  'PERSONALITY':'temperament, contradictions, what they do when pressed and why, what others like or dislike about them.',
   'WANTS AND NEEDS':'what they consciously want, what they actually need, and why the two conflict.',
   'FLAWS AND FEARS':'what gets in their way, and what they are afraid of.',
   'ABILITIES AND GEAR':'skills, powers, class or stats if a game system is used, and notable equipment.',
   'RELATIONSHIPS':'how they relate to each other named character, including history and tension.',
-  'VOICE AND MANNERISMS':'how they speak and behave, so a writer can tell their dialogue apart.',
+  'VOICE AND MANNERISMS':'how they speak — their words, sentence length, what they avoid saying, how they dodge, what makes them sound like nobody else in the cast — described, never quoted: the narrator copies any ready-made line into the book word for word. Speech only: no habits, gestures or things they do with their hands, because the narrator repeats whatever is listed until it becomes a tic.',
 };
-export function characterProfilesInstruction(names,cast=names,sections=PROFILE_SECTIONS,unit='Chapter') {
+export function characterProfilesInstruction(names,cast=names,sections=PROFILE_SECTIONS,unit='Chapter',{player=''}={}) {
   const titles=names.map(n=>`"${characterTitle(n)}"`).join(', ');
   const others=cast.filter(n=>!names.includes(n));
   const units=unit.toLowerCase();
-  const help=sections.map(h=>`- ${h}: ${HELP[h] || (/^ARC\b/.test(h)?`where they start, how they change ${units} by ${units} along the saved outline (name the ${units}s), and where they end.`:'what this heading asks for, specific to this person.')}`).join('\n');
+  const help=sections.map(h=>`- ${h}: ${HELP[h] || (/^ARC\b/.test(h)?`where they start, how they change ${units} by ${units} along the saved outline (name the ${units}s), and where they end. Everything this person does, decides or learns later in the book goes here and nowhere else.`:'what this heading asks for, specific to this person.')}`).join('\n');
   return `The outline is saved. Now write a full character profile for: ${titles}.${others.length?` The rest of the cast is ${others.join(', ')}; cover how this person relates to each of them.`:''} Return exactly ${names.length===1?'this entry':'these entries'} as entry blocks, one per person, using ${names.length===1?'that exact title':'those exact titles'}. Each profile must contain every one of these headings on its own line, each followed by real content: ${sections.map(s=>s+':').join(' ')}
 What each heading needs:
 ${help}
-If the writer said something specific about this person that none of these headings covers, add your own capitalised heading for it after the others. ${P('profileStyle')} These are characters in a story, not chatbot personas: no greetings, roleplay directions or {{user}}/{{char}} placeholders. Keys: only this person's full name, first name and distinctive nicknames. Never generic words (mother, dog, the vet, her father) and never a surname another character shares — keys decide when the entry is shown in the story chat. Reply with one short sentence; the profiles go in entry blocks.`;
+If the writer said something specific about this person that none of these headings covers, add your own capitalised heading for it after the others. ${P('profileStyle')}${player && names.some(n=>n.toLocaleLowerCase()===player.toLocaleLowerCase())?` ${player} is the player's own character: the player decides who ${player} is, what ${player} feels and wants, and what ${player} does. Write only what the player said and the plain facts the game needs — role, age, what they do, what they carry, who they work with, how others see them — and leave every other heading at one short line that says the player decides it. Invent no past events, inner life, contradictions, fears, secrets or KEPT HIDDEN for ${player}: the game master reads this profile, and anything invented here gets narrated as if the player had chosen it.`:''} These are characters in a story, not chatbot personas: no greetings, roleplay directions or {{user}}/{{char}} placeholders. Keys: only this person's full name, first name and distinctive nicknames. Never generic words (mother, dog, the vet, her father) and never a surname another character shares — keys decide when the entry is shown in the story chat. Reply with one short sentence; the profiles go in entry blocks.`;
 }
 
 function sectionText(content,heading,sections=PROFILE_SECTIONS) {

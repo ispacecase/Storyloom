@@ -1,8 +1,10 @@
 import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
-import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, switchPresetMode, syncPresetText, RP_PRESET_NAME as RP_PRESET, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
+import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, switchPresetMode, syncPresetText, upgradedCard, withMine, passagesVersion, RP_PRESET_NAME as RP_PRESET, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
-import { chapterProse, bookText, bookDocx, fileName, cleanReply, splitEndMark } from './export.mjs';
+import { chapterProse, bookText, bookDocx, fileName, cleanReply, splitEndMark, stripNotes, repairContinuation } from './export.mjs';
+/** The reply a Continue is extending (see the repair in MESSAGE_RECEIVED). */
+let continueFrom=null;
 import { sceneInstruction, parseScene, sceneNames, foldRange, sessionInstruction, parseSession } from './live.mjs';
 import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction, fixInstruction, parseFix } from './compare.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
@@ -22,19 +24,20 @@ import { normalizePeopleFocus } from './focus.mjs';
 import { characterImportRequest, requiredCharacterUpdate, selectCharacterSource } from './reuse.mjs';
 import { planningSystem } from './prompts.mjs';
 import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
+import { carryEdit, mergeImprovements, ownedText, hasImprovement, lineHunks, NARRATOR_LABELS } from './defaults.mjs';
 import { PROVIDERS, readKeyOptions, readModels, directPayload } from './providers.mjs';
 import { castNames, characterProfilesInstruction, validateCharacters, characterTitle, splitExtraCast } from './characters.mjs';
-import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
-import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
+import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters, foundationForNarrator, ARCS_TITLE } from './lorebook-layout.mjs';
+import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt, applyTextEdit, PROMPT_PURPOSE, TEAM } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
-import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, lastPage, capsSection, tokensFor, replyWords } from './memory.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, planBeats, lastPage, capsSection, tokensFor, replyWords } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
-import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
+import { NOVEL, BUILT_IN, templateToText, parseTemplate, validateTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
 import { wordBudget, castFit, budgetLines, SCENE_MIN, parseNumber, coreShare } from './budget.mjs';
-import { exactLint, lintInstruction, parseFindings, countsLine, biggestProblem, ALL_BUCKETS, endsCutOff } from './lint.mjs';
+import { exactLint, sampleLinesOf, echoes, paragraphs as lintParagraphs, lintInstruction, recheckInstruction, parseRecheck, RECHECKED, numbered, parseFindings, countsLine, biggestProblem, groundedFindings, ALL_BUCKETS, endsCutOff } from './lint.mjs';
 import { addEntry, filterEntries, logText } from './log.mjs';
-import { ROLES, ROLE_KEYS, STEPS, roleSettings, roleSystem, activeSteps, parseNotes, overallLine, markupInstruction, readerInstruction, reviseInstruction, parseRevision, wordDiff, narratorInstruction, parseNarrator, narratorLabel, suggestNarrators, parseNarratorTemplate, narratorTemplateText, defaultMainPrompt } from './roles.mjs';
+import { ROLES, ROLE_KEYS, STEPS, roleSettings, roleSystem, activeSteps, parseNotes, notesAskingForChange, isPraise, overallLine, markupInstruction, readerInstruction, reviseInstruction, parseEdits, applyEdits, parseRevision, wordDiff, narratorInstruction, parseNarrator, narratorLabel, suggestNarrators, parseNarratorTemplate, narratorTemplateText, defaultMainPrompt } from './roles.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
 
 const KEY = 'novelArchitect';
@@ -152,7 +155,34 @@ function changeBook(book) {
   return selectNovel(state,book);
 }
 /** Save this chat's Storyloom data and read it back. Right after a new chat opens SillyTavern may still be saving it, so a mismatch is retried a few times. */
+/** Remember which chat each book was last worked in, so a chat without a book can offer to open it (a new chat holds no book of its own). */
+function noteBookChat(){
+  try{const c=context(), d=data(); if(!d?.book || !c.chatId || d.interview?.phase!=='done')return; const st=c.extensionSettings.storyloom ??= {}; st.books ??= {};
+    const ch=c.characters?.[c.characterId], prev=st.books[d.book];
+    if(prev?.chatId===c.chatId && prev?.chapter===(d.chapter||1))return;
+    st.books[d.book]={chatId:c.chatId,avatar:ch?.avatar||'',character:ch?.name||'',chapter:d.chapter||1,unit:tpl(d).unit,at:new Date().toISOString()}; c.saveSettingsDebounced();}catch{}
+}
+/** Open the chat a book was last worked in. */
+async function openBook(name){
+  const c=context(), b=c.extensionSettings.storyloom?.books?.[name]; if(!b)throw Error(`Storyloom has no chat on record for “${name}”.`);
+  const idx=c.characters.findIndex(x=>x.avatar===b.avatar); if(idx<0)throw Error(`The character “${b.character}” that “${name}” was written with isn’t here any more.`);
+  if(String(c.characterId)!==String(idx))await c.selectCharacterById(idx);
+  try{await c.openCharacterChat(b.chatId);}catch(e){throw Error(`“${name}”’s last chat (${b.chatId}) couldn’t be opened — it may have been renamed or deleted. Open it from the character’s chat list instead.`);}
+  status(`Opened “${name}” — ${b.unit||'Chapter'} ${b.chapter}.`);
+}
+/** On a screen with no book: the books you're writing, each with an Open button. */
+function renderBookList(){
+  const st=context().extensionSettings.storyloom||{}, books=Object.entries(st.books||{}).sort((a,b)=>String(b[1].at).localeCompare(String(a[1].at)));
+  for(const id of ['na-books-nochat','na-books-welcome']){
+    const box=document.getElementById(id); if(!box)continue; box.replaceChildren();
+    let here=''; try{here=data().book||'';}catch{}
+    const list=books.filter(([n])=>n!==here); box.hidden=!list.length; if(!list.length)continue;
+    box.append(el('span',{className:'storyloom-choice-label',textContent:'OR CARRY ON A BOOK YOU’RE WRITING'}));
+    for(const [name,b] of list.slice(0,8)){const row=el('div',{className:'storyloom-row'}); const open=el('button',{type:'button',textContent:`Open “${name}” — ${b.unit||'Chapter'} ${b.chapter}`,title:`Opens the chat you last worked in (${b.chatId}).`}); open.onclick=()=>openBook(name).catch(fail); row.append(open); box.append(row);}
+  }
+}
 async function persist() {
+  try{noteBookChat();}catch{}
   for(let i=0;;i++){
     try{return await saveVerified(context);}
     catch(e){if(i>=3 || !/not confirmed/.test(String(e?.message)))throw e; await new Promise(r=>setTimeout(r,600*(i+1)));}
@@ -293,7 +323,8 @@ function renderTemplates(d) {
   const templates=allTemplates(), names=templates.map(t=>t.name);
   const pick=document.getElementById('na-template'), keep=pick.value;
   pick.replaceChildren(...names.map(n=>new Option(n,n)));
-  pick.value=names.includes(keep)?keep:NOVEL.name;
+  const own=context().extensionSettings.storyloom?.defaultTemplate;
+  pick.value=names.includes(keep)?keep:(own && names.includes(own)?own:NOVEL.name);
   document.getElementById('na-template-label').hidden=!!d.interview;
   const edit=document.getElementById('na-template-edit'), current=edit.value;
   edit.replaceChildren(...templates.map(t=>new Option(t.custom?t.name:`${t.name} (built-in)`,t.name)));
@@ -386,11 +417,13 @@ async function storyloomManaged() {
   managed.push({title:t.outline.title,how:'kept switched off in the lorebook; the Memory tab sends it (“Whole outline”) with an instruction not to write ahead, at the writer’s chosen position'});
   for(const e of t.entries)if(e.show==='off')managed.push({title:e.title,how:'planning notes the story does not need'});
   managed.push({title:t.cast,how:'the cast index Storyloom uses; full character entries are the “Character — Name” entries'});
+  managed.push({title:t.summary.title,how:'kept switched off in the lorebook as the full record; the Memory tab sends it (“The book”) without the milestones, arcs and ending, so the narrator can’t foreshadow them'});
+  managed.push({title:ARCS_TITLE,how:'planning notes: how each person changes over the book, kept out of the narrator’s view'});
   managed.push({title:'Current Writing Directive',how:'sent through the Author’s Note, which Storyloom keeps in sync'});
   managed.push({title:'Storyloom Interview Notes',how:'the planning interview record'});
   let book=null; try{if(c.getWorldInfoNames().includes(d.book))book=await freshBook(d.book);}catch{}
   for(const item of MEMORY_ITEMS) {
-    if(!item.fromOutline)managed.push({title:item.title,how:`sent by the Memory tab as “${item.label}”`});
+    if(!item.fromOutline && !item.fromSummary)managed.push({title:item.title,how:`sent by the Memory tab as “${item.label}”`});
     const e=book?findEntry(book,memoryTitle(item,d)):null, place=e?.storyloom_memory||item.place, w=(String(e?.content||'').match(/\S+/g)||[]).length;
     memory.push({label:item.label,words:place.where==='off'?0:w,where:place.where==='chat-depth'?`${place.depth} messages from the end as ${place.role}`:`${WHERE[place.where]||place.where} as ${place.role}`});
   }
@@ -471,7 +504,8 @@ async function gatherSnapshot(question) {
     let n=1; try{n=data().chapter||1;}catch{}
     writing={preset:presetName,isNovel:presetName===kit().presetName,hasNovel:pm?.getPresetList().preset_names?.[kit().presetName]!==undefined,prompts:c.mainApi==='openai'?presetPrompts(getChatCompletionPreset()):null,general:usesGeneralNarrator(c),values:readValues(c),chapter:n};
   } catch(e){warnLog('Storyloom snapshot (writing setup):',e);}
-  return formatSnapshot({managed,memory,writing,
+  let storyloom=null; try{storyloom=await storyloomSnapshot();}catch(e){warnLog('Storyloom snapshot (own settings):',e);}
+  return formatSnapshot({managed,memory,writing,storyloom,persona:[c.name1,(()=>{try{return String(c.powerUserSettings?.persona_description||'').slice(0,400);}catch{return '';}})()].filter(Boolean).join(' — '),
     character:card?{name:card.name,description:String(card.description||card.data?.description||''),lorebook:card.data?.extensions?.world||''}:null,
     chatLorebook,globalLorebooks:[...(wi.selected_world_info||[])],allLorebooks:c.getWorldInfoNames(),
     worldInfo:{depth:wi.world_info_depth,budget:wi.world_info_budget,recursive:wi.world_info_recursive,caseSensitive:wi.world_info_case_sensitive,wholeWords:wi.world_info_match_whole_words},
@@ -522,6 +556,88 @@ async function changePreset(name,mutate,label) {
   if(!selected)list.presets[list.preset_names[name]]=after;
   return before;
 }
+/** The general narrator card's current description (the one the Assistant edits). */
+function generalNarratorCard(){const c=context(); return c.characters.find(x=>isGeneralNarrator(x.description))||null;}
+/** One of Storyloom's texts the Assistant can edit: its current wording and whether the writer has their own copy. */
+function storyloomText(id){
+  const c=context(), st=c.extensionSettings.storyloom ??= {};
+  if(id==='narrator-card'){const ch=generalNarratorCard(); return {text:String(ch?.description||kit().card), yours:!!ownedText(mineStore()[kit().roleplay?'roleplay':'novel'].card)};}
+  if(/^narrator-/.test(id)){
+    const field={'narrator-main':'main','narrator-post-history':'jailbreak'}[id], k=kit();
+    let text=k[{'narrator-main':'main','narrator-post-history':'postHistory','narrator-continue-nudge':'continueNudge','narrator-new-chat':'newChat'}[id]];
+    try{const pm=c.getPresetManager('openai'); if(pm?.getPresetList().preset_names?.[k.presetName]!==undefined){const p=pm.getSelectedPresetName()===k.presetName?getChatCompletionPreset():pm.getCompletionPresetByName(k.presetName); text=field?((p.prompts||[]).find(q=>q.identifier===field)?.content??text):id==='narrator-continue-nudge'?(p.continue_nudge_prompt??text):(p.new_chat_prompt??text);}}catch{}
+    const own=mineStore()[k.roleplay?'roleplay':'novel'], f={'narrator-main':k.passages?'mainPassages':'main','narrator-post-history':k.passages?'postHistoryPassages':'postHistory','narrator-continue-nudge':'continueNudge','narrator-new-chat':'newChat'}[id];
+    return {text:String(text||''), yours:!!ownedText(own[f])||(f==='mainPassages'&&!!ownedText(own.main))};
+  }
+  if(/^prompt:/.test(id)){const key=id.slice(7); if(!PROMPT_DEFAULTS[key])throw Error(`There is no Storyloom prompt “${key}”.`); return {text:storedPrompts()[key]??PROMPT_DEFAULTS[key].text, yours:!!storedPrompts()[key]};}
+  if(/^team:/.test(id)){const k=id.slice(5), r=roleSettings(storedRoles())[k]; if(!r)throw Error(`There is no team member “${k}”.`); return {text:r.persona, yours:r.edited};}
+  if(/^template:/.test(id)){const name=id.slice(9), t=allTemplates().find(x=>x.name===name); if(!t)throw Error(`There is no template called “${name}”.`); return {text:templateToText(t), yours:!!t.custom};}
+  throw Error(`Unknown text “${id}”.`);
+}
+/** Everything the Assistant may change in Storyloom itself, with today's values (formatted by formatStoryloom). */
+async function storyloomSnapshot(){
+  const c=context(), st=c.extensionSettings.storyloom ??= {}, raw=st.live||{}, o=liveOpts(), k=keepGoingOpts(), rs=roleSettings(storedRoles());
+  let d=null; try{d=data();}catch{}
+  const options={'how-chapters-get-written':writePassages()?'bit-by-bit':'all-at-once','chapter-length':d?.chapterLength||0,'words-per-press':Number(st.replyWords)||0,'keep-going':k.on?'on':'off','keep-going-max':k.max,
+    'scene-card':o.scene?'on':'off','scene-every':Number(raw.sceneEvery)||3,'chapter-summary':raw.session!==false?'on':'off','chapter-summary-every':o.sessionEvery,'everyone-in-scene':o.stage?'on':'off','faster-checks':shortThinking()?'on':'off','send-reasoning-effort':sendEffort()?'on':'off'};
+  let memory=[];
+  try{if(d?.book && c.chatMetadata?.world_info===d.book){const book=await freshBook(d.book); memory=MEMORY_ITEMS.map(item=>{const e=findEntry(book,memoryTitle(item,d)), p=e?.storyloom_memory||item.place; return {key:item.key,label:item.label,where:p.where,depth:p.depth??0,role:p.role||'system'};});}}catch{}
+  const texts=[];
+  const add=(id,label,what)=>{try{const t=storyloomText(id); texts.push({id,label,what,text:t.text,yours:t.yours});}catch{}};
+  add('narrator-main','Main Prompt','How to write a book: craft, the AI habits to replace, how to read its prompt. Shapes every chapter.');
+  add('narrator-post-history','Post-History reminder','The few lines read last before every reply — the strongest position.');
+  add('narrator-card','Narrator card','HOW THIS BOOK IS TOLD; its {{getvar::storyloom_…}} blanks are filled from each book’s settings (keep them).');
+  for(const r of ['checker','editor','reader','seal'])add(`team:${r}`,`${ROLES[r].label} (${ROLES[r].step})`,ROLES[r].job);
+  for(const [key,v] of Object.entries(PROMPT_DEFAULTS))add(`prompt:${key}`,v.label,`${PROMPT_PURPOSE[key]||''} ${v.locked||''}`.trim());
+  for(const t of allTemplates())add(`template:${t.name}`,`Template “${t.name}”${t.custom?'':' (built-in: an edit saves your own copy, used for new books)'}`,'What the wizard asks and which lorebook entries a new book gets.');
+  return {options,memory,team:TEAM.map(r=>({role:r,label:ROLES[r].label,enabled:rs[r]?.enabled!==false})),texts};
+}
+/** Set one Storyloom option (the Assistant's set-option). Returns how to put it back. */
+async function setOption(name,value){
+  const c=context(), st=c.extensionSettings.storyloom ??= {}; st.live ??= {};
+  const snap=await storyloomSnapshot(), before=snap.options[name];
+  const onOff=v=>v==='on';
+  switch(name){
+    case 'how-chapters-get-written': st.passages=value==='bit-by-bit'; c.saveSettingsDebounced(); await matchPresetToMode(); break;
+    case 'chapter-length': {const d=data(); if(!d.book)throw Error('Open the book’s chat to set its chapter length.'); if(value && value<200)throw Error('A chapter needs at least 200 words.'); if(value)d.chapterLength=value; else delete d.chapterLength; await persist(); break;}
+    case 'words-per-press': st.replyWords=value; break;
+    case 'keep-going': st.keepGoing=onOff(value); break;
+    case 'keep-going-max': st.keepGoingMax=value; break;
+    case 'scene-card': st.live.scene=onOff(value); break;
+    case 'scene-every': st.live.sceneEvery=value; break;
+    case 'chapter-summary': st.live.session=onOff(value); break;
+    case 'chapter-summary-every': st.live.sessionEvery=value; break;
+    case 'everyone-in-scene': st.live.stage=onOff(value); break;
+    case 'faster-checks': st.shortThinking=onOff(value); break;
+    case 'send-reasoning-effort': st.sendEffort=onOff(value); break;
+    default: throw Error(`Unknown option “${name}”.`);
+  }
+  c.saveSettingsDebounced(); try{renderWritingSettings?.();}catch{} try{await applyMemory();}catch{} renderTeam();
+  logEvent('info','Settings',`${name}: ${before} → ${value} (asked through the Assistant)`);
+  return {kind:'option',name,before};
+}
+/** Apply an edit-text card: change the text, keep it as the writer's own default. Returns how to put it back. */
+async function editStoryloomText(a){
+  const cur=storyloomText(a.text), next=applyTextEdit(cur.text,a.find,a.replace);
+  if(next===cur.text)throw Error('That edit changes nothing.');
+  const c=context(), st=c.extensionSettings.storyloom ??= {};
+  if(a.text==='narrator-card'){const u=await applySetupAction({type:'set-narrator-card',content:next}); return u;}
+  if(/^narrator-/.test(a.text)){const prompt={'narrator-main':'main','narrator-post-history':'post-history','narrator-continue-nudge':'continue-nudge','narrator-new-chat':'new-chat'}[a.text]; return applySetupAction({type:'set-preset-prompt',prompt,content:next});}
+  if(/^prompt:/.test(a.text)){const key=a.text.slice(7), all=storedPrompts(), before=all[key]??null;
+    backup({kind:'prompt',label:`Prompt: ${PROMPT_DEFAULTS[key].label} (before the Assistant’s change)`,target:{key},before});
+    if(next.trim()===PROMPT_DEFAULTS[key].text.trim())delete all[key]; else {all[key]=next; noteBase('prompt',key,PROMPT_DEFAULTS[key].text);}
+    setPromptOverrides(all); c.saveSettingsDebounced(); try{renderPromptEditor();}catch{} return {kind:'prompt',key,before};}
+  if(/^team:/.test(a.text)){const k=a.text.slice(5), roles=storedRoles(), before=roles[k]?.persona||'';
+    backup({kind:'persona',label:`${ROLES[k].label}’s personality (before the Assistant’s change)`,target:{role:k},before:before||null});
+    roles[k]={...roles[k],persona:next.trim()===ROLES[k].persona.trim()?'':next}; if(roles[k].persona)noteBase('persona',k,ROLES[k].persona); c.saveSettingsDebounced(); try{renderTeamSettings();}catch{} return {kind:'persona',role:k,before};}
+  if(/^template:/.test(a.text)){const name=a.text.slice(9), t=allTemplates().find(x=>x.name===name), parsed=parseTemplate(next), problems=validateTemplate(parsed)||[];
+    if(Array.isArray(problems)&&problems.length)throw Error(`The template wouldn’t work: ${problems.join('; ')}. Nothing was changed.`);
+    const list=storedTemplates(), before=structuredClone(list), beforeDefault=st.defaultTemplate;
+    if(t.custom){const i=list.findIndex(x=>{try{return parseTemplate(x).name===name;}catch{return false;}}); list[i]=next;}
+    else {const own=`${name} (yours)`; parsed.name=own; const text=templateToText(parsed), i=list.findIndex(x=>{try{return parseTemplate(x).name===own;}catch{return false;}}); if(i>=0)list[i]=text; else list.push(text); st.defaultTemplate=own;}
+    c.saveSettingsDebounced(); try{renderTemplates(data());}catch{} return {kind:'templates',before,beforeDefault};}
+  throw Error(`Unknown text “${a.text}”.`);
+}
 async function applySetupAction(a) {
   const c=context();
   if(a.type==='set-preset-prompt'||a.type==='toggle-prompt') {
@@ -532,7 +648,15 @@ async function applySetupAction(a) {
         else {p.prompts ??= []; let x=p.prompts.find(q=>q.identifier===PROMPT_IDS[a.prompt]); if(!x){x={identifier:PROMPT_IDS[a.prompt],name:a.prompt,system_prompt:true,role:'system'};p.prompts.push(x);} x.content=a.content;}
       } else for(const o of p.prompt_order||[])for(const i of o.order||[])if(i.identifier===PROMPT_IDS[a.prompt])i.enabled=a.enabled;
     },describeAction(a));
-    return {kind:'preset',before};
+    // What the writer asks the Assistant to change becomes their own default: Writing setup, new books and updates use it from now on.
+    let mine=null;
+    const field={main:'main','post-history':'postHistory','continue-nudge':'continueNudge','new-chat':'newChat'}[a.prompt];
+    if(a.type==='set-preset-prompt' && field){
+      const k=kit(), was=field==='continueNudge'?before.continue_nudge_prompt:field==='newChat'?before.new_chat_prompt:(before.prompts||[]).find(q=>q.identifier===PROMPT_IDS[a.prompt])?.content;
+      mine=saveMine(k.roleplay,field,a.content,{before:was,passages:!!k.passages});
+      if(mine.note.length)toastr.info(`Saved as your own default — ${mine.note.join('; ')}.`,'Storyloom',{timeOut:10000});
+    }
+    return {kind:'preset',before,minePrev:mine?.prev||null,roleplay:kit().roleplay};
   }
   if(a.type==='set-book-setting') {
     const d=data(), n=d.chapter||1, prevValues=readValues(c), prevChapter=structuredClone(d.chapterValues?.[n]||{});
@@ -560,12 +684,27 @@ async function applySetupAction(a) {
     const before=charSnapshot(ch);
     backup({kind:'character',label:`${ch.name} (before the Assistant’s change)`,target:{avatar:ch.avatar},before});
     await writeCharacter(ch.avatar,{description:a.content});
-    return {kind:'narrator',avatar:ch.avatar,before};
+    const rp=/game master/i.test(String(a.content).split('\n')[0]), mine=saveMine(rp,'card',a.content);
+    return {kind:'narrator',avatar:ch.avatar,before,minePrev:mine.prev,roleplay:rp};
   }
+  if(a.type==='edit-text')return editStoryloomText(a);
+  if(a.type==='set-option')return setOption(a.name,a.value);
+  if(a.type==='set-team-member'){const roles=storedRoles(), before=roles[a.role]?.enabled!==false; roles[a.role]={...roles[a.role],enabled:a.enabled}; c.saveSettingsDebounced(); try{renderTeamSettings();}catch{} renderTeam(); return {kind:'team',role:a.role,before};}
+  if(a.type==='set-memory'){const item=MEMORY_ITEMS.find(x=>x.key===a.item), d=data(); if(!d.book)throw Error('Open the book’s chat first.');
+    const book=await freshBook(d.book), e=findEntry(book,memoryTitle(item,d)), before=structuredClone(e?.storyloom_memory||item.place);
+    const place={...before,where:a.where,...(a.depth!==undefined?{depth:a.depth}:{}),...(a.role?{role:a.role}:{})};
+    await saveMemoryItem(item,undefined,place); await applyMemory(); return {kind:'memory',item:a.item,before};}
   throw Error(`Unknown change “${a.type}”.`);
 }
 async function undoSetupAction(a) {
   const c=context(), u=a.undo;
+  if(u.minePrev){const m=mineStore(); m[u.roleplay?'roleplay':'novel']=structuredClone(u.minePrev); c.saveSettingsDebounced();}
+  if(u.kind==='option'){await setOption(a.name,u.before); return;}
+  if(u.kind==='prompt'){const all=storedPrompts(); if(u.before==null)delete all[u.key]; else all[u.key]=u.before; setPromptOverrides(all); c.saveSettingsDebounced(); try{renderPromptEditor();}catch{} return;}
+  if(u.kind==='persona'){const roles=storedRoles(); roles[u.role]={...roles[u.role],persona:u.before||''}; c.saveSettingsDebounced(); try{renderTeamSettings();}catch{} return;}
+  if(u.kind==='templates'){const st=c.extensionSettings.storyloom; st.templates=structuredClone(u.before); if(u.beforeDefault===undefined)delete st.defaultTemplate; else st.defaultTemplate=u.beforeDefault; c.saveSettingsDebounced(); try{renderTemplates(data());}catch{} return;}
+  if(u.kind==='team'){const roles=storedRoles(); roles[u.role]={...roles[u.role],enabled:u.before}; c.saveSettingsDebounced(); try{renderTeamSettings();}catch{} renderTeam(); return;}
+  if(u.kind==='memory'){const item=MEMORY_ITEMS.find(x=>x.key===u.item); await saveMemoryItem(item,undefined,u.before); await applyMemory(); return;}
   if(u.kind==='preset'){await changeNovelPreset(p=>{for(const k of Object.keys(p))delete p[k]; Object.assign(p,structuredClone(u.before));},'undo');}
   else if(u.kind==='narrator'){await writeCharacter(u.avatar,{description:u.before.description});}
   else if(u.kind==='value') {
@@ -704,14 +843,17 @@ async function upgradeLayout(d=null,book=null) {
     if(!d?.book || d.interview?.phase!=='done' || context().chatMetadata?.world_info!==d.book)return false;
     book ??= await freshBook(d.book);
     const cc=findEntry(book,'Current Chapter');
-    if(!cc || (cc.disable && /Still to come|final [a-z]+: bring the story/i.test(String(cc.content||''))))return false;
+    const fresh=cc && cc.disable && /Later [a-z]+s — listed only|last [a-z]+: bring the story to the ending its plan/i.test(String(cc.content||'')) && findEntry(book,tpl(d).summary.title)?.disable;
+    if(!cc || fresh)return false;
     await organizeBook();
     return true;
   } catch(e) {warnLog('Storyloom layout upgrade:',e); return false;}
 }
 /** The lorebook entry behind a memory item (the outline item uses the template's outline entry). */
-const memoryTitle=(item,d)=>item.fromOutline?tpl(d).outline.title:item.title;
-const memoryText=(item,e)=>item.fromOutline?outlineBody(e?.content):String(e?.content||'');
+const memoryTitle=(item,d)=>item.fromOutline?tpl(d).outline.title:item.fromSummary?tpl(d).summary.title:item.title;
+const memoryText=(item,e)=>item.fromOutline?outlineBody(e?.content):item.fromSummary?foundationForNarrator(e?.content):String(e?.content||'');
+const readOnlyItem=item=>!!(item.fromOutline||item.fromSummary);
+const SCANNED=new Set(['previously','chapter','scene','session']);
 /** Send each memory item into the main chat's prompt with its chosen placement (or clear it). */
 async function applyMemory() {
   const c=context();
@@ -721,12 +863,18 @@ async function applyMemory() {
   for(const item of MEMORY_ITEMS) {
     const e=book&&d?findEntry(book,memoryTitle(item,d)):null;
     const inj=injection(item,book?memoryText(item,e):'',e?.storyloom_memory||item.place,vars);
-    c.setExtensionPrompt(memoryKey(item),inj.value,inj.position,inj.depth,false,inj.role);
+    // The plan, the hand-off and the scene name who is in this chapter: let SillyTavern scan them, so those people's entries are sent
+    // from the first line (otherwise a new chapter's chat holds only its heading and no profile is triggered).
+    c.setExtensionPrompt(memoryKey(item),inj.value,inj.position,inj.depth,SCANNED.has(item.key),inj.role);
   }
+  if(book&&d){try{const line=String(findEntry(book,tpl(d).cast)?.content||'').split('\n').find(l=>/^\s*\*\*/.test(l))||''; playerCache={book:d.book,name:line.replace(/\*\*/g,'').split('|')[0].trim()};}catch{}}
   if(book&&d)stageCache={...stageCache,book:d.book,scene:findEntry(book,MEM('scene').title)?.content||'',chars:Object.values(book.entries||{}).filter(e=>!e.disable && /^character\s*[—–-]/i.test(String(e.comment||'')))};
+  // This chapter's planned events, for pacing a chapter written bit by bit (see replyLengthNote).
+  beatsCache=book&&d?{book:d.book,chapter:d.chapter||1,beats:planBeats(findEntry(book,memoryTitle(MEM('chapter'),d))?.content||'')}:{book:'',chapter:0,beats:[]};
   const note=book&&d?chapterNote(d):{}, u=vars.unit;
-  const narration=(note.pov||note.tense)?`NARRATION FOR THIS ${u.toUpperCase()} (this overrides the writing directive's point of view and tense): ${[note.pov&&`POV: ${note.pov}`,note.tense&&`Tense: ${note.tense}`].filter(Boolean).join('; ')}`:'';
-  c.setExtensionPrompt('storyloom_narration',narration,1,2,false,0);
+  const narration=(note.pov||note.tense)?`NARRATION FOR THIS ${u.toUpperCase()} — this ${u.toLowerCase()} is told differently from the book's usual settings; it overrides HOW THIS BOOK IS TOLD: ${[note.pov&&`point of view: ${note.pov}`,note.tense&&`tense: ${note.tense}`].filter(Boolean).join('; ')}`:'';
+  c.setExtensionPrompt('storyloom_narration',narration,1,1,false,1);
+  try{quietDirective(book&&d);}catch(e){warnLog('Storyloom directive note:',e);}
   applyReplyLength(!!(book&&d), u);
 }
 /** Tell the narrator how many words fit in one reply (from the current Max Response Length), so it doesn't try to write the whole chapter and get cut off. */
@@ -744,16 +892,21 @@ function replyWordsHint() {
 }
 /** Whether a message asks for a reply length ("about 200 words", "keep it short", "one paragraph"…). */
 const asksForLength=t=>/\b\d[\d,]*\s*(?:-|to|–)?\s*(?:\d[\d,]*\s*)?words?\b|\b(?:keep (?:it|this)|make (?:it|this)|be|write)\s+(?:short|brief|shorter|longer|long)\b|\b(?:short|brief|shorter|longer)\s+(?:reply|response|passage|one)\b|\b(?:one|a single|two|a)\s+(?:short\s+)?paragraphs?\b|\b(?:a )?(?:few|couple of) (?:lines|sentences)\b/i.test(String(t||''));
-function applyReplyLength(on=null, unit='Chapter') {
+function applyReplyLength(on=null, unit='Chapter', type='') {
   const c=context();
   if(on===null){try{const d=data(); on=!!(d.book && c.chatMetadata?.world_info===d.book); unit=tpl(d).unit;}catch{on=false;}}
   // The writer's own direction wins: if the message being sent (or the last one) asks for a length, Storyloom says nothing.
   const said=[document.getElementById('send_textarea')?.value||'', (()=>{const m=c.chat?.at(-1); return m?.is_user?m.mes:'';})()].join('\n');
   const asked=asksForLength(said);
-  const note=on && !asked?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords(),{roleplay:isRP(),passages:writePassages()}):'';
+  // The request for this reply, last and as the author's (a system note is moved to the top by DeepSeek and treated as background).
+  let number=0, planned=0, written=0;
+  try{const st=writeState(); if(st){number=st.n; planned=st.target; written=st.words;} else {const d=data(); number=d.chapter||1; planned=chapterTarget(d);}}catch{}
+  // A swipe or regenerate rewrites the last reply: its old text isn't part of what's already written (otherwise a finished chapter's swipe is told "write only the end mark").
+  if(/^(swipe|regenerate)$/.test(type)){const m=c.chat?.at(-1); if(m && !m.is_user && !m.is_system)written=Math.max(0,written-(String(m.mes||'').match(/\S+/g)||[]).length);}
+  const note=on && !asked?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords(),{roleplay:isRP(),passages:writePassages(),number,planned,written,beats:beatsCache.chapter===number?beatsCache.beats:[]}):'';
   if(on && asked)logEvent('info','Reply length','your message sets the length, so Storyloom’s own length note was left out');
   c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1);
-  let endNote=''; try{endNote=on && !isRP()?endMarkNote(unit):'';}catch{} c.setExtensionPrompt('storyloom_end_mark',endNote,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
+  c.setExtensionPrompt('storyloom_end_mark','',1,0,false,1); // now part of the request above
 }
 let memoryTimer;
 const queueMemory=()=>{clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),400);};
@@ -767,8 +920,8 @@ async function saveMemoryItem(item,content,place) {
     const before=await freshBook(d.book), book=structuredClone(before);
     const title=memoryTitle(item,d);
     let entry=findEntry(book,title);
-    if(!entry){if(item.fromOutline)throw Error('This novel has no outline entry yet.'); entry=createWorldInfoEntry(d.book,book); if(!entry)throw Error('Could not create the memory entry.'); entry.comment=title; entry.key=[];}
-    if(content!==undefined && !item.fromOutline)entry.content=content;
+    if(!entry){if(readOnlyItem(item))throw Error('This novel has no such entry yet.'); entry=createWorldInfoEntry(d.book,book); if(!entry)throw Error('Could not create the memory entry.'); entry.comment=title; entry.key=[];}
+    if(content!==undefined && !readOnlyItem(item))entry.content=content;
     if(place)entry.storyloom_memory=place;
     entry.disable=true; entry.constant=false;
     await c.saveWorldInfo(d.book,book,true); refreshEditor(d.book);
@@ -797,9 +950,9 @@ async function renderMemory() {
     const e=book?findEntry(book,memoryTitle(item,d)):null, place=e?.storyloom_memory||item.place, text=memoryText(item,e), words=(text.match(/\S+/g)||[]).length;
     const where=place.where==='off'?'not sent':place.where==='chat-depth'?`sent ${place.depth} messages from the end`:`sent at the ${WHERE_SHORT[place.where]||place.where}`;
     const btn=el('button',{type:'button',textContent:'View / edit'}), area=el('div',{className:'storyloom-remember-body',hidden:true});
-    const ta=el('textarea',{rows:8,readOnly:!!item.fromOutline}); ta.value=text;
+    const ta=el('textarea',{rows:8,readOnly:readOnlyItem(item)}); ta.value=text;
     area.append(el('p',{className:'storyloom-hint',textContent:item.hint}),ta);
-    if(item.fromOutline)area.append(el('p',{className:'storyloom-hint',textContent:'The outline itself is edited in the lorebook (View entries on the Story tab).'}));
+    if(readOnlyItem(item))area.append(el('p',{className:'storyloom-hint',textContent:`${item.fromOutline?'The outline':'The foundation'} itself is edited in the lorebook (View entries on the Story tab).`}));
     else {const sv=el('button',{type:'button',textContent:'Save'}); sv.onclick=async()=>{lastAction=`Save ${item.label}`;try{await saveMemoryItem(item,ta.value);status(`${item.label} saved and in place for the next reply.`);renderMemory();}catch(err){fail(err);}}; area.append(el('div',{className:'storyloom-row'},sv));}
     btn.onclick=()=>{area.hidden=!area.hidden;btn.textContent=area.hidden?'View / edit':'Close';};
     return el('li',{className:'storyloom-remember'},el('div',{className:'storyloom-remember-head'},el('span',{},el('strong',{textContent:item.label}),el('small',{textContent:` — ${words?`${words.toLocaleString()} words`:'empty'}, ${where}`})),btn),area);
@@ -1013,8 +1166,9 @@ async function askCompare(problems) {
 }
 /* ---------- Live memory: Scene now, Earlier this session, on-stage characters (kept up while writing, not only at Seal) ---------- */
 const MEM=key=>MEMORY_ITEMS.find(x=>x.key===key);
-const liveOpts=()=>{const s=context().extensionSettings.storyloom?.live||{}; return {scene:s.scene!==false, session:s.session!==false, stage:s.stage!==false, sceneEvery:Number(s.sceneEvery)||3, sessionEvery:Number(s.sessionEvery)||20, keep:16};};
-let liveRunning=false, livePending=false, stageCache={book:'',scene:'',chars:[]};
+/** Live memory settings. When each Write writes a whole chapter, a chapter is one or two replies: the scene card follows every reply and the running summary isn't needed (Seal hands the chapter on). */
+const liveOpts=()=>{const s=context().extensionSettings.storyloom?.live||{}, whole=(()=>{try{return wholeChapters();}catch{return false;}})(); return {scene:s.scene!==false, session:!whole && s.session!==false, stage:s.stage!==false, sceneEvery:whole?1:(Number(s.sceneEvery)||3), sessionEvery:Number(s.sessionEvery)||20, keep:16, whole};};
+let liveRunning=false, livePending=false, stageCache={book:'',scene:'',chars:[]}, beatsCache={book:'',chapter:0,beats:[]};
 /** Save a memory entry from the background (no idle check, no undo history; the next reply picks it up). */
 async function saveMemoryQuiet(item,content) {
   const c=context(), d=data(); if(!d.book || c.chatMetadata.world_info!==d.book)return false;
@@ -1042,7 +1196,8 @@ async function runLive() {
     if(!d.live || d.live.chatId!==c.chatId || d.live.chapter!==n)d.live={chatId:c.chatId,chapter:n,upto:start,sinceScene:o.sceneEvery-1};
     d.live.sinceScene=(d.live.sinceScene||0)+1;
     const book=await freshBook(d.book), rp=isRP(d);
-    if(o.scene && d.live.sinceScene>=o.sceneEvery && !busy) {
+    let ended=false; try{ended=!!writeState()?.ended;}catch{}
+    if(o.scene && d.live.sinceScene>=o.sceneEvery && !busy && !ended) { // a finished chapter needs no scene card: Seal hands it on
       const scene=findEntry(book,MEM('scene').title)?.content||'';
       const raw=await llm(c,sceneInstruction({scene,recent:transcriptSlice(c,Math.max(start,c.chat.length-6)).slice(-9000),roleplay:rp,player:c.name1||''}),d.profile||'',null,1500,'You keep a short, exact record of a scene in a story. You never write the story.',(()=>{try{return directSnapshot(d,c);}catch{return null;}})(),{label:'Scene tracker'});
       const card=parseScene(raw);
@@ -1076,10 +1231,12 @@ function forceOnStage() {
 const keepGoingOpts=()=>{const s=context().extensionSettings.storyloom||{}; return {on:s.keepGoing===true, max:Math.max(1,Math.min(20,Number(s.keepGoingMax)||6))};};
 let keepRounds=0, keepChat='';
 function endMarkNote(unit='Chapter'){const U=unit.toUpperCase(), u=unit.toLowerCase(); return `END OF ${U}: when this reply reaches the ending this ${u}'s plan describes, finish the prose, then add one final line on its own: [END OF ${U}]. Only then — never before the planned ending. If the ${u} isn't finished when you stop, don't add it.`;}
-function afterChapterReply(ended,cut) {
+function afterChapterReply(ended,cut,early=false) {
   let d; try{d=data();}catch{return;}
   const c=context(), u=tpl(d).unit, n=d.chapter||1;
   if(keepChat!==c.chatId){keepChat=c.chatId; keepRounds=0;}
+  // A chapter at full length that ends on a finished sentence counts as done even without the end mark (see writeState): say the same here.
+  if(!ended && !cut && !early){try{const st=writeState(); if(st?.ended){ended=true; logEvent('info','End of chapter',`${u} ${n}: no end mark, but it is at full length and ends on a finished sentence — counted as done`);}}catch{}}
   if(ended) {
     keepRounds=0;
     logEvent('info','End of chapter',`${u} ${n}: the narrator reached the plan’s ending`);
@@ -1096,7 +1253,7 @@ function afterChapterReply(ended,cut) {
     return;
   }
   if(k.on && keepRounds>=k.max){toastr.warning(`${u} ${n} still isn’t finished after ${k.max} replies — Storyloom stopped. Press Send to keep going, or check the chapter.`,'Storyloom',{timeOut:12000}); logEvent('warn','Keep going',`stopped after ${k.max} replies without the end of ${u} ${n}`); keepRounds=0; return;}
-  if(!cut)toastr.info(`${u} ${n} isn’t finished yet — press “Keep writing” in Storyloom (or Send with an empty box) to carry on.`,'Storyloom',{timeOut:8000});
+  if(!cut && !early)toastr.info(`${u} ${n} isn’t finished yet — press “Keep writing” in Storyloom (or Send with an empty box) to carry on.`,'Storyloom',{timeOut:8000});
 }
 
 /** Bring Storyloom's own presets up to date (new writing instructions, or the other way of writing), never touching text the writer changed. */
@@ -1106,7 +1263,7 @@ async function syncPresets({why='update'}={}) {
   for(const [name,roleplay] of [[PRESET_NAME,false],[RP_PRESET,true]]) {
     if(list.preset_names?.[name]===undefined)continue; out.found=true;
     const selected=pm.getSelectedPresetName()===name, now=selected?getChatCompletionPreset():pm.getCompletionPresetByName(name);
-    const opts={roleplay,passages:!roleplay && writePassages()}, {swapped,kept}=syncPresetText(now,opts);
+    const opts={roleplay,passages:!roleplay && writePassages(),mine:mineStore()}, {swapped,kept}=syncPresetText(now,opts);
     if(swapped.length)await changePreset(name,p=>{const r=syncPresetText(p,opts).preset; for(const k of Object.keys(p))delete p[k]; Object.assign(p,r);},why==='mode'?'switch how chapters are written':'Storyloom update');
     out.swapped.push(...swapped.map(x=>`${name}: ${x}`)); out.kept.push(...kept.map(x=>`${name}: ${x}`));
   }
@@ -1121,10 +1278,21 @@ async function upgradePresetsOnce() {
 async function upgradePresetsNow() {
   const c=context(), st=(c.extensionSettings.storyloom ??= {}), v=MANIFEST_VERSION||'';
   if(!v || st.presetsSyncedFor===v)return;
-  const r=await syncPresets({why:'update'}); if(!r.found)return;
+  const r=await syncPresets({why:'update'});
+  // Storyloom's own narrator cards, if the writer hasn't edited them.
+  const cards=[];
+  for(const ch of c.characters||[]) {
+    const own=mineStore(), up=upgradedCard(ch.description,{novel:own.novel.card?.text,roleplay:own.roleplay.card?.text}); if(!up)continue;
+    try{backup({kind:'character',label:`${ch.name} (before Storyloom ${v} updated its card)`,target:{avatar:ch.avatar},before:charSnapshot(ch)}); await writeCharacter(ch.avatar,{description:up}); cards.push(ch.name);}
+    catch(e){warnLog('Storyloom card update:',e);}
+  }
+  if(cards.length)logEvent('info','Presets',`update: narrator card updated for ${cards.join(', ')}`);
+  if(!r.found && !cards.length){st.presetsSyncedFor=v; c.saveSettingsDebounced(); try{await offerImprovements();}catch(e){warnLog('Storyloom improvements:',e);} return;}
   st.presetsSyncedFor=v; c.saveSettingsDebounced();
-  if(r.swapped.length)toastr.success(`Storyloom ${v} updated your narrator's writing instructions (${r.swapped.join(', ')}): they now tell the model exactly which AI writing habits to avoid — echoed lines, explained subtext, stock phrases and the rest. The old version is in Backups.`,'Storyloom',{timeOut:20000,closeButton:true});
-  if(r.kept.length)toastr.info(`You've changed ${r.kept.join(' and ')}, so Storyloom left ${r.kept.length>1?'them':'it'} alone. This version has new writing instructions — Compare narrators… on the Memory tab shows them next to yours.`,'Storyloom',{timeOut:20000,closeButton:true});
+  const what=[...r.swapped, ...cards.map(n=>`the “${n}” card`)];
+  if(what.length)toastr.success(`Storyloom ${v} updated your narrator's writing instructions (${what.join(', ')}): they now teach the model how to write a book as an AI — what models get wrong and what to do instead — and tell it what each part of its prompt is for. The old versions are in Backups.`,'Storyloom',{timeOut:20000,closeButton:true});
+  if(r.kept.length)toastr.info(`You've changed ${r.kept.join(' and ')} by hand, so Storyloom left ${r.kept.length>1?'them':'it'} alone. To make a hand edit your default for every book, run Writing setup… (it keeps your version) or ask the Assistant.`,'Storyloom',{timeOut:20000,closeButton:true});
+  try{await offerImprovements();}catch(e){warnLog('Storyloom improvements:',e);}
 }
 /** After switching all-at-once / bit-by-bit: update the presets to match, leaving anything the writer edited alone. */
 async function matchPresetToMode() {
@@ -1135,8 +1303,31 @@ async function matchPresetToMode() {
   else toastr.success(`Chapters will be written ${how}.${r.swapped.length?' The narrator’s instructions are updated to match (the old version is in Backups).':''}`,'Storyloom');
 }
 
+/**
+ * With Storyloom's general narrator, the book's point of view, tense, tone and this chapter's plan already reach the narrator
+ * (narrator card + THIS CHAPTER). The writing directive in the Author's Note would repeat them, with older wording, so it is
+ * not sent there (insertion frequency 0) — but only when the note holds nothing except Storyloom's directive. Kept in sync as a record.
+ */
+function quietDirective(inBook) {
+  const c=context(), md=c.chatMetadata||{}; let d; try{d=data();}catch{return;}
+  const text=String(md.note_prompt||''), onlyDirective=/Storyloom writing directive/.test(text) && !text.replace(/<!--\s*Storyloom writing directive[\s\S]*?end of Storyloom writing directive\s*-->/,'').trim();
+  const want=inBook && usesGeneralNarrator(c) && onlyDirective;
+  if(want && md.note_interval!==0){d.directiveInterval=md.note_interval??1; md.note_interval=0; $('#extension_floating_interval').val(0); c.saveMetadataDebounced?.(); logEvent('info','Writing directive','not sent to the narrator in this chat: the narrator’s book settings and This chapter carry it (kept in the Author’s Note as a record)');}
+  else if(!want && md.note_interval===0 && d.directiveInterval!=null){md.note_interval=d.directiveInterval; $('#extension_floating_interval').val(d.directiveInterval); delete d.directiveInterval; c.saveMetadataDebounced?.();}
+}
+
+/** Where this book's facts live, always in view: the lorebook attached to this chat (SillyTavern's "Chat Lore"). */
+function renderBookLine() {
+  const line=document.getElementById('na-bookline'); if(!line)return;
+  let d=null; try{if(!noChatOpen())d=data();}catch{}
+  const name=d?.book && context().chatMetadata?.world_info===d.book?d.book:'';
+  line.hidden=!name || settingsOpen; if(!name)return;
+  document.getElementById('na-bookline-text').textContent=`This book’s lorebook: ${name}${isDraftLorebook(d)?' — it takes your book’s title once the plan is built':''} (attached to this chat as its Chat Lore)`;
+  document.getElementById('na-bookline-open').onclick=()=>{try{openWorldInfoEditor(name);}catch(e){fail(e);}};
+}
+
 /* ---------- The Write button: one obvious thing to press for each chapter ---------- */
-let genBusy=false, writeBusy='', genPoll=null;
+let genBusy=false, writeBusy='', genPoll=null, stopRequested=false;
 /** Whether SillyTavern is generating a reply right now (its Stop button shows only then). */
 const isGenerating=()=>{const b=document.getElementById('mes_stop'); return !!b && getComputedStyle(b).display!=='none';};
 const notConnected=()=>{try{return context().onlineStatus==='no_connection';}catch{return false;}};
@@ -1151,24 +1342,49 @@ function writeState() {
   const sealed=t.done.includes('seal'), ended=sealed || replies.some(m=>m.extra?.storyloom_chapter_end);
   const last=replies.at(-1), cut=!!last && !ended && endsCutOff(last.mes);
   const title=(d.outlineChapters||[]).find(x=>x.number===n)?.title||'';
-  return {d,n,u,total,title,replies:replies.length,words,sealed,ended,cut,target:chapterTarget(d,n),last:total>0 && n>=total};
+  const target=chapterTarget(d,n), early=!ended && !!replies.at(-1)?.extra?.storyloom_early_end;
+  // The narrator sometimes forgets the end signal: a chapter at full length that ends on a finished sentence probably is finished.
+  // Whole chapters: at 90% of the length on a finished sentence it's done even without the end mark. Bit by bit the writer steers,
+  // so only well past the planned length (the narrator forgot the mark at the ending).
+  const looksDone=!ended && !cut && !early && target>0 && words>=target*(writePassages()?1.15:0.9);
+  return {d,n,u,total,title,replies:replies.length,words,sealed,ended:ended||looksDone,looksDone,cut,early,target,last:total>0 && n>=total};
+}
+/** The player's character in the open campaign (the ** line of the cast list), cached when the lorebook is read. */
+let playerCache={book:'',name:''};
+/** A campaign chat: which session, who the player's character is, and whether the game master is the one in this chat. */
+function rpGuide(){
+  let d; try{if(noChatOpen())return null; d=data();}catch{return null;}
+  if(!d.book || d.interview?.phase!=='done' || !inBookChat() || !isRP(d))return null;
+  const c=context(), ch=c.characters?.[c.characterId];
+  return {u:tpl(d).unit,n:d.chapter||1,gm:!!ch && rightNarrator(ch.description,kit(d)),player:playerCache.book===d.book?playerCache.name:''};
 }
 function renderWriteBar() {
+  try{renderBookLine();}catch{}
   const bar=document.getElementById('na-write'); if(!bar)return;
-  const s=writeState(); bar.hidden=!s || settingsOpen; if(!s)return;
+  const s=writeState();
+  if(!s){ // A campaign: say what to do next — set up the game master if this chat doesn't have it, then play in the chat.
+    const g=rpGuide(), btn=bar.querySelector('#na-write-btn'), line=bar.querySelector('#na-write-line');
+    bar.hidden=!g || settingsOpen; if(!g)return;
+    btn.disabled=g.gm; btn.className=g.gm?'storyloom-write-btn is-done':'storyloom-write-btn'; btn.dataset.mode=g.gm?'rp-ready':'rp-setup';
+    btn.textContent=g.gm?`▶ ${g.u} ${g.n} — your move, in the chat`:'Set up the game master →';
+    line.textContent=g.gm?`Write what ${g.player||'your character'} does or says in the chat box and press Send; the game master plays everyone else and never acts for ${g.player||'you'}. When the ${g.u.toLowerCase()} is over, use Lint and Seal on the Memory tab to check it and hand it on.`:`This is a campaign, but this chat has the novel narrator. This makes the Storyloom Game Master and the Storyloom Roleplay preset and opens ${g.u} ${g.n} in a fresh chat with them (this chat stays).`;
+    return;
+  }
+  bar.hidden=settingsOpen;
   const btn=bar.querySelector('#na-write-btn'), line=bar.querySelector('#na-write-line');
   const U=`${s.u} ${s.n}`, of=s.total?` of ${s.total}`:'', name=s.title?` — “${s.title}”`:'';
   let label, kind='', disabled=false, say;
   const fits=autoReplyWords(), max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
-  const warn=s.target && fits && fits<s.target && !writePassages()?` ⚠ Your Max Response Length (${max.toLocaleString()} tokens) only fits about ${fits.toLocaleString()} words — raise it in the left panel, or the chapter comes out shorter.`:'';
-  if(writeBusy){label=writeBusy; disabled=true; say='You can leave this running.';}
-  else if(isGenerating()){clearTimeout(genPoll); genPoll=setTimeout(()=>{try{renderWriteBar();}catch{}},2000); label=`Writing ${U}…`; disabled=true; say=`The narrator is writing. You’ll get a message when ${U} is done.`;}
+  const seen=thinkingSeen(), warn=s.target && fits && fits<s.target && !writePassages()?` ⚠ Your Max Response Length (${max.toLocaleString()} tokens) only fits about ${fits.toLocaleString()} words${seen>1500?` once the narrator has thought (it used about ${seen.toLocaleString()} tokens thinking lately)`:''} — raise it to about ${(Math.ceil((tokensFor(s.target,Math.max(1500,seen))*1.1)/1000)*1000).toLocaleString()} in the left panel, or the chapter gets cut off or comes out shorter.`:'';
+  let mode=s.ended?'next':'write';
+  if(writeBusy){mode='stop-next'; label=`■ Stop — ${writeBusy.replace(/…$/,'')}`; kind='is-stop'; say=stopRequested?'Stopping after the current step…':'You can leave this running, or stop it: nothing half-done is saved.';}
+  else if(isGenerating()){clearTimeout(genPoll); genPoll=setTimeout(()=>{try{renderWriteBar();}catch{}},2000); mode='stop-gen'; label=`■ Stop writing ${U}`; kind='is-stop'; say=`The narrator is writing ${U}. You’ll get a message when it’s done — or stop it here; what it has written so far stays in the chat.`;}
   else if(s.ended && s.sealed && s.last){label='✓ The book is finished — Save it as a file'; kind='is-done'; say=`All ${s.total} ${s.u.toLowerCase()}s are written and sealed.`;}
   else if(s.ended && s.last){label=`✓ ${U} is done — Check and finish the book`; kind='is-done'; say=`${U}${of}${name} reached its planned ending (${s.words.toLocaleString()} words). This is the last one: Storyloom checks it, seals it, and offers to save the book.`;}
-  else if(s.ended){label=`✓ ${U} is done — Next ${s.u.toLowerCase()} →`; kind='is-done'; say=`${U}${of}${name} reached its planned ending (${s.words.toLocaleString()} words). Next checks and seals it, opens ${s.u} ${s.n+1} in a fresh chat, and starts writing it.`;}
+  else if(s.ended){label=`✓ ${U} ${s.looksDone?'looks finished':'is done'} — Next ${s.u.toLowerCase()} →`; kind='is-done'; const short=s.target && s.words<s.target*0.85?` — shorter than the ${s.target.toLocaleString()} planned`:''; say=`${U}${of}${name} ${s.looksDone?`is at its full length (${s.words.toLocaleString()} of about ${s.target.toLocaleString()} words) and ends on a finished sentence, though the narrator didn’t mark the end`:`reached its planned ending (${s.words.toLocaleString()} words${short})`}. Next checks and seals it, opens ${s.u} ${s.n+1} in a fresh chat, and starts writing it.`;}
   else if(!s.replies){label=`✍ Write ${U}`; say=notConnected()?'⚠ SillyTavern isn’t connected to an AI yet — connect in API Connections (the plug icon), then press Write.':`${U}${of}${name}${s.target?` · about ${s.target.toLocaleString()} words`:''}. Press it and the narrator writes the ${s.u.toLowerCase()}${writePassages()?' — the first part of it':''}. Want to steer? Type a direction in the chat box first (“start at the funeral”).${warn}`;}
-  else {label=`✍ Keep writing ${U}`; say=`${U}${of}${name}: ${s.words.toLocaleString()}${s.target?` of about ${s.target.toLocaleString()}`:''} words so far${s.cut?', and the last reply stopped mid-sentence':', not at its ending yet'}. Press to carry on from where it stopped.${warn}`;}
-  btn.textContent=label; btn.disabled=disabled; btn.className=`storyloom-write-btn ${kind}`; line.textContent=say;
+  else {label=`✍ Keep writing ${U}`; say=`${U}${of}${name}: ${s.words.toLocaleString()}${s.target?` of about ${s.target.toLocaleString()}`:''} words so far${s.cut?', and the last reply stopped mid-sentence':s.early?' — the narrator called it finished, but it\'s far shorter than planned, so it isn\'t counted as done':', not at its ending yet'}. Press to carry on from where it stopped.${warn}`;}
+  btn.textContent=label; btn.disabled=disabled || (mode==='stop-next' && stopRequested); btn.dataset.mode=mode; btn.className=`storyloom-write-btn ${kind}`; line.textContent=say;
 }
 /** Write (or carry on writing) this chapter — the same as pressing Send in the chat. */
 function writeChapter() {
@@ -1184,17 +1400,22 @@ async function nextChapter() {
   const s=writeState(); if(!s)throw Error('Open your book’s chat first.');
   const {u,n}=s;
   if(s.sealed && s.last){await exportBook(); return;}
+  stopRequested=false;
+  const stopped=()=>{if(!stopRequested)return false; status(`Stopped. ${u} ${n} is as it was after the last finished step — press the button again to carry on.`); return true;};
   try {
     writeBusy=`Checking and sealing ${u} ${n}…`; renderWriteBar();
     await autoChapter({ask:s.last});
+    if(stopped())return;
     if(s.last)return;
     const d=data(); if(!teamState(d).done.includes('seal'))return;
     const cur=currentNarrator(d,context()); if(!cur)throw Error('The narrator’s chat isn’t open.');
+    if(stopped())return;
     writeBusy=`Opening ${u} ${n+1}…`; renderWriteBar();
     if((d.chapter||1)!==n+1)await organizeBook(n+1);
     d.pendingFresh=n+1; await persist();
     await startChapterChat({avatar:cur.avatar,notes:cur.notes||{}});
-  } finally {writeBusy=''; renderWriteBar();}
+  } catch(e){if(stopRequested){stopped(); return;} throw e;}
+  finally {writeBusy=''; stopRequested=false; renderWriteBar();}
   await new Promise(r=>setTimeout(r,800));
   const next=writeState(); if(next && !next.replies && next.n===n+1){logEvent('info','Next chapter',`${u} ${n+1}: writing started`); writeChapter();}
 }
@@ -1206,7 +1427,7 @@ function renderWritingSettings() {
   const val=(id,v)=>{const e=q(id); if(e && document.activeElement!==e){if(e.type==='checkbox')e.checked=!!v; else e.value=v??'';}};
   for(const r of document.querySelectorAll('input[name="na-w-mode"]'))r.checked=(r.value==='passages')===writePassages();
   const whole=wholeChapters(); let d=null; try{d=data(); if(!d.book || d.interview?.phase!=='done')d=null;}catch{d=null;}
-  q('na-w-chlen-row').hidden=!whole || !d; q('na-w-words-row').hidden=whole;
+  q('na-w-chlen-row').hidden=!d; q('na-w-words-row').hidden=whole; // bit by bit still needs the chapter's length: it says when the chapter is near its end
   val('na-w-words',replyTarget()||''); val('na-w-chlen',d?.chapterLength||'');
   if(q('na-w-chlen'))q('na-w-chlen').placeholder=d && Number(d.budget?.perChapter)>=200?Number(d.budget.perChapter).toLocaleString():'from plan';
   const hint=q('na-w-words-hint');
@@ -1218,7 +1439,11 @@ function renderWritingSettings() {
     } else {const h=q('sl-reply-words-hint'); try{replyWordsHint();}catch{} hint.textContent=h?.textContent||''; hint.classList.toggle('is-warning',!!h?.classList.contains('is-warning'));}
   }
   const k=keepGoingOpts(); val('na-w-keep',k.on); val('na-w-keep-max',k.max);
-  const o=liveOpts(); val('na-w-scene',o.scene); val('na-w-scene-every',o.sceneEvery); val('na-w-session',o.session); val('na-w-session-every',o.sessionEvery); val('na-w-stage',o.stage);
+  const o=liveOpts(), raw=context().extensionSettings.storyloom?.live||{}; val('na-w-scene',o.scene); val('na-w-scene-every',Number(raw.sceneEvery)||3); val('na-w-session',raw.session!==false); val('na-w-session-every',o.sessionEvery); val('na-w-stage',o.stage);
+  // All at once: the scene card follows every reply, and a running summary of a one-reply chapter is pointless — say so instead of offering it.
+  const sess=q('na-w-session')?.closest('label');
+  if(q('na-w-scene-every-row'))q('na-w-scene-every-row').hidden=o.whole; if(q('na-w-scene-whole'))q('na-w-scene-whole').hidden=!o.whole;
+  if(sess){sess.hidden=o.whole; let n=q('na-w-session-whole'); if(!n){n=el('small',{id:'na-w-session-whole',className:'storyloom-hint'}); sess.after(n);} n.textContent='A running summary of the chapter isn’t needed when each chapter is written in one go — Seal hands it on to the next chapter. (It’s used when chapters are written bit by bit.)'; n.hidden=!o.whole;}
   q('na-w-dials').hidden=!dialsOn(); q('na-w-nodials').hidden=dialsOn(); val('na-w-dials-same',dialsSameAsChat()); val('na-w-short',shortThinking()); val('na-w-effort',sendEffort());
 }
 function bindWritingSettings() {
@@ -1362,11 +1587,14 @@ function chapterTarget(d=data(),n=d.chapter||1){const w=Number(d.chapterWords?.[
 /** The book's chapter length: what the writer typed in Settings, else WORDS PER CHAPTER from setup. */
 function bookChapterLength(d=data()){const w=Number(d.chapterLength)||Number(d.budget?.perChapter)||0; return w>=200?w:0;}
 /** Words per reply when the writer hasn't set one: the chapter's planned length, as far as Max Response Length fits it with thinking. */
+/** The most thinking (in tokens) the narrator spent on one of its last few replies in this book — the room a chapter really needs on top of its words. */
+function thinkingSeen(){try{return Math.max(0,...(data().thinkingSeen||[]));}catch{return 0;}}
+function noteThinking(m){try{const r=String(m?.extra?.reasoning||''); if(!r)return; const d=data(); if(!d.book)return; const tok=Math.round((r.match(/\S+/g)||[]).length*1.35); d.thinkingSeen=[...(d.thinkingSeen||[]),tok].slice(-3); persist().catch(()=>{});}catch{}}
 function autoReplyWords() {
   let per=0; try{per=isRP()?0:chapterTarget();}catch{} // roleplay: sessions aren't word counts; replies stay conversational unless you set a number
   if(!per)return 0;
   const max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
-  const fits=max?replyWords(max):Infinity; // one calculation everywhere
+  const fits=max?replyWords(max,thinkingSeen()):Infinity; // one calculation everywhere
   return Math.min(fits,per);
 }
 /** One reply = one whole chapter: the chapter's length, never "words per reply" (that only applies to passages and roleplay). */
@@ -1413,7 +1641,127 @@ function openStoryloomSettings(section='') {
 /** True for a roleplay / campaign book (its template counts sessions, or says campaign / roleplay). */
 function isRP(d=null){try{d ??= data(); const t=tpl(d); return t.unit!=='Chapter' || /campaign|role-?play|rpg|d&d/i.test(t.name||'');}catch{return false;}}
 /** The preset, narrator and prompts Storyloom writes for this book. */
-const kit=(d=null)=>writingKit(isRP(d),{passages:writePassages()});
+/** The writer's own copy of Storyloom's narrator texts ("your defaults"), per kind of book: {novel:{field:{text,base}}, roleplay:{…}}. */
+function mineStore(){const c=context(); c.extensionSettings.storyloom ??= {}; const m=c.extensionSettings.storyloom.mine ??= {}; m.novel ??= {}; m.roleplay ??= {}; return m;}
+const kit=(d=null)=>{const rp=isRP(d); return withMine(writingKit(rp,{passages:writePassages()}),mineStore()[rp?'roleplay':'novel']);};
+/** Record which built-in text a writer's own copy was made from, so Storyloom's later improvements can be offered into it. */
+function noteBase(kind,key,builtIn){const st=context().extensionSettings.storyloom ??= {}; st.bases ??= {}; st.bases[kind] ??= {}; st.bases[kind][key]=builtIn;}
+/**
+ * Everything the writer has their own copy of ("your defaults"): the narrator's texts, Storyloom's planning and chapter prompts,
+ * and the team's personalities — each with Storyloom's built-in version, how to set it and how to go back to Storyloom's.
+ */
+function ownedDefaults(){
+  const c=context(), st=c.extensionSettings.storyloom ??= {}, m=mineStore(), bases=st.bases||{}, out=[];
+  for(const kind of ['novel','roleplay'])for(const [field,v] of Object.entries(m[kind]||{})){
+    const o=ownedText(v); if(!o)continue; const rp=kind==='roleplay', f=field.replace(/Passages$/,'');
+    out.push({id:`mine:${kind}:${field}`,group:'narrator',label:`${rp?'Game master':'Narrator'} — ${NARRATOR_LABELS[f]||f}${/Passages$/.test(field)?' (bit by bit)':''}`,owned:o,builtIn:builtInNarrator(rp,field),
+      set:t=>{m[kind][field]={text:t,base:builtInNarrator(rp,field)};},reset:()=>{delete m[kind][field];},narrator:{roleplay:rp,field}});
+  }
+  for(const [key,t] of Object.entries(st.prompts||{})) if(PROMPT_DEFAULTS[key] && typeof t==='string' && t.trim())
+    out.push({id:`prompt:${key}`,group:'prompt',label:`Storyloom — ${PROMPT_DEFAULTS[key].label}`,owned:{text:t,base:bases.prompt?.[key]||''},builtIn:PROMPT_DEFAULTS[key].text,
+      set:x=>{st.prompts[key]=x; noteBase('prompt',key,PROMPT_DEFAULTS[key].text); setPromptOverrides(st.prompts);},reset:()=>{delete st.prompts[key]; setPromptOverrides(st.prompts);}});
+  for(const [k,r] of Object.entries(st.roles||{})) if(ROLES[k] && String(r?.persona||'').trim())
+    out.push({id:`persona:${k}`,group:'team',label:`${ROLES[k].label} — personality and standing instructions`,owned:{text:r.persona,base:bases.persona?.[k]||''},builtIn:ROLES[k].persona,
+      set:x=>{st.roles[k]={...st.roles[k],persona:x}; noteBase('persona',k,ROLES[k].persona);},reset:()=>{st.roles[k]={...st.roles[k],persona:''};}});
+  // Your copy of a built-in template (made when you asked the Assistant to change it): the one new books start from.
+  for(const text of storedTemplates()){let t; try{t=parseTemplate(text);}catch{continue;} const base=BUILT_IN.find(b=>`${b.name} (yours)`===t.name); if(!base)continue;
+    out.push({id:`template:${t.name}`,group:'template',label:`Template — ${t.name}${st.defaultTemplate===t.name?' (new books start from it)':''}`,owned:{text,base:''},builtIn:templateToText(base),
+      set:x=>{const list=storedTemplates(), i=list.indexOf(text); if(i>=0)list[i]=x;},reset:()=>{const list=storedTemplates(), i=list.indexOf(text); if(i>=0)list.splice(i,1); if(st.defaultTemplate===t.name)delete st.defaultTemplate; try{renderTemplates(data());}catch{}}});}
+  return out;
+}
+/** After a narrator default changes (set, reset or merged), put it into Storyloom's presets and narrator cards — never over text the writer edited by hand. */
+async function applyMineEverywhere(previous=[]){
+  const c=context(); if(c.mainApi==='openai'){
+    const pm=c.getPresetManager('openai'), list=pm.getPresetList();
+    for(const [name,roleplay] of [[PRESET_NAME,false],[RP_PRESET,true]]){
+      if(list.preset_names?.[name]===undefined)continue;
+      const opts={roleplay,passages:!roleplay && writePassages(),mine:mineStore(),known:previous};
+      const now=pm.getSelectedPresetName()===name?getChatCompletionPreset():pm.getCompletionPresetByName(name);
+      if(syncPresetText(now,opts).swapped.length)await changePreset(name,p=>{const r=syncPresetText(p,opts).preset; for(const k of Object.keys(p))delete p[k]; Object.assign(p,r);},'your defaults');
+      // The nudges aren't Main/Post-History: set them when they are still Storyloom's or the writer's previous copy.
+      const k=withMine(writingKit(roleplay,{passages:opts.passages}),mineStore()[roleplay?'roleplay':'novel']), base=writingKit(roleplay,{passages:opts.passages});
+      const p2=pm.getSelectedPresetName()===name?getChatCompletionPreset():pm.getCompletionPresetByName(name);
+      const ours=t=>[base.continueNudge,base.newChat,...previous].some(x=>String(x).trim()===String(t||'').trim());
+      if((p2.continue_nudge_prompt!==k.continueNudge && ours(p2.continue_nudge_prompt)) || (p2.new_chat_prompt!==k.newChat && ours(p2.new_chat_prompt)))
+        await changePreset(name,p=>{if(ours(p.continue_nudge_prompt))p.continue_nudge_prompt=k.continueNudge; if(ours(p.new_chat_prompt))p.new_chat_prompt=k.newChat;},'your defaults');
+    }
+  }
+  const own=mineStore();
+  for(const ch of c.characters||[]){
+    if(!isGeneralNarrator(ch.description))continue;
+    const now=String(ch.description||'').trim(), rp=/game master/i.test(now.split('\n')[0]), want=(rp?own.roleplay.card?.text:own.novel.card?.text)||(rp?writingKit(true).card:NARRATOR_CARD);
+    if(now!==want.trim() && (previous.some(x=>String(x).trim()===now) || now===(rp?writingKit(true).card:NARRATOR_CARD).trim())){backup({kind:'character',label:`${ch.name} (before your defaults changed)`,target:{avatar:ch.avatar},before:charSnapshot(ch)}); await writeCharacter(ch.avatar,{description:want});}
+  }
+}
+/** Go back to Storyloom's own text for one of your defaults (backed up first). */
+async function resetOwned(id){
+  const item=ownedDefaults().find(x=>x.id===id); if(!item)return;
+  backup({kind:'defaults',label:`Your default: ${item.label} (before going back to Storyloom’s)`,target:{id},before:item.owned.text});
+  item.reset(); context().saveSettingsDebounced();
+  if(item.narrator)await applyMineEverywhere([item.owned.text]);
+  logEvent('info','Your defaults',`${item.label}: back to Storyloom’s`);
+}
+/**
+ * After an update: Storyloom's own texts improved where the writer has their own copy. Offer the improvements — added to the writer's
+ * copy wherever the lines they touch are still as Storyloom wrote them, never replacing what the writer changed.
+ */
+async function offerImprovements(){
+  const items=ownedDefaults().filter(x=>hasImprovement(x.owned,x.builtIn)); if(!items.length)return;
+  const c=context(), form=document.createElement('div'); form.className='storyloom-narrator-form';
+  form.innerHTML=`<h3>Storyloom improved some texts you have your own copy of</h3><p class="storyloom-hint">Your copies are untouched. “Add the improvements” puts Storyloom’s changes into your copy wherever you haven’t changed those lines yourself; where you have, yours stays and you’re told. Nothing else changes.</p>${items.map(x=>{const hunks=lineHunks(x.owned.base,x.builtIn).slice(0,12); return `<details><summary>${escHtml(x.label)} — ${hunks.length} change${hunks.length===1?'':'s'}</summary>${hunks.map(h=>`<p class="storyloom-hint"><s>${escHtml(String(x.owned.base).split('\n').slice(h.from,h.to).join(' ').slice(0,300))}</s><br>${escHtml(h.lines.join(' ').slice(0,300))}</p>`).join('')}</details>`;}).join('')}`;
+  const pick=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Add the improvements',cancelButton:'Later',wide:true,customButtons:[{text:'Keep mine as they are',result:2}]}).show();
+  if(pick===2){for(const x of items)x.set(x.owned.text); c.saveSettingsDebounced(); logEvent('info','Your defaults',`kept as they are: ${items.map(x=>x.label).join(', ')}`); return;}
+  if(pick!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return;
+  const done=[], clashes=[], previous=[];
+  for(const x of items){
+    const r=mergeImprovements(x.owned.base,x.owned.text,x.builtIn);
+    backup({kind:'defaults',label:`Your default: ${x.label} (before Storyloom’s improvements were added)`,target:{id:x.id},before:x.owned.text});
+    if(x.narrator)previous.push(x.owned.text);
+    x.set(r.text); done.push(`${x.label} (${r.applied} added${r.conflicts.length?`, ${r.conflicts.length} left as yours`:''})`);
+    for(const k of r.conflicts)clashes.push(`${x.label}: Storyloom changed “${k.was.slice(0,80)}” to “${k.now.slice(0,80)}”, but you had changed it too`);
+  }
+  c.saveSettingsDebounced(); if(previous.length)await applyMineEverywhere(previous);
+  logEvent('info','Your defaults',`improvements added: ${done.join('; ')}`,clashes.join('\n'));
+  toastr.success(`Added Storyloom’s improvements: ${done.join('; ')}.${clashes.length?' Where you had changed the same lines, yours stayed — the log lists them.':''}`,'Storyloom',{timeOut:15000});
+  renderYourDefaults();
+}
+/** Settings → Your defaults: what you have your own copy of, and the way back to Storyloom's. */
+function renderYourDefaults(){
+  const box=document.getElementById('na-your-defaults'); if(!box)return;
+  const items=ownedDefaults(); box.replaceChildren();
+  if(!items.length){box.append(el('p',{className:'storyloom-hint',textContent:'Everything is Storyloom’s own text so far. When you ask the Assistant to change how something works, it becomes yours and shows up here.'}));return;}
+  for(const x of items){
+    const row=el('div',{className:'storyloom-row storyloom-default-row'});
+    row.append(el('span',{textContent:x.label+(hasImprovement(x.owned,x.builtIn)?' — Storyloom has improved its own version since':'')}));
+    const show=el('button',{type:'button',textContent:'Show',title:'Show your text next to Storyloom’s'});
+    show.onclick=()=>context().Popup.show.text(x.label,`<p class="storyloom-hint">Yours:</p><pre style="white-space:pre-wrap">${escHtml(x.owned.text)}</pre><p class="storyloom-hint">Storyloom’s:</p><pre style="white-space:pre-wrap">${escHtml(x.builtIn)}</pre>`);
+    const back=el('button',{type:'button',textContent:'Use Storyloom’s again',title:'Your text is backed up first (Extensions → Storyloom → Backups)'});
+    back.onclick=async()=>{if(!await context().Popup.show.confirm('Use Storyloom’s text again?',`“${escHtml(x.label)}” goes back to Storyloom’s own text. Yours is backed up first.`))return; try{await resetOwned(x.id); renderYourDefaults(); status(`${x.label}: back to Storyloom’s text.`);}catch(e){fail(e);}};
+    row.append(show,back); box.append(row);
+  }
+}
+/** Built-in text for one of the writer's narrator fields (what their copy is measured against). */
+function builtInNarrator(roleplay,field){const w=writingKit(roleplay,{passages:/Passages$/.test(field)}), f=field.replace(/Passages$/,''); return w[f]??'';}
+/**
+ * Keep a narrator text as the writer's own default. A Main Prompt changed in one way of writing is carried into the other where the same
+ * sentences are there; otherwise the two are kept apart and the writer is told. Returns the previous copy (for undo) and a note.
+ */
+function saveMine(roleplay,field,text,{before=null,passages=false}={}){
+  const m=mineStore()[roleplay?'roleplay':'novel'], prev=structuredClone(m), note=[];
+  if(field==='main'){
+    const whole=withMine(writingKit(roleplay,{passages:false}),m).main;
+    if(passages){const moved=carryEdit(before??withMine(writingKit(roleplay,{passages:true}),m).main,text,whole);
+      if(moved!==null){m.main={text:moved,base:m.main?.base||builtInNarrator(roleplay,'main')}; delete m.mainPassages;}
+      else {m.mainPassages={text,base:m.mainPassages?.base||builtInNarrator(roleplay,'mainPassages')}; note.push('this change is kept for writing bit by bit only — the whole-chapter version is worded too differently to carry it');}}
+    else {m.main={text,base:m.main?.base||builtInNarrator(roleplay,'main')}; if(m.mainPassages){const moved=carryEdit(before??whole,text,m.mainPassages.text); if(moved!==null)m.mainPassages.text=moved; else note.push('your separate bit-by-bit version was left as it was');}}
+  } else {
+    const key=field==='postHistory'&&passages?'postHistoryPassages':field;
+    m[key]={text,base:m[key]?.base||builtInNarrator(roleplay,key)};
+  }
+  context().saveSettingsDebounced();
+  logEvent('info','Your defaults',`${roleplay?'roleplay':'novel'} ${field}${passages?' (bit by bit)':''} saved as your own${note.length?` — ${note.join('; ')}`:''}`);
+  return {prev,note};
+}
 /** Optional (off by default): write each chapter over several replies, a passage at a time. */
 const writePassages=()=>{try{return context().extensionSettings.storyloom?.passages===true;}catch{return false;}};
 /** Roleplay: the steps that make sense when the player writes half the text (no prose rewriting). */
@@ -1464,20 +1812,32 @@ async function teamRun(label,fn) {
 async function stepLint() {
   const c=context(), d=data(); readyForTeam(d);
   const rp=isRP(d), parts=chapterParts(c.chat), text=rp?sessionText(d,c):parts.join('\n\n'), f=await bookFacts(d), n=d.chapter||1, note=chapterNote(d);
-  const exact=exactLint(text,{tense:note.tense||f.tense,pov:note.pov||f.pov,knownNames:[...f.knownNames,c.name1].filter(Boolean),castNames:f.castNames,targetWords:f.target,roleplay:rp});
+  const exact=exactLint(text,{tense:note.tense||f.tense,pov:note.pov||f.pov,knownNames:[...f.knownNames,c.name1].filter(Boolean),castNames:f.castNames,samples:f.samples,targetWords:f.target,roleplay:rp,player:rp?(f.focus||c.name1||''):'',playerPrefix:rp?(c.name1||'Player'):''});
   await teamRun('Lint',async signal=>{
     let ai=[], aiNote='', big='';
     if(teamSettings().checker.enabled) {
       status(`The Checker is reading ${f.unit} ${n}…`);
       try {
-        const raw=await roleCall('checker',lintInstruction({unit:f.unit,number:n,chapterText:text,facts:f.facts,chapterNote:note.checker||'',roleplay:rp,player:c.name1||'the player'}),{signal,check:r=>parseFindings(r).length>0||/no problems found/i.test(r)});
-        ai=parseFindings(raw); big=biggestProblem(raw);
-        if(!ai.length && !/no problems found/i.test(raw)){aiNote='The Checker’s book check came back in a form Storyloom couldn’t read; only the exact checks are shown.';logEvent('warn','Lint',aiNote,raw.slice(0,2000));}
+        const raw=await roleCall('checker',lintInstruction({unit:f.unit,number:n,chapterText:text,facts:f.facts,chapterNote:note.checker||'',roleplay:rp,player:c.name1||'the player'}),{signal,check:r=>parseFindings(r).length>0||/no problems found|^\s*[#*_]*\s*FINDINGS\s*[*_]*\s*:/im.test(r)});
+        const g=groundedFindings(parseFindings(raw),text); ai=g.kept; big=biggestProblem(raw);
+        if(g.dropped.length)logEvent('info','Lint',`left out ${g.dropped.length} of the checker’s findings: ${g.dropped.map(x=>`[${x.kind}] “${String(x.quote).slice(0,40)}” (${x.why})`).join('; ').slice(0,600)}`);
+        // A second look at the hard findings before anyone acts on them: kept ones stay, dropped ones stay visible but unticked, with the reason.
+        const doubt=ai.filter(x=>x.severity==='hard' && RECHECKED.includes(x.kind));
+        if(doubt.length){
+          status(`The Checker found ${doubt.length} possible problem${doubt.length===1?'':'s'} in ${f.unit} ${n}; taking a second look before anything is changed…`);
+          try{
+            const raw2=await roleCall('checker',recheckInstruction({unit:f.unit,number:n,chapterText:numbered(text),facts:f.facts,findings:doubt}),{signal,check:r=>parseRecheck(r,doubt.length).some(Boolean)});
+            const verdicts=parseRecheck(raw2,doubt.length), dropped=[];
+            doubt.forEach((x,i)=>{const v=verdicts[i]; if(!v)return; x.recheck=v.keep?'kept':'dropped'; if(!v.keep){x.severity='soft'; x.rule=`${x.rule} — Second look: not a problem (${v.why||'it can stand as written'}).`; dropped.push(x);}});
+            logEvent('info','Lint',`second look: ${doubt.length-dropped.length} of ${doubt.length} hard findings kept${dropped.length?`; dropped (shown, unticked): ${dropped.map(x=>`[${x.kind}] “${String(x.quote).slice(0,40)}”`).join('; ')}`:''}`,verdicts.map((v,i)=>`F${i+1} ${v?(v.keep?'KEEP':'DROP'):'(no answer: kept)'} — ${v?.why||''}`).join('\n'));
+          }catch(e){if(signal.aborted)throw e; logEvent('warn','Lint',`the second look failed (${e.message}); every finding is kept as the Checker gave it`);}
+        }
+        if(!ai.length && !g.dropped.length && !/no problems found|^\s*[#*_]*\s*FINDINGS\s*[*_]*\s*:/im.test(raw)){aiNote='The Checker’s book check came back in a form Storyloom couldn’t read; only the exact checks are shown.';logEvent('warn','Lint',aiNote,raw.slice(0,2000));}
       } catch(e) {if(signal.aborted)throw e; aiNote=`The Checker’s book check failed (${e.message}); only the exact checks are shown.`; logEvent('error','Lint',aiNote,e?.stack);}
     } else aiNote='The Checker is switched off in Extensions → Storyloom, so only the exact checks ran.';
     const findings=[...ai,...exact].map((x,i)=>({...x,id:`L${i}`}));
     const t=teamState(d);
-    Object.assign(t,{lint:{at:new Date().toISOString(),words:(text.match(/\S+/g)||[]).length,findings,note:aiNote,big},picks:findings.map(x=>x.id),markup:null,reader:null,notePicks:null,revision:null,accepted:false});
+    Object.assign(t,{lint:{at:new Date().toISOString(),words:(text.match(/\S+/g)||[]).length,findings,note:aiNote,big},picks:findings.filter(x=>x.kind!=='UNLISTED' && x.recheck!=='dropped').map(x=>x.id),markup:null,reader:null,notePicks:null,revision:null,accepted:false});
     markDone(t,'lint');
     status(findings.length?`${findings.length} finding${findings.length===1?'':'s'} in ${f.unit} ${n}. ${rp?'Fix anything that matters in the chat (or swipe), then Seal the session.':'Untick any you don’t want acted on, then send it to the Editor.'}`:`${f.unit} ${n}: no problems found.`);
   });
@@ -1489,8 +1849,9 @@ async function stepMarkup() {
   await teamRun('Editor',async signal=>{
     status(`The Editor is marking up ${f.unit} ${n}${findings.length?` (${findings.length} approved finding${findings.length===1?'':'s'} first)`:''}…`);
     const raw=await roleCall('editor',markupInstruction({unit:f.unit,number:n,parts,facts:f.facts,findings}),{signal,check:r=>parseNotes(r,'editor').length>0||/OVERALL\s*:/i.test(r)});
-    const notes=parseNotes(raw,'editor').map((x,i)=>({...x,id:`E${i}`}));
-    if(!notes.length && !overallLine(raw)){logEvent('error','Editor','markup unreadable',raw.slice(0,2000));throw Error('The Editor’s notes came back in a form Storyloom couldn’t read. Nothing was changed; try again (the reply is in the log).');}
+    const parsed=parseNotes(raw,'editor'), notes=notesAskingForChange(parsed).map((x,i)=>({...x,id:`E${i}`}));
+    if(parsed.length>notes.length)logEvent('info','Editor',`left out ${parsed.length-notes.length} note(s) that asked for no change`,parsed.filter(x=>!notes.some(n=>n.quote===x.quote&&n.note===x.note)).map(x=>`"${x.quote}" — ${x.note}`).join('\n'));
+    if(!parsed.length && !overallLine(raw)){logEvent('error','Editor','markup unreadable',raw.slice(0,2000));throw Error('The Editor’s notes came back in a form Storyloom couldn’t read. Nothing was changed; try again (the reply is in the log).');}
     t.markup={at:new Date().toISOString(),notes,overall:overallLine(raw)}; t.notePicks=null; t.revision=null; t.accepted=false; markDone(t,'markup');
     status(`The Editor made ${notes.length} note${notes.length===1?'':'s'}. ${teamSettings().reader.enabled?'Next: the Reader.':'Review the notes, then Revise.'}`);
   });
@@ -1502,11 +1863,11 @@ async function stepReader() {
   await teamRun('Reader',async signal=>{
     status(`The Reader is reading ${u} ${n}…`);
     const raw=await roleCall('reader',readerInstruction({unit:u,number:n,parts,storySoFar:soFar,previously}),{signal,check:r=>parseNotes(r,'reader').length>0||/OVERALL\s*:/i.test(r)});
-    const notes=parseNotes(raw,'reader').map((x,i)=>({...x,id:`R${i}`,worked:/^worked\s*:/i.test(x.note)}));
+    const notes=parseNotes(raw,'reader').map((x,i)=>({...x,id:`R${i}`,worked:isPraise(x.note)}));
     if(!notes.length && !overallLine(raw)){logEvent('error','Reader','reactions unreadable',raw.slice(0,2000));throw Error('The Reader’s notes came back in a form Storyloom couldn’t read. Nothing was changed; try again (the reply is in the log).');}
     const keptEditor=(t.notePicks||(t.markup?.notes||[]).map(x=>x.id)).filter(id=>id.startsWith('E'));
-    t.reader={at:new Date().toISOString(),notes,overall:overallLine(raw)}; t.notePicks=[...keptEditor,...notes.filter(x=>!x.worked).map(x=>x.id)]; t.revision=null; t.accepted=false; markDone(t,'reader');
-    status('The Reader is done. Keep or untick the notes below, then Revise.');
+    t.reader={at:new Date().toISOString(),notes,overall:overallLine(raw)}; t.notePicks=[...keptEditor,...notes.filter(x=>!x.worked && x.weight==='must').map(x=>x.id)]; t.revision=null; t.accepted=false; markDone(t,'reader');
+    status('The Reader is done. The Reader’s “must” reactions are ticked for Revise; its other reactions are for you to read — tick any you want acted on. Then Revise.');
   });
 }
 const allNotes=t=>[...(t.markup?.notes||[]),...(t.reader?.notes||[]).filter(n=>!n.worked)];
@@ -1517,11 +1878,17 @@ async function stepRevise() {
   if(!notes.length)throw Error('Tick at least one note for the Editor to fix — or go straight to Seal.');
   await teamRun('Revise',async signal=>{
     status(`The Editor is revising ${f.unit} ${n} (${notes.length} note${notes.length===1?'':'s'})…`);
-    const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>!!parseRevision(r,parts),tokens:16000});
-    const revised=parseRevision(raw,parts);
-    if(!revised){const u=await usageOf(lastDialsUsage,3000), cut=u && (u.limit?.level==='cut'||u.finishReason==='length'); logEvent('error','Revise',`revision incomplete or cut off (${parts.length} parts)${u?` — Dials: ${usageText(u)}`:''}`,raw.slice(-3000));throw Error(`The Editor’s revision didn’t come back whole — a part was missing, much shorter than before, or stopped mid-sentence${cut?` (Dials: it hit the response limit after ${(u.usage?.output??u.usage?.reply??0).toLocaleString()} tokens — give the Editor more room)`:' (its reply was probably cut off)'}. Nothing was changed; try Revise again.`);}
-    t.revision={at:new Date().toISOString(),original:parts,parts:revised,notes:notes.map(x=>x.id)}; t.accepted=false;
-    status('The revision is ready. Read the changes below, then Accept or Discard.');
+    const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>!!parseEdits(r),tokens:16000});
+    const got=parseEdits(raw);
+    if(!got){logEvent('error','Revise','no edits in the reply',raw.slice(-3000)); throw Error('The Editor’s reply had no edits Storyloom could read. Nothing was changed; try Revise again.');}
+    const {parts:revised,applied,missed}=applyEdits(parts,got.edits);
+    logEvent(missed.length?'warn':'info','Revise',`${applied.length} edit${applied.length===1?'':'s'} applied${missed.length?`, ${missed.length} left out (their text wasn’t found exactly once)`:''}${got.skipped&&!/^none\.?$/i.test(got.skipped)?`; the Editor skipped: ${got.skipped}`:''}`,missed.map(m=>`${m.why}: ${m.find}`).join('\n').slice(0,3000));
+    if(!applied.length){t.revision=null; markDone(t,'revise'); await persist(); status(missed.length?`None of the Editor’s ${missed.length} edits matched the chapter exactly, so nothing was changed. You can go on to Seal, or run Revise again.`:'The Editor found nothing to change. Go on to Seal.'); return;}
+    // Check the result the way Lint does: an echo "fixed" by shortening the repeat is still an echo, so say how many are left.
+    const echoCount=x=>echoes(lintParagraphs(x.join('\n\n'))).length, echoBefore=echoCount(parts), echoLeft=echoes(lintParagraphs(revised.join('\n\n')));
+    if(echoBefore)logEvent(echoLeft.length?'warn':'info','Revise',`echoes: ${echoBefore} before, ${echoLeft.length} after`,echoLeft.map(e=>`${e.where}: ${e.quote}`).join('\n'));
+    t.revision={at:new Date().toISOString(),original:parts,parts:revised,notes:notes.map(x=>x.id),edits:applied.length,missed:missed.map(m=>({find:m.find,why:m.why,note:m.note,replace:String(m.replace||'').slice(0,600)})),skipped:got.skipped||'',echoesLeft:echoLeft.map(e=>`${e.where}: ${e.quote}`)}; t.accepted=false;
+    status(`The revision is ready. Read the changes below, then Accept or Discard.${echoLeft.length?` ${echoLeft.length} echoed line${echoLeft.length===1?' is':'s are'} still there (${echoLeft.map(e=>e.where).join(', ')}) — Lint will find ${echoLeft.length===1?'it':'them'} again next time.`:''}`);
   });
 }
 async function acceptRevision() {
@@ -1552,6 +1919,7 @@ async function autoChapter({ask=true}={}) {
   const u=tpl(d).unit, n=d.chapter||1, run={lint:stepLint,markup:stepMarkup,reader:stepReader};
   logEvent('info','Auto',`${u} ${n}: started`);
   for(const s of teamSteps(d).map(x=>x.key)) {
+    if(stopRequested)return;
     const t=teamState(data());
     if(t.done.includes(s))continue;
     if(run[s]){
@@ -1572,7 +1940,7 @@ async function autoChapter({ask=true}={}) {
         t.notePicks=must.map(x=>x.id); await persist();
         try{await stepRevise();}
         catch(e){
-          if(!/didn’t come back whole/.test(String(e?.message)))throw e;
+          if(!/didn’t come back whole|no edits Storyloom could read/.test(String(e?.message)))throw e;
           const tt=teamState(data()); tt.revision=null; markDone(tt,'revise'); await persist();
           logEvent('warn','Auto',`Revise: the Editor’s revision of ${u} ${n} came back incomplete — kept the chapter as written and went on to Seal`,String(e.message));
           toastr.warning(`The Editor’s rewrite of ${u} ${n} came back incomplete, so ${u} ${n} is kept exactly as the narrator wrote it. Auto carried on to Seal.`,'Storyloom',{timeOut:15000,closeButton:true});
@@ -1612,7 +1980,7 @@ function currentNarrator(d,c=context(),{record=false}={}) {
   return n;
 }
 
-const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',PLAYER:'Acted or spoke for your character',['CUT OFF']:'Stops mid-sentence',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
+const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',PLAYER:'Acted or spoke for your character',['CUT OFF']:'Stops mid-sentence',ECHO:'Echoed line',SAMPLE:'Copied from a profile',GESTURE:'Same gesture again',CHAIN:'“and… and…” chain',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
 const el=(tag,props={},...kids)=>{const e=Object.assign(document.createElement(tag),props);e.append(...kids.filter(k=>k!=null&&k!==false));return e;};
 function checkList(items,picked,onToggle,render) {
   const ul=el('ul',{className:'storyloom-lint-list'});
@@ -1700,6 +2068,8 @@ function renderTeam(d=null) {
       const para=el('p'); for(const x of wordDiff(before,p))para.append(x.op==='same'?document.createTextNode(x.text):el(x.op==='add'?'ins':'del',{textContent:x.text}));
       div.append(para); sec.append(div);
     });
+    if(t.revision.missed?.length)sec.append(el('p',{className:'storyloom-hint is-warning',textContent:`${t.revision.missed.length} edit${t.revision.missed.length===1?' was':'s were'} left out because ${t.revision.missed.length===1?'its':'their'} text wasn’t found exactly once in the chapter: ${t.revision.missed.slice(0,4).map(m=>`“${m.find.slice(0,60)}${m.find.length>60?'…':''}” (${m.why})`).join('; ')}${t.revision.missed.length>4?' …':''}`}));
+    if(t.revision.skipped && !/^none\.?$/i.test(t.revision.skipped))sec.append(el('p',{className:'storyloom-hint',textContent:`The Editor didn’t fix: ${t.revision.skipped}`}));
     const ok=el('button',{type:'button',textContent:'Accept revision'}), no=el('button',{type:'button',textContent:'Discard'});
     ok.onclick=()=>{lastAction='Accept revision';acceptRevision().catch(fail);}; no.onclick=()=>{lastAction='Discard';discardRevision().catch(fail);};
     sec.append(el('div',{className:'storyloom-row'},ok,no));
@@ -1757,7 +2127,11 @@ async function createNovelPreset() {
   const k=kit(), name=k.presetName;
   const existing=pm.getPresetList().preset_names?.[name]!==undefined?pm.getCompletionPresetByName(name):null;
   if(existing)backup({kind:'preset',label:`Preset “${name}” (before it was rebuilt)`,target:{name},before:existing});
-  await pm.savePreset(name,novelPreset(getChatCompletionPreset(),{roleplay:k.roleplay,passages:!!k.passages}));
+  // Text the writer changed by hand in this preset is theirs: keep it as their own default rather than rebuild over it.
+  if(existing){const {kept}=syncPresetText(existing,{roleplay:k.roleplay,passages:!!k.passages,mine:mineStore()}), adopted=[];
+    for(const [id,field,label] of [['main','main','Main Prompt'],['jailbreak','postHistory','Post-History']]) if(kept.some(x=>x.startsWith(label))){const t=(existing.prompts||[]).find(q=>q.identifier===id)?.content; if(t){saveMine(k.roleplay,field,t,{passages:!!k.passages}); adopted.push(label);}}
+    if(adopted.length)toastr.info(`You had changed the ${adopted.join(' and ')} in “${name}”, so Storyloom kept your version and saved it as your own default.`,'Storyloom',{timeOut:12000});}
+  await pm.savePreset(name,novelPreset(getChatCompletionPreset(),{roleplay:k.roleplay,passages:!!k.passages,kit:kit()}));
   logEvent('info','Writing setup',`made the “${name}” preset from “${from}” and switched to it`);
   return from;
 }
@@ -1913,20 +2287,22 @@ async function sealChapter({auto=false,ask=true}={}) {
   const sealedNotes=facts.seals.filter(e=>e.comment!==sumTitle).map(e=>e.content).join('\n\n');
   status(`Seal is reading ${t.unit} ${n} and writing its seal note…`);
   logEvent('info','Seal',`${t.unit} ${n}: started`);
-  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles,sealedNotes,focus:facts.focus||'the focus character',narrator:`${narr?.who||'the narrator'}${note.pov?` (${note.pov})`:facts.pov?` (${facts.pov})`:''}`,title:facts.chapterTitle,roleplay:isRP(d),player:c.name1||''}),false,null,null,'chapter-end',false,{silentUser:true,mergeState:true,holdForAuthor:'allExcept',keep:[sumTitle,sofarTitle],as:{profile:rs.seal.profile,persona:rs.seal.persona,sampling:ROLES.seal.sampling,label:'Seal'}});
+  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles,sealedNotes,focus:facts.focus||'the focus character',narrator:`${narr?.who||'the narrator'}${note.pov?` (${note.pov})`:facts.pov?` (${facts.pov})`:''}`,title:facts.chapterTitle,roleplay:isRP(d),player:c.name1||'',rules:readValues(c).rules||'',castNames:facts.castNames||[]}),false,null,null,'chapter-end',false,{silentUser:true,mergeState:true,holdForAuthor:'allExcept',keep:[sumTitle,sofarTitle],as:{profile:rs.seal.profile,persona:rs.seal.persona,sampling:ROLES.seal.sampling,label:'Seal'}});
   const summary=(result.updates||[]).find(u=>u.title.trim().toLocaleLowerCase()===sumTitle.toLocaleLowerCase());
   if(!summary){logEvent('error','Seal','no seal note came back');throw Error(`Seal didn’t return the ${t.unit.toLowerCase()} seal note. Nothing was moved on; try again.`);}
   const tail=lastPage(chapterParts(c.chat).slice(-6).join('\n\n'));
   await saveMemoryItem(MEMORY_ITEMS[1],`${summary.content.trim()}${tail?`\n\nLAST PAGE (the ${t.unit.toLowerCase()}’s final words, exactly):\n${tail}`:''}`);
   markDone(teamState(d),'seal'); recordChapterChat(d,n,c); d.live={chatId:c.chatId,chapter:n,upto:c.chat.length,sinceScene:0}; await persist();
   try{await saveMemoryQuiet(MEM('session'),'');}catch(e){warnLog('Storyloom: clearing the session record:',e);}
+  try{await saveMemoryQuiet(MEM('scene'),'');}catch(e){warnLog('Storyloom: clearing the scene card:',e);} // the next chapter starts from the hand-off, not this chapter's last scene
   logEvent('info','Seal',`${t.unit} ${n} sealed`);
   status(`${t.unit} ${n} is sealed.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
   renderMemory();
   if(n<total){if(ask)await whatNext();}
   else {
     status(`${t.unit} ${n} is sealed. That was the last ${t.unit.toLowerCase()} in the outline.`);
-    if(await c.Popup.show.confirm('The book is finished','<p>That was the last chapter in the outline. Save the whole book as a file now? (You can do it any time with <b>Export book…</b> on the Memory tab.)</p>'))await exportBook();
+    // Asked without holding Storyloom busy: an unanswered question here (or a chat switched under it) must not block everything else.
+    setTimeout(()=>{c.Popup.show.confirm('The book is finished','<p>That was the last chapter in the outline. Save the whole book as a file now? (You can do it any time with <b>Export book…</b> on the Memory tab, or the button at the top.)</p>').then(ok=>{if(ok)exportBook().catch(fail);}).catch(()=>{});},300);
   }
 }
 /** Remember which chat (and which part of it) a chapter was written in, for Export book. */
@@ -2198,7 +2574,7 @@ async function bookFacts(d) {
   const n=d.chapter||1;
   const focusLine=String(find(t.cast)?.content||'').split('\n').find(l=>/^\s*\*\*/.test(l));
   const focus=focusLine?focusLine.replace(/\*\*/g,'').split('|')[0].trim():'';
-  const target=Number(d.chapterWords?.[d.chapter||1])||d.budget?.perChapter || (Number(String(sectionOf(entries.find(e=>/WORDS PER/i.test(String(e.content||'')))?.content,`WORDS PER ${t.unit.toUpperCase()}`)).replace(/[^\d]/g,''))||null);
+  const target=chapterTarget(d,d.chapter||1) || (Number(String(sectionOf(entries.find(e=>/WORDS PER/i.test(String(e.content||'')))?.content,`WORDS PER ${t.unit.toUpperCase()}`)).replace(/[^\d]/g,''))||null);
   const answers=Object.entries(d.interview?.answers||{}).filter(([,v])=>v).map(([k,v])=>`${k}: ${[].concat(v).join(' ')}`).join('\n');
   const facts=[
     `SETTING AND PERIOD (${t.summary.title}): ${sectionOf(find(t.summary.title)?.content,'SETTING')||'(not stated)'}`,
@@ -2212,7 +2588,9 @@ async function bookFacts(d) {
     (()=>{const prev=findEntry(book,MEMORY_ITEMS[1].title)?.content||''; const stand=capsSection(prev,'WHERE THINGS STAND'), happened=capsSection(prev,'WHAT HAPPENED'), page=capsSection(prev,'LAST PAGE'); return n>1&&(stand||happened)?`HOW THE PREVIOUS ${t.unit.toUpperCase()} ENDED (still true at the start of ${t.unit} ${n} unless the text shows time passing or a change):\nWHERE THINGS STAND:\n${stand.slice(0,3000)}\nWHAT HAPPENED:\n${happened.slice(0,3000)}${page?`\nLAST PAGE:\n${page.slice(0,3000)}`:''}`:'';})(),
     seals.length?`SEALED ${t.unit.toUpperCase()}S — MUST NOT DRIFT:\n${seals.map(e=>`${e.comment}: ${sectionOf(e.content,'MUST NOT DRIFT')}`).join('\n').slice(0,5000)}`:'',
   ].filter(Boolean).join('\n\n');
-  return {pov,tense,castNames:castNamesAll,knownNames,target,facts,seals,focus,unit:t.unit,chapterTitle:(d.outlineChapters||[]).find(c=>c.number===n)?.title||''};
+  // Sample lines sit inside VOICE AND MANNERISMS or on their own “Sample lines:” line after it (which reads as a heading of its own).
+  const samples=characters.flatMap(e=>sampleLinesOf(`${sectionOf(e.content,'VOICE AND MANNERISMS')}\n${sectionOf(e.content,'SAMPLE LINES?')}`).map(line=>({name:String(e.comment).replace(/^character\s*[—–-]\s*/i,''),line})));
+  return {pov,tense,castNames:castNamesAll,knownNames,samples,target,facts,seals,focus,unit:t.unit,chapterTitle:(d.outlineChapters||[]).find(c=>c.number===n)?.title||''};
 }
 function renderChapters(d) {
   const label=document.getElementById('na-chapter-label'), select=document.getElementById('na-chapter');
@@ -2397,7 +2775,9 @@ function renderPanelView() {
   document.querySelector('#na-settings').hidden=!settingsOpen;
   if(settingsOpen)try{renderWritingSettings();}catch(e){warnLog('Storyloom writing settings:',e);}
   try{renderWriteBar();}catch(e){warnLog('Storyloom write bar:',e);}
+  try{renderBookLine();}catch(e){warnLog('Storyloom book line:',e);}
   document.querySelector('#na-nochat').hidden=!none || settingsOpen || activeTab==='assistant';
+  try{renderBookList();}catch(e){warnLog('Storyloom book list:',e);}
   document.querySelector('#na-workspace').hidden=none || settingsOpen || activeTab!=='story';
   renderTabs();
   if(none) {
@@ -2758,6 +3138,7 @@ function renderInterview() {
   document.querySelector('#na-resume-chat').hidden=!(atStart && savedInterview);
   document.querySelector('#na-start-new-chat').hidden=!(atStart && savedInterview);
   document.querySelector('#na-welcome').hidden=!!interview || !!savedInterview;
+  if(!interview && !savedInterview){try{renderBookList();}catch{}}
   document.querySelector('#na-mode-choices').hidden=!!savedInterview;
   document.querySelector('#na-composer').hidden=!interview || interview.phase==='outline';
   const progress=document.querySelector('#na-progress');
@@ -2871,21 +3252,25 @@ async function nameFinishedLorebook(novel) {
 }
 async function finishInterview() {
   try {
-    requireIdle();const d=data(), interview=d.interview;
+    requireIdle();let d=data(); const interview=d.interview;
     if(interview?.phase!=='outline')throw Error('Finish the questions before creating the outline.');
     const t=tpl(d);
     // Nothing is built until the writer approves a short proposal (core, timeline, cast, word budget).
     if(!interview.proposalApproved){ if(!d.proposal)await makeProposal(); else {options();status('Approve the proposal, or say what to change.');} return; }
     const brief=d.proposal?approvedBrief({...d.proposal.fields,cast:d.proposal.fields.cast.filter(c=>allowedCast(d).includes(c.name))},budgetLines(d.budget,t.unit),t.unit):'';
     // Two requests so each reply fits the response budget (reasoning models spend part of it thinking).
+    // A reply that comes back incomplete (cut off, an entry missing) is asked for again, visibly — the writer shouldn't have to press twice.
+    const again=async(label,fn)=>{for(let i=0;;i++){try{return await fn();}catch(e){const m=String(e?.message||e); if(i>=2 || /abort|stopp|Chat changed|another operation|Wait for|not linked|Choose this novel/i.test(m))throw e; logEvent('warn','Build',`${label}: ${m} — asking again (try ${i+2} of 3)`); status(`${label}: the AI’s reply was incomplete (${m.slice(0,140)}) — asking again, try ${i+2} of 3…`);}}};
     if(!interview.planSaved) {
       status(`Step 1 of 2: filling in ${t.summary.title} and the planning entries…`);
-      await interact(finalizeInstruction(interview.mode,interview.answers,t,'plan',brief),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',holdForAuthor:'extras',silentUser:true,loreBudget:60000});
+      await again('Step 1 of 2',()=>interact(finalizeInstruction(interview.mode,interview.answers,t,'plan',brief),false,null,null,null,false,{guidance:'Complete the interview as instructed. Return every required planning entry as an entry block.',requireOutline:true,part:'plan',holdForAuthor:'extras',silentUser:true,loreBudget:60000}));
       if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
       d.interview={...d.interview,planSaved:true}; await persist();
+      // The plan has the book's title now: name the lorebook after it straight away, so it doesn't sit as "Untitled novel".
+      try{const m=await nameFinishedLorebook(d); if(m){status(m.trim()); d=data();}}catch(e){warnLog('Storyloom naming the lorebook:',e);} // renaming stores the book under its new name
     }
     status(`Step 2 of 2: writing the ${t.outline.title}…`);
-    const result=await interact(finalizeInstruction(interview.mode,interview.answers,t,'outline',brief),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,holdForAuthor:'extras',part:'outline',silentUser:true,loreBudget:60000});
+    const result=await again('Step 2 of 2',()=>interact(finalizeInstruction(interview.mode,interview.answers,t,'outline',brief),false,null,null,null,false,{guidance:`Return the ${t.outline.title} entry in updates.`,requireOutline:true,holdForAuthor:'extras',part:'outline',silentUser:true,loreBudget:60000}));
     if(data()!==d)throw Error('Chat changed. Return to the novel to finish.');
     const outline=result.updates.find(x=>x.title.trim().toLocaleLowerCase()===t.outline.title.toLocaleLowerCase());
     d.messages.push({role:'assistant',content:'Here is your outline:\n\n'+outline.content});
@@ -2902,7 +3287,7 @@ async function finishInterview() {
     options();
     status('Outline saved.'+bookMessage+' '+reviewNote.slice(0,300)+' Writing full character profiles next…');
     await writeProfiles(bookMessage);
-  }catch(e){fail(e);try{renderInterview()}catch{}}
+  }catch(e){fail(new Error(`${String(e?.message||e)} Nothing built so far is lost — press “Create outline” again and it carries on from where it stopped.`));try{renderInterview()}catch{}}
 }
 /** Arrange entries so the main chat sees the right things (see lorebook-layout.mjs). */
 async function organizeBook(chapter=null) {
@@ -2955,7 +3340,7 @@ async function writeProfiles(prefix='',{onlyMissing=false}={}) {
     for(const [i,name] of names.entries()) {
       try {
         status(`Writing character profile ${i+1} of ${names.length}: ${name}…`);
-        await interact(characterProfilesInstruction([name],cast,tpl(d).characterSections,tpl(d).unit),false,null,null,`character profile: ${name}`,false,{silentUser:true,requireCharacters:[name],loreBudget:60000,guidance:'Write the requested character profile as a complete lorebook entry.'});
+        await interact(characterProfilesInstruction([name],cast,tpl(d).characterSections,tpl(d).unit,{player:isRP(d)?(String(people?.content||'').split('\n').find(l=>/^\s*\*\*/.test(l))||'').replace(/\*\*/g,'').split('|')[0].trim():''}),false,null,null,`character profile: ${name}`,false,{silentUser:true,requireCharacters:[name],loreBudget:60000,guidance:'Write the requested character profile as a complete lorebook entry.'});
         done.push(name);
       } catch(e) {
         try{options()}catch{}
@@ -3019,6 +3404,12 @@ async function restoreBackup(b) {
   if(b.kind==='globalMain'){const cur=readGlobalMain(); backup({kind:'globalMain',label:'Global Main Prompt (before a restore)',target:{api:cur.api},before:cur.text}); writeGlobalMain(b.before??'',b.target?.api||cur.api);}
   else if(b.kind==='character'){const ch=c.characters.find(x=>x.avatar===b.target?.avatar); if(!ch)throw Error('That character no longer exists.'); backup({kind:'character',label:`${ch.name} (before a restore)`,target:{avatar:ch.avatar},before:charSnapshot(ch)}); await writeCharacter(ch.avatar,b.before||{});}
   else if(b.kind==='prompt'){const all=storedPrompts(), key=b.target?.key; backup({kind:'prompt',label:`${b.label} (before a restore)`,target:{key},before:all[key]??null}); if(b.before==null)delete all[key]; else all[key]=b.before; setPromptOverrides(all); c.saveSettingsDebounced(); renderPromptEditor();}
+  else if(b.kind==='defaults'){const id=String(b.target?.id||''), [kind,a,f]=id.split(':');
+    if(kind==='mine'){const m=mineStore(), prev=ownedText(m[a]?.[f])?.text; backup({kind:'defaults',label:`${b.label} (before a restore)`,target:{id},before:prev??null}); if(b.before==null)delete m[a][f]; else m[a][f]={text:b.before,base:builtInNarrator(a==='roleplay',f)}; c.saveSettingsDebounced(); await applyMineEverywhere(prev?[prev]:[]);}
+    else if(kind==='prompt'){const all=storedPrompts(); backup({kind:'prompt',label:`${b.label} (before a restore)`,target:{key:a},before:all[a]??null}); if(b.before==null)delete all[a]; else all[a]=b.before; setPromptOverrides(all); c.saveSettingsDebounced();}
+    else if(kind==='persona'){const roles=storedRoles(); roles[a]={...roles[a],persona:b.before||''}; c.saveSettingsDebounced();}
+    else if(kind==='template' && b.before){const list=storedTemplates(); if(!list.includes(b.before))list.push(b.before); const st=c.extensionSettings.storyloom; st.defaultTemplate ??= id.slice(9); c.saveSettingsDebounced(); try{renderTemplates(data());}catch{}}
+    renderYourDefaults();}
   else if(b.kind==='persona'){const roles=storedRoles(), k=b.target?.role; backup({kind:'persona',label:`${b.label} (before a restore)`,target:{role:k},before:roles[k]?.persona||null}); roles[k]={...roles[k],persona:b.before||''}; c.saveSettingsDebounced(); renderTeamSettings();}
   else if(b.kind==='narratorTemplate'){const st=(c.extensionSettings.storyloom ??= {}); backup({kind:'narratorTemplate',label:'Narrator template (before a restore)',before:st.narratorTemplate??null}); if(b.before==null)delete st.narratorTemplate; else st.narratorTemplate=b.before; c.saveSettingsDebounced(); const t=document.getElementById('sl-narrator-template-text'); if(t)t.value=narratorTemplateText(narratorTemplate());}
   else if(b.kind==='preset'){const pm=c.getPresetManager('openai'), name=b.target?.name||PRESET_NAME, cur=pm.getPresetList().preset_names?.[name]!==undefined?pm.getCompletionPresetByName(name):null; if(cur)backup({kind:'preset',label:`Preset “${name}” (before a restore)`,target:{name},before:cur}); await pm.savePreset(name,b.before,{skipUpdate:pm.getSelectedPresetName()!==name}); if(pm.getSelectedPresetName()!==name){const l=pm.getPresetList(); if(l.preset_names?.[name]!==undefined)l.presets[l.preset_names[name]]=b.before;}}
@@ -3105,7 +3496,7 @@ function buildExtSettings(openButton,panel) {
     const box=wrap.querySelector(`[data-role="${k}"]`), roles=()=>storedRoles();
     box.querySelector('.sl-role-on').onchange=e=>{roles()[k]={...roles()[k],enabled:e.target.checked};saveSettings();renderTeam();logEvent('info','Settings',`${ROLES[k].label} ${e.target.checked?'on':'off'}`);};
     box.querySelector('.sl-role-profile').onchange=e=>{roles()[k]={...roles()[k],profile:e.target.value};saveSettings();logEvent('info','Settings',`${ROLES[k].label} model: ${e.target.selectedOptions[0]?.textContent||'Same as Storyloom'}`);};
-    box.querySelector('.sl-role-save').onclick=()=>{const v=box.querySelector('.sl-role-persona').value.trim();if((roles()[k]?.persona||'')!==(v===ROLES[k].persona?'':v))backup({kind:'persona',label:`${ROLES[k].label}’s personality`,target:{role:k},before:roles()[k]?.persona||null});roles()[k]={...roles()[k],persona:v===ROLES[k].persona?'':v};saveSettings();renderTeamSettings();toastr?.success?.(`${ROLES[k].label}’s personality saved.`);};
+    box.querySelector('.sl-role-save').onclick=()=>{const v=box.querySelector('.sl-role-persona').value.trim();if((roles()[k]?.persona||'')!==(v===ROLES[k].persona?'':v))backup({kind:'persona',label:`${ROLES[k].label}’s personality`,target:{role:k},before:roles()[k]?.persona||null});roles()[k]={...roles()[k],persona:v===ROLES[k].persona?'':v};if(v!==ROLES[k].persona)noteBase('persona',k,ROLES[k].persona);saveSettings();renderTeamSettings();toastr?.success?.(`${ROLES[k].label}’s personality saved.`);};
     box.querySelector('.sl-role-reset').onclick=()=>{if(roles()[k]?.persona)backup({kind:'persona',label:`${ROLES[k].label}’s personality`,target:{role:k},before:roles()[k].persona});roles()[k]={...roles()[k],persona:''};saveSettings();box.querySelector('.sl-role-persona').value=ROLES[k].persona;renderTeamSettings();};
   }
   for(const item of MEMORY_ITEMS) {
@@ -3165,7 +3556,7 @@ async function toggleDictation(textarea,button) {
 
 function init() {
   const button = document.createElement('button'); button.className='menu_button'; button.textContent='Storyloom';
-  const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s setup: the chapter plan is now sent from the Memory tab instead of the lorebook.');}),300);try{if(noChatOpen()){document.getElementById('na-panel').hidden=false;renderPanelView();status('No book is open. Start a new book, or open a book’s chat.');return;}options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
+  const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s lorebook for the narrator: every entry now names what it describes, review marks are gone, the foundation is sent without the ending, and each character’s arc moved to a planning entry. Undo under Repair and more if you want it back.');}),300);try{if(noChatOpen()){document.getElementById('na-panel').hidden=false;renderPanelView();status('No book is open. Start a new book, or open a book’s chat.');return;}options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
   button.addEventListener('click',()=>{openPanel();document.querySelector('#extensions-settings-button .drawer-toggle')?.click();});
   const shortcut=document.createElement('button');shortcut.type='button';shortcut.id='storyloom-chat-shortcut';shortcut.title='Open Storyloom';shortcut.setAttribute('aria-label','Open Storyloom');shortcut.innerHTML=`<img src="${ICON_URL}" alt="" aria-hidden="true">`;shortcut.addEventListener('click',openPanel);document.getElementById('leftSendForm')?.append(shortcut);
   const panel = document.createElement('aside'); panel.id='na-panel'; panel.hidden=true;
@@ -3180,10 +3571,12 @@ function init() {
       </div>
     </header>
     <nav class="storyloom-tabs" role="tablist"><button id="na-tab-story" type="button" role="tab" class="is-active">Story</button><button id="na-tab-memory" type="button" role="tab">Memory</button><button id="na-tab-assistant" type="button" role="tab">Assistant</button></nav>
+    <div id="na-bookline" class="storyloom-bookline" hidden><span id="na-bookline-text"></span><button id="na-bookline-open" type="button">Open lorebook</button></div>
     <section id="na-write" class="storyloom-write" hidden><button id="na-write-btn" type="button" class="storyloom-write-btn"></button><small id="na-write-line" class="storyloom-hint"></small></section>
     <section id="na-settings" class="storyloom-settings" aria-label="Storyloom settings" hidden>
       <div class="storyloom-settings-body">
         <p class="storyloom-hint storyloom-advanced-note"><b>You don’t need to change anything here.</b> Storyloom works as it is — to write, use the big button above the tabs. These are for when you want something different.</p>
+        <section class="storyloom-wcard"><h4>Your defaults</h4><p class="storyloom-hint"><b>Want something to work differently?</b> Tell the Assistant (the Assistant tab) — how the narrator writes, what the checker looks for, how the Editor edits, what the wizard asks, any of these settings. It shows the exact change; you click Apply, and it becomes your default for every book from then on. Undo is on the card.</p><div id="na-your-defaults"></div></section>
         <section class="storyloom-wcard"><h4>How chapters get written</h4>
           <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="whole"> <span><b>All at once</b> <small>(normal)</small><small>Press Write once and the narrator writes the whole chapter, start to finish.</small></span></label>
           <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="passages"> <span><b>Bit by bit</b><small>Each press writes the next part of the chapter, and you can steer in between.</small></span></label>
@@ -3193,7 +3586,7 @@ function init() {
           <label class="storyloom-wopt"><input id="na-w-keep" type="checkbox"> <span><b>If the narrator stops before the chapter’s end, keep going by itself</b><small>Up to <input id="na-w-keep-max" type="number" min="1" max="20"> times. It stops as soon as you start typing.</small></span></label>
         </section>
         <section class="storyloom-wcard"><h4>Help the narrator remember</h4><small class="storyloom-hint">All on is best. Each one is a small, quick extra call to your AI.</small>
-          <label class="storyloom-wopt"><input id="na-w-scene" type="checkbox"> <span><b>Keep track of the current scene</b><small>Where and when it is, who’s there, and how they’re doing. Updated every <input id="na-w-scene-every" type="number" min="1" max="20"> replies.</small></span></label>
+          <label class="storyloom-wopt"><input id="na-w-scene" type="checkbox"> <span><b>Keep track of the current scene</b><small>Where and when it is, who’s there, and how they’re doing. <span id="na-w-scene-every-row">Updated every <input id="na-w-scene-every" type="number" min="1" max="20"> replies.</span><span id="na-w-scene-whole" hidden>Updated after every reply.</span></small></span></label>
           <label class="storyloom-wopt"><input id="na-w-session" type="checkbox"> <span><b>Keep a summary of this chapter so far</b><small>So a long chapter doesn’t forget how it started. Updated every <input id="na-w-session-every" type="number" min="6" max="100"> messages.</small></span></label>
           <label class="storyloom-wopt"><input id="na-w-stage" type="checkbox"> <span><b>Remind the narrator about everyone in the scene</b><small>Their details from the lorebook go with every reply, even if nobody has said their name lately.</small></span></label>
         </section>
@@ -3232,7 +3625,7 @@ function init() {
         </details>
       </div>
     </section>
-    <section id="na-nochat" class="storyloom-welcome storyloom-nochat" hidden><span class="storyloom-eyebrow">NO BOOK OPEN</span><h2>Start a new book<br><em>or open one you’re writing.</em></h2><p>Each book lives in its own chat with the narrator. Start a new one here — Storyloom makes the Storyloom Narrator if you don’t have it, opens a fresh chat with it, offers the Storyloom Novel preset, and then asks how you’d like to begin. To carry on a book, open its chat. The Assistant tab works without a book.</p><button id="na-start-book" type="button" class="storyloom-team-next">Start a new book →</button></section>
+    <section id="na-nochat" class="storyloom-welcome storyloom-nochat" hidden><span class="storyloom-eyebrow">NO BOOK OPEN</span><h2>Start a new book<br><em>or open one you’re writing.</em></h2><p>Each book lives in its own chat with the narrator. Start a new one here — Storyloom makes the Storyloom Narrator if you don’t have it, opens a fresh chat with it, offers the Storyloom Novel preset, and then asks how you’d like to begin. To carry on a book, open it below (or open its chat). The Assistant tab works without a book.</p><button id="na-start-book" type="button" class="storyloom-team-next">Start a new book →</button><div id="na-books-nochat" class="storyloom-books" hidden></div></section>
     <div id="na-workspace" class="storyloom-workspace">
     <div class="storyloom-book">
       <label for="na-book">Lorebook for this chat</label>
@@ -3262,7 +3655,7 @@ function init() {
     </details>
     <button id="na-resume-chat" type="button" hidden>Resume Storyloom chat</button>
     <button id="na-start-new-chat" type="button" hidden>Start a new novel</button>
-    <div id="na-welcome" class="storyloom-welcome"><span class="storyloom-eyebrow">A SPACE FOR YOUR NEXT STORY</span><h2>Let’s make something<br><em>worth getting lost in.</em></h2><p>Start with a little or a lot. I’ll help you bring the story together.</p><div class="storyloom-rule"></div><span class="storyloom-choice-label">HOW WOULD YOU LIKE TO BEGIN?</span></div>
+    <div id="na-welcome" class="storyloom-welcome"><span class="storyloom-eyebrow">A SPACE FOR YOUR NEXT STORY</span><h2>Let’s make something<br><em>worth getting lost in.</em></h2><p>Start with a little or a lot. I’ll help you bring the story together.</p><div class="storyloom-rule"></div><div id="na-books-welcome" class="storyloom-books" hidden></div><span class="storyloom-choice-label">HOW WOULD YOU LIKE TO BEGIN?</span></div>
     <label id="na-template-label" class="storyloom-template-pick">Template <select id="na-template"></select></label>
     <div id="na-mode-choices" class="storyloom-mode-grid">
       <button id="na-simple" type="button" class="storyloom-mode"><span class="storyloom-mode-icon" aria-hidden="true">✦</span><strong>Simple</strong><small>Answer what you like. I’ll fill in the rest.</small><span class="storyloom-arrow" aria-hidden="true">↗</span></button>
@@ -3303,7 +3696,7 @@ function init() {
   document.querySelector('#na-wide').onclick=()=>setWide(!wideView);
   bindWritingSettings();
   setupFolds();
-  document.querySelector('#na-settings-toggle').onclick=()=>{settingsOpen=!settingsOpen;renderPanelView();};
+  document.querySelector('#na-settings-toggle').onclick=()=>{settingsOpen=!settingsOpen;renderPanelView();if(settingsOpen)renderYourDefaults();};
   document.querySelector('#na-back').onclick=()=>{atStart=!atStart;settingsOpen=false;renderInterview();renderPanelView();};
   document.querySelector('#na-resume-chat').onclick=()=>{atStart=false;renderInterview();renderPanelView();};
   const startNewNovel=async()=>{
@@ -3468,7 +3861,14 @@ function init() {
   document.querySelector('#na-proposal-approve').onclick=async()=>{lastAction='Approve and build';try{await approveProposal();}catch(e){fail(e);}};
   document.querySelector('#na-proposal-revise').onclick=async()=>{lastAction='Revise';const box=document.querySelector('#na-proposal-feedback'),v=box.value.trim();if(!v){status('Say what should change first.');return;}try{await makeProposal(v);box.value='';}catch(e){fail(e);}};
   document.querySelector('#na-update').onclick=()=>updateStoryloom().catch(fail);
-  document.querySelector('#na-write-btn').onclick=()=>{const st=writeState(); if(!st)return; lastAction=document.querySelector('#na-write-btn').textContent; try{if(st.ended)nextChapter().catch(fail); else writeChapter();}catch(e){fail(e);}};
+  document.querySelector('#na-write-btn').onclick=()=>{
+    const btn=document.querySelector('#na-write-btn'), mode=btn.dataset.mode;
+    if(mode==='stop-gen'){document.getElementById('mes_stop')?.click(); logEvent('info','Write','stopped the narrator'); setTimeout(()=>{try{renderWriteBar();}catch{}},600); return;}
+    if(mode==='stop-next'){stopRequested=true; modelController?.abort(); logEvent('info','Next chapter','stop requested'); renderWriteBar(); return;}
+    if(mode==='rp-setup'){lastAction='Set up the game master'; writingSetup().catch(fail); return;}
+    const st=writeState(); if(!st)return; lastAction=btn.textContent;
+    try{if(st.ended)nextChapter().catch(fail); else writeChapter();}catch(e){fail(e);}
+  };
   document.querySelector('#na-tab-story').onclick=()=>{activeTab='story';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
@@ -3488,7 +3888,7 @@ function init() {
   document.querySelector('#na-review').onclick=async()=>{try{await reviewStory();options();}catch(e){fail(e);}};
   document.querySelector('#na-template-edit').onchange=()=>showTemplateText();
   document.querySelector('#na-prompt-key').onchange=()=>renderPromptEditor();
-  document.querySelector('#na-prompt-save').onclick=()=>{try{const key=document.querySelector('#na-prompt-key').value,text=document.querySelector('#na-prompt-text').value.trim();if(!text)throw Error('The prompt is empty. Use “Reset to default” to go back to the original.');const all=storedPrompts();if((all[key]??null)!==(text===PROMPT_DEFAULTS[key].text?null:text))backup({kind:'prompt',label:`Prompt: ${PROMPT_DEFAULTS[key].label}`,target:{key},before:all[key]??null});if(text===PROMPT_DEFAULTS[key].text)delete all[key];else all[key]=text;setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” saved. It applies from the next request.`);}catch(e){fail(e);}};
+  document.querySelector('#na-prompt-save').onclick=()=>{try{const key=document.querySelector('#na-prompt-key').value,text=document.querySelector('#na-prompt-text').value.trim();if(!text)throw Error('The prompt is empty. Use “Reset to default” to go back to the original.');const all=storedPrompts();if((all[key]??null)!==(text===PROMPT_DEFAULTS[key].text?null:text))backup({kind:'prompt',label:`Prompt: ${PROMPT_DEFAULTS[key].label}`,target:{key},before:all[key]??null});if(text===PROMPT_DEFAULTS[key].text)delete all[key];else {all[key]=text;noteBase('prompt',key,PROMPT_DEFAULTS[key].text);}setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” saved. It applies from the next request.`);}catch(e){fail(e);}};
   document.querySelector('#na-prompt-reset').onclick=async()=>{try{const key=document.querySelector('#na-prompt-key').value;if(!await context().Popup.show.confirm('Reset this prompt?',`Put “${PROMPT_DEFAULTS[key].label}” back to Storyloom’s original wording?`))return;const all=storedPrompts();if(all[key]!=null)backup({kind:'prompt',label:`Prompt: ${PROMPT_DEFAULTS[key].label}`,target:{key},before:all[key]});delete all[key];setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” is back to the default.`);}catch(e){fail(e);}};
   document.querySelector('#na-template-save').onclick=()=>{try{saveTemplate(false);}catch(e){fail(e);}};
   document.querySelector('#na-template-copy').onclick=()=>{try{saveTemplate(true);}catch(e){fail(e);}};
@@ -3517,7 +3917,15 @@ function init() {
         if(data()!==d)throw Error('Chat changed; return to this novel.');
         d.interview=recordAnswer(d.interview,v); await persist(); input.value='';
         if(interview.mode==='simple') await nextInterview(false);
-      } else {await interact(v,false,null,null,null,false,{collaborative:interview.mode==='deep',holdForAuthor:'extras'});input.value=''; await afterPlanChange(d);}
+      } else {
+        // After the plan, the writer is asking for changes: save what they ask for (undoable), don't force a follow-up question,
+        // and never let the AI claim a change it didn't make.
+        const r=await interact(v,false,null,null,null,false,{});input.value=''; await afterPlanChange(d);
+        const saved=(r?.updates||[]).map(u=>u.title).filter(Boolean);
+        if(saved.length)status(`Saved: ${saved.join(', ')}. Undo is under Repair and more if you don’t want it.`);
+        else if(/\b(?:I(?:['’]ve| have| will|['’]ll| am|['’]m)?\s*(?:just\s+)?(?:add|added|adding|updat\w*|sav\w*|creat\w*|record\w*|put)|(?:has|have) been (?:added|updated|saved))\b/i.test(String(r?.reply||'')))
+          status('The AI said it made a change, but its reply had no change in it — nothing was saved. Ask again, and say exactly what to add or change.');
+      }
     } catch(e){fail(e)}
   };
   const c=context();
@@ -3537,15 +3945,17 @@ function init() {
   }catch(e){warnLog('Storyloom reasoning effort:',e);}});
   c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{if(!dry && type!=='quiet'){genBusy=true; for(const ms of [300,1200,3000])setTimeout(()=>{try{renderWriteBar();}catch{}},ms);}});
   for(const ev of ['GENERATION_ENDED','GENERATION_STOPPED'])if(c.event_types[ev])c.eventSource.on(c.event_types[ev],()=>{genBusy=false; setTimeout(()=>{try{renderWriteBar();}catch{}},400);});
+  // Stopped before the narrator wrote a word (it was still thinking): don't leave an empty reply in the chapter.
+  if(c.event_types.GENERATION_STOPPED)c.eventSource.on(c.event_types.GENERATION_STOPPED,()=>setTimeout(async()=>{try{const x=context(), m=x.chat?.at(-1); if(m && !m.is_user && !m.is_system && !String(m.mes||'').trim() && (m.swipes?.length||1)<=1 && x.chat.length>1){await x.deleteLastMessage(); logEvent('info','Write','stopped before any text: the empty reply was removed'); renderWriteBar();}}catch(e){warnLog('Storyloom empty reply:',e);}},600));
   for(const ev of ['MESSAGE_RECEIVED','MESSAGE_DELETED','MESSAGE_SWIPED','CHAT_CHANGED','ONLINE_STATUS_CHANGED','SETTINGS_UPDATED'])if(c.event_types[ev])c.eventSource.on(c.event_types[ev],()=>setTimeout(()=>{try{renderWriteBar();}catch{}},700));
-  c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{applyReplyLength();}catch(e){warnLog('Storyloom reply length:',e);} try{if(type!=='quiet')forceOnStage();}catch(e){warnLog('Storyloom on stage:',e);}});
+  c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{if(type==='continue' && !dry){const cx=context(), m=cx.chat?.at(-1); continueFrom=m && !m.is_user && !m.is_system?{at:cx.chat.length-1,text:cleanReply(m.mes)}:null;}}catch{} try{applyReplyLength(null,'Chapter',type);}catch(e){warnLog('Storyloom reply length:',e);} try{if(type!=='quiet')forceOnStage();}catch(e){warnLog('Storyloom on stage:',e);}});
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
   setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),2500);
   showVersion();
   setTimeout(()=>checkForUpdate(true),8000);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,name=>{if(linkRunning)return;clearTimeout(linkTimer);linkTimer=setTimeout(()=>syncLinks(typeof name==='string'?name:null),1000);});
   setTimeout(()=>{if(storedLinks().length)syncLinks();},4000);
-  c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();try{renderExtSettings();}catch{}modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;document.querySelector('#na-session-key').value='';if(!panel.hidden){try{if(noChatOpen())renderPanelView(); else {options();status('');}}catch(e){warnLog('Storyloom chat change:',e);}} queueSync(); scheduleDrain();});
+  c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();setTimeout(()=>{try{noteBookChat();}catch{}},1500);try{renderExtSettings();}catch{}modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;document.querySelector('#na-session-key').value='';if(!panel.hidden){try{if(noChatOpen())renderPanelView(); else {options();status('');}}catch(e){warnLog('Storyloom chat change:',e);}} queueSync(); scheduleDrain();});
   buildExtSettings(button,panel);
   addMic(document.getElementById('na-input'),document.querySelector('#na-composer .storyloom-compose-footer'),document.getElementById('na-send'));
   addMic(document.getElementById('na-assistant-input'),document.querySelector('#na-assistant .storyloom-compose-footer'),document.getElementById('na-assistant-send'));
@@ -3558,12 +3968,37 @@ function init() {
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED,(id,type)=>{try{
     if(type==='first_message'||type==='quiet')return;
     const m=context().chat[id]; if(!m||m.is_user||m.is_system||!inBookChat())return;
-    const ended=!isRP() && splitEndMark(m.mes).done, clean=cleanReply(m.mes);
-    if(clean!==m.mes || ended){m.mes=clean.trim(); if(Array.isArray(m.swipes))m.swipes[m.swipe_id??0]=m.mes; if(ended){m.extra ??= {}; m.extra.storyloom_chapter_end=true;} const cx=context(); try{cx.updateMessageBlock(id,m);}catch{} cx.saveChat().catch(()=>{}); if(clean.trim()!==splitEndMark(m.mes).text.trim())logEvent('info','Narrator',`removed provider junk (<ds_safety>) from reply ${id}`);}
+    const signalled=!isRP() && splitEndMark(m.mes).done; let clean=cleanReply(m.mes);
+    noteThinking(m);
+    // A Continue that came back in pieces (a restarted sentence, ### breaks, all the dialogue in one block): repair only the added part, and say so.
+    if(type==='continue' && continueFrom && continueFrom.at===id && clean.startsWith(continueFrom.text)){
+      const r=repairContinuation(continueFrom.text,clean.slice(continueFrom.text.length));
+      if(r.fixed.length){clean=continueFrom.text+r.text; logEvent('warn','Narrator',`the continuation came back in pieces; Storyloom ${r.fixed.join(', ')}`); toastr.info(`The narrator’s continuation came back in pieces, so Storyloom ${r.fixed.join(', ')}. The words are as it wrote them.`,'Storyloom',{timeOut:12000});}
+    }
+    continueFrom=null;
+    // The narrator sometimes writes its planning notes into the reply (seen on Continue): take them out and say so.
+    const notes=stripNotes(splitEndMark(m.mes).text);
+    if(notes.removed>0){logEvent('warn','Narrator',`took ${notes.removed} words of the narrator’s own notes (<analysis>, <summary>…) out of the reply — they aren’t part of the book`); toastr.warning(`The narrator wrote ${notes.removed.toLocaleString()} words of its own planning notes into the chapter instead of prose. Storyloom took them out. ${endsCutOff(clean)?'The chapter still stops mid-sentence — press “Keep writing” to carry on.':''}`,'Storyloom',{timeOut:15000});}
+    // A chapter far shorter than planned isn't done just because the narrator says so (models rush the plan): shown, not accepted.
+    let early=null;
+    // A reply that is only the end signal: the chapter was already finished — mark the reply before it and drop the empty one.
+    if(signalled && !splitEndMark(clean).text.trim()) {
+      const cx=context(), prev=[...cx.chat.slice(0,id)].reverse().find(x=>!x.is_user && !x.is_system && !isHeading(x.mes));
+      if(prev){prev.extra ??= {}; prev.extra.storyloom_chapter_end=true;}
+      try{cx.chat.splice(id,1); cx.saveChat().then(()=>cx.reloadCurrentChat()).catch(()=>{});}catch{}
+      logEvent('info','End of chapter','the narrator confirmed the chapter was already finished');
+      afterChapterReply(true,false); setTimeout(()=>{try{renderWriteBar();}catch{}},900);
+      return;
+    }
+    // Bit by bit: a chapter far shorter than planned isn't done just because the narrator says so (models rush the plan) — shown, not accepted.
+    if(signalled && writePassages()){try{m.mes=clean.trim(); const st=writeState(); if(st && st.target && st.words < st.target*0.6)early={words:st.words,target:st.target,n:st.n,u:st.u};}catch{}}
+    const ended=signalled && !early;
+    if(clean!==m.mes || signalled){m.mes=clean.trim(); if(Array.isArray(m.swipes))m.swipes[m.swipe_id??0]=m.mes; m.extra ??= {}; if(ended)m.extra.storyloom_chapter_end=true; if(early)m.extra.storyloom_early_end=early.words; const cx=context(); try{cx.updateMessageBlock(id,m);}catch{} cx.saveChat().catch(()=>{}); if(clean.trim()!==splitEndMark(m.mes).text.trim())logEvent('info','Narrator',`removed provider junk (<ds_safety>) from reply ${id}`);}
     if(!isHeading(m.mes))setTimeout(queueLive,1500);
     const cut=!isHeading(m.mes) && endsCutOff(m.mes);
     if(cut)explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
-    if(!isHeading(m.mes) && !isRP())afterChapterReply(ended,cut);
+    if(early){logEvent('warn','End of chapter',`${early.u} ${early.n}: the narrator signalled the end after only ${early.words} of about ${early.target} words — not accepted`); toastr.warning(`The narrator said ${early.u} ${early.n} was finished after only ${early.words.toLocaleString()} of about ${early.target.toLocaleString()} words, so Storyloom didn't accept it. Press “Keep writing” to carry on — or, if you're happy with it short, change the chapter length in Settings.`,'Storyloom',{timeOut:15000,closeButton:true});}
+    if(!isHeading(m.mes) && !isRP())afterChapterReply(ended,cut,!!early);
   }catch(e){warnLog('Storyloom cut-off check:',e);}});
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED, (id,type)=>{try {
     if(type==='first_message') return;

@@ -40,13 +40,13 @@ export function lengthCategory(words) {
 export function coreShare(text) {
   const s = String(text || '').toLocaleLowerCase();
   const pct = s.match(/(\d{1,3})\s*%/);
-  if (pct) return {share: Math.min(1, Number(pct[1]) / 100), source: `you said ${pct[1]}%`};
+  if (pct) return {share: Math.min(1, Number(pct[1]) / 100), source: 'as the proposal puts it'};
   const rules = [
     [/\b(whole thing|the whole story|entire(ly)?|nothing but|all of it|purely|only about)\b/, 0.9],
     [/\b(almost (all|entirely|only)|mostly|mainly|primarily|overwhelmingly)\b/, 0.75],
     [/\b(largely|focus(ed)? on|centred on|centered on|about)\b/, 0.6],
   ];
-  for (const [re, share] of rules) { const m = s.match(re); if (m) return {share, source: `from your wording “${m[0]}”`}; }
+  for (const [re, share] of rules) { const m = s.match(re); if (m) return {share, source: `from the proposal’s wording “${m[0]}”`}; }
   return {share: 0.5, source: 'not stated — assumed half'};
 }
 

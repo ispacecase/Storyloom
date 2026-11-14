@@ -14,9 +14,48 @@ export function splitEndMark(text) {
   return {done: found, text: found ? t.replace(END_MARK_RE, '').replace(/\s+$/, '') : t};
 }
 
+/**
+ * The narrator's own working notes written into the reply instead of kept in its thinking — seen on a Continue with DeepSeek V4:
+ * an <analysis>…</analysis> plan and a <summary>…</summary> of the conversation in place of the rest of the chapter. Never prose.
+ */
+const NOTE_TAGS = 'analysis|summary|thinking|think|reasoning|plan|scratchpad|notes';
+export function stripNotes(text) {
+  const t = String(text || '');
+  let out = t.replace(new RegExp(`<(${NOTE_TAGS})>[\\s\\S]*?</\\1>\\s*`, 'gi'), '');
+  // An opened block that never closes runs to the end of the reply.
+  out = out.replace(new RegExp(`<(?:${NOTE_TAGS})>[\\s\\S]*$`, 'i'), '');
+  const words = s => (String(s).match(/\S+/g) || []).length;
+  return {text: out, removed: words(t) - words(out)};
+}
+/**
+ * Repair the text a Continue added, when it came back in pieces (seen with DeepSeek V4 after a reply was cut off): it restarts the
+ * sentence it was meant to finish ("…a test ### Ammar's got a test, and…"), marks breaks with ### and runs every line of dialogue
+ * into one block. Only these mechanical faults are fixed; the words are left as they are. Returns {text, fixed: [what was done]}.
+ */
+export function repairContinuation(before, added) {
+  let a = String(added || ''); const fixed = [];
+  const tail = String(before || '').replace(/\s+$/, '');
+  // ### or *** as a break → a paragraph break.
+  if (/(^|\s)(?:#{2,}|\*{3,})(\s|$)/.test(a)) { a = a.replace(/\s*(?:#{2,}|\*{3,})\s*/g, '\n\n'); fixed.push('turned ### into paragraph breaks'); }
+  // A restart of the unfinished sentence: drop the repeated words.
+  const lastWords = tail.split(/\s+/).slice(-6).join(' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (lastWords) {
+    const lead = a.replace(/^\s+/, '');
+    for (let n = 6; n >= 3; n--) {
+      const w = tail.split(/\s+/).slice(-n).join(' ');
+      if (w.length >= 10 && lead.startsWith(w)) { const rest = lead.slice(w.length); a = (/^[,.;:!?'’”"]/.test(rest) ? '' : ' ') + rest.replace(/^\s+/, ''); fixed.push('removed a restart of the unfinished sentence'); break; }
+    }
+  }
+  // One long block with several lines of dialogue: each new line of speech after a closed one starts its own paragraph.
+  const body = a.replace(/^\s+/, '');
+  if (!/\n\s*\n/.test(body) && (body.match(/\S+/g) || []).length > 120 && (body.match(/["”]\s+["“]/g) || []).length >= 3) {
+    a = a.replace(/(["”])\s+(?=["“])/g, '$1\n\n'); fixed.push('put each line of dialogue on its own line');
+  }
+  return {text: a, fixed};
+}
 /** Provider junk that leaks into a reply, e.g. Venice's uncensored deepseek: "<ds_safety>[Internal thinking]" at the start, or a whole <ds_safety>…</ds_safety> block. */
 export function cleanReply(text) {
-  return splitEndMark(text).text
+  return stripNotes(splitEndMark(text).text).text
     .replace(/<ds_safety>[\s\S]*?<\/ds_safety>\s*/gi, '')
     .replace(/^\s*<\/?ds_safety>\s*(?:\[[^\]\n]{0,40}\]\s*)?/i, '')
     .replace(/<\/?ds_safety>/gi, '');

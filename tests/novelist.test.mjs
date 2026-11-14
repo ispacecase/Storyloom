@@ -63,8 +63,8 @@ test('a chapter per reply is the default; passages are an option', async () => {
   assert.match(writingKit(false, {passages: true}).main, /one passage at a time/);
   assert.doesNotMatch(CRAFT_MAIN_PASSAGES, /Each reply is a whole chapter/);
   assert.equal(writingKit(false, {passages: true}).postHistory, POST_HISTORY_PASSAGES);
-  assert.match(replyLengthNote(8196, 'Chapter', 3000), /write this whole chapter/);
-  assert.match(replyLengthNote(8196, 'Chapter', 0, {passages: true}), /one passage of the chapter/);
+  assert.match(replyLengthNote(8196, 'Chapter', 3000), /the whole chapter, in this reply/);
+  assert.match(replyLengthNote(8196, 'Chapter', 0, {passages: true}), /the next passage of this chapter/);
 });
 
 test('switching all-at-once / bit-by-bit swaps only Storyloom’s own text', async () => {
@@ -84,9 +84,43 @@ test('switching all-at-once / bit-by-bit swaps only Storyloom’s own text', asy
 test('the narrator prompt is written to a model about model habits, and old Storyloom text upgrades', async () => {
   const {CRAFT_MAIN, CRAFT_MAIN_PASSAGES, RP_MAIN, AI_HABITS, syncPresetText, textPrint, OLD_TEXTS, writingKit} = await import('../novelist.mjs');
   for (const t of [CRAFT_MAIN, CRAFT_MAIN_PASSAGES, RP_MAIN]) assert.ok(t.includes(AI_HABITS));
-  assert.match(AI_HABITS, /Echo dialogue/);
+  assert.match(AI_HABITS, /every reply moves it on/);
+  // Research: a quoted bad example primes the habit it names, so the list says what to do and quotes no bad lines.
+  assert.doesNotMatch(AI_HABITS, /Lasagne|NEVER DO THESE|That was enough/);
+  assert.match(CRAFT_MAIN, /doesn't win every exchange/);
+  assert.match(CRAFT_MAIN, /Things keep the look they were given/);
   assert.match(CRAFT_MAIN, /Language models, this one included/);
   assert.ok(!OLD_TEXTS.has(textPrint(CRAFT_MAIN)), 'the current text is not "old"');
   const old = {prompts: [{identifier: 'main', content: 'x'}, {identifier: 'jailbreak', content: writingKit(false).postHistory}]};
   [...OLD_TEXTS].length && assert.equal(syncPresetText(old).kept[0], 'Main Prompt', 'unknown text is the writer’s and stays');
+});
+
+test('an earlier Storyloom card is recognised even with Windows line endings', async () => {
+  const {upgradedCard, NARRATOR_CARD, textPrint} = await import('../novelist.mjs');
+  const old = "{{char}} narrates the book being written in this chat. {{char}} is the voice telling the story, not a character in it.\n\nHOW THIS BOOK IS TOLD\nNarrator: {{getvar::storyloom_narrator}}\nPoint of view: {{getvar::storyloom_pov}}\nTense: {{getvar::storyloom_tense}}\nVoice: {{getvar::storyloom_voice}}\nTone: {{getvar::storyloom_tone}}\nGenre: {{getvar::storyloom_genre}}\nAuthor’s rules: {{getvar::storyloom_rules}}\n\nHOW THE NARRATOR WORKS\nHold this point of view, tense and voice in every sentence; they belong to the book, not to the moment. Anything outside the point-of-view character's senses and knowledge stays off the page. The people, places and plan of the book come from the lorebook and the chapter plan: use them exactly and add nothing that contradicts them. When a chapter's settings differ from the last one — a different narrator, a different tense — write that chapter in its own settings from the first line.";
+  assert.equal(upgradedCard(old.replace(/\n/g, '\r\n')), NARRATOR_CARD);
+  assert.equal(upgradedCard(old + ' My own addition.'), null, 'an edited card is left alone');
+  assert.equal(textPrint('a\r\nb'), textPrint('a\nb'));
+});
+
+test('your defaults: the writer’s own copy is used in both ways of writing, and Storyloom’s built-in text is replaced by it', async () => {
+  const {withMine, writingKit, syncPresetText, CRAFT_MAIN, CRAFT_MAIN_PASSAGES, NARRATOR_CARD, upgradedCard, novelPreset} = await import('../novelist.mjs');
+  const myMain = CRAFT_MAIN.replace('CONFLICT\n', 'CONFLICT\nEveryone swears a lot in this house. ');
+  const mine = {novel: {main: {text: myMain, base: CRAFT_MAIN}, card: 'My narrator card'}};
+  const whole = withMine(writingKit(false), mine.novel), bits = withMine(writingKit(false, {passages: true}), mine.novel);
+  assert.equal(whole.main, myMain);
+  assert.match(bits.main, /Everyone swears a lot/); assert.match(bits.main, /one passage at a time/);
+  assert.equal(whole.card, 'My narrator card');
+  assert.equal(withMine(writingKit(false), {}).main, CRAFT_MAIN, 'no copy, Storyloom’s text');
+  // A preset still holding Storyloom's built-in text gets the writer's copy; a hand-edited one is left alone.
+  const preset = {prompts: [{identifier: 'main', content: CRAFT_MAIN_PASSAGES}, {identifier: 'jailbreak', content: 'x'}]};
+  const r = syncPresetText(preset, {passages: false, mine});
+  assert.equal(r.preset.prompts[0].content, myMain); assert.ok(r.swapped.includes('Main Prompt'));
+  const hand = syncPresetText({prompts: [{identifier: 'main', content: 'hand written'}]}, {mine});
+  assert.ok(hand.kept.includes('Main Prompt'));
+  assert.equal(novelPreset({}, {kit: whole}).prompts.find(q => q.identifier === 'main').content, myMain);
+  // Cards: Storyloom's built-in card becomes the writer's; an edited card is never touched.
+  assert.equal(upgradedCard(NARRATOR_CARD, {novel: 'My narrator card'}), 'My narrator card');
+  assert.equal(upgradedCard('My narrator card', {novel: 'My narrator card'}), null);
+  assert.equal(upgradedCard('something the writer wrote', {novel: 'My narrator card'}), null);
 });

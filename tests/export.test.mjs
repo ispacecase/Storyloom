@@ -66,3 +66,26 @@ test('the end-of-chapter signal is never part of the book', async () => {
   assert.equal(chapterProse([{mes: 'One.'}, {mes: 'Two.\n\n[END OF CHAPTER]'}]), 'One.\n\nTwo.');
   assert.equal(splitEndMark('He talked about the end of the chapter in his book.').done, false, 'ordinary words are not the signal');
 });
+
+test('the narrator’s working notes written into a reply are removed, prose is kept', async () => {
+  const {stripNotes, cleanReply} = await import('../export.mjs');
+  const reply = 'Ostap said, “Ammar’s got a test <analysis>\nLet me assess where the text stands.\n</analysis>\n\n<summary>\n1. Primary Request and Intent:\n   The user is writing a novel.\n</summary>';
+  const r = stripNotes(reply);
+  assert.equal(r.text.trim(), 'Ostap said, “Ammar’s got a test');
+  assert.ok(r.removed > 10);
+  assert.equal(stripNotes('Prose.\n<thinking>never closed').text.trim(), 'Prose.');
+  assert.equal(cleanReply('He said <b>no</b>, and meant it.'), 'He said <b>no</b>, and meant it.', 'other tags are left alone');
+});
+
+test('a continuation that came back in pieces is repaired mechanically', async () => {
+  const {repairContinuation} = await import('../export.mjs');
+  const before = '"You had me counting to a Friday that was hers. Ammar\'s got a test';
+  const added = ' ### Ammar\'s got a test, and you\'re the instructor in the car." "I\'m the instructor in the car." "Sunday\'s the thirtieth." "It is." "And Monday\'s April." "Monday is April, yes." ' + 'He went quiet then and stayed quiet long enough that she heard the kettle settle. '.repeat(10);
+  const r = repairContinuation(before, added);
+  assert.ok(r.text.startsWith(', and you\'re the instructor'), r.text.slice(0, 60));
+  assert.match(r.text, /in the car\."\n\n"I'm the instructor/);
+  assert.ok(!r.text.includes('###'));
+  assert.equal(r.fixed.length, 3);
+  const fine = repairContinuation('He said nothing', ' and went out.\n\nShe followed.');
+  assert.equal(fine.text, ' and went out.\n\nShe followed.'); assert.equal(fine.fixed.length, 0);
+});

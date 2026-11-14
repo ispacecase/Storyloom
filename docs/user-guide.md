@@ -43,6 +43,7 @@ You write in SillyTavern's own chat, **one chat per chapter** (or session). Stor
 - The panel has three tabs: **Story** (planning chat, lorebook tools, suggestions), **Memory** (the chapter team and what the AI remembers) and **Assistant** (questions about SillyTavern).
 - **⤢ Full screen** spreads the panel across the page: Story and Memory side by side, with the Assistant on its own tab. **⤡ Side panel** puts it back.
 - In the side panel, extra sections fold up (▸). Click to open; each remembers how you left it.
+- **A chat with no book in it** (a new chat, or the welcome screen) lists the books you're writing, each with an **Open** button that takes you back to the chat you last worked in.
 
 ## 1. Planning: the setup wizard
 
@@ -73,13 +74,14 @@ On the Memory tab, **Writing setup…** does three things, each with its own tic
 
 - **The Write button.** At the top of the Storyloom panel there's one big button. It always says what happens next:
   - **✍ Write Chapter 1** — the narrator writes the whole chapter, from its plan and memory, to the planned ending. Want to steer? Type a direction in the chat box first ("start at the funeral"), then press it. (Pressing SillyTavern's own Send with an empty box does the same.)
-  - **✍ Keep writing Chapter 1** — the chapter isn't at its ending yet (or the last reply was cut off); this carries on from where it stopped.
+  - **✍ Keep writing Chapter 1** — the chapter isn't at its ending yet (or the last reply was cut off); this carries on from where it stopped. It never runs past the chapter's planned ending: if the text is already there, the narrator just marks it finished.
+  - **■ Stop writing** — while the narrator is writing, the button stops it (what's written so far stays). During **Next chapter** it reads **■ Stop**: it cancels the step that's running and stops before the next one, so nothing is half-saved.
   - **✓ Chapter 1 is done — Next chapter →** — one click checks the chapter (Auto), seals it, opens Chapter 2 in a fresh chat with the same narrator, and starts writing it.
   - The line under the button says where you are: chapter, title, words so far against the chapter's length, and a warning if your Max Response Length is too small for the chapter.
 - **Length:** a chapter is written to its length from the book's plan (WORDS PER CHAPTER). Change it for every chapter in Settings → **Chapter length**, or for one chapter in Book settings…. As far as your **Max Response Length** fits.
   - **Your direction always wins.** If your message asks for a length ("about 200 words", "keep it short"), Storyloom leaves its own length instruction out for that reply.
-  - *Bit by bit* (Settings → How chapters get written) writes a chapter over several presses instead; there, **Words each time you press Write** sets the size of each part.
-- **Knowing when a chapter is done, without reading it:** the narrator ends the chapter with a hidden signal at the plan's ending. Storyloom removes it (it never appears in your story or the export), marks the reply *"✓ End of chapter"*, tells you *"Chapter N is done"*, and the button turns into **Next chapter**.
+  - *Bit by bit* (Settings → How chapters get written) writes a chapter over several presses instead; there, **Words each time you press Write** sets the size of each part, and **Chapter length** says when the chapter is near its end. Each press is told the chapter's planned events and how many of them it covers, so it doesn't race through the whole plan.
+- **Knowing when a chapter is done, without reading it:** the narrator ends the chapter with a hidden signal at the plan's ending. Storyloom removes it (it never appears in your story or the export), marks the reply *"✓ End of chapter"*, tells you *"Chapter N is done"*, and the button turns into **Next chapter**. If the narrator forgets the signal but the chapter is at its full length and ends on a finished sentence, the button says *"looks finished"* and still offers Next chapter. Language models tend to write about two-thirds of the length they're asked for; the line under the button says when a finished chapter came out shorter than planned.
 - **Keep going by itself** (Settings, off by default): if the narrator stops before the chapter's end, Storyloom carries on for you, up to the number of times you set, and stops if you start typing.
 - **Under each reply** you'll see a small line, e.g. *1,014 words · 1,320 tokens · thinking 850 · 2,170 of 8,196*. It turns orange near the response limit. (With Dials installed, Dials shows its own line instead.)
 - **Cut-off replies:** if a reply stops mid-sentence, Storyloom marks it (*"✂ This reply stopped mid-sentence"*) and tells you why: the response limit (thinking counts against it) or something else. Press **Continue** (☰ beside the message box) to finish it.
@@ -87,49 +89,55 @@ On the Memory tab, **Writing setup…** does three things, each with its own tic
 
 ## 4. The chapter team: Lint, Editor, Reader, Revise, Seal
 
-On the Memory tab, once the chapter's written:
+The team is there because AI makes mistakes — and AI *checkers* make their own, known ones: they invent problems, pad their lists, "correct" your style, and rewrite more than they were asked. Each role is told exactly how checkers like it go wrong and what to do instead (the research is in [ai-prompting-research.md](ai-prompting-research.md)).
+
+On the Memory tab, once the chapter's written (or just press **Next chapter →**, which runs all of it):
 
 | Step | What it does | You |
 |---|---|---|
-| **Lint** | Checks the chapter against the book. *Book checks:* continuity, timeline, character, voice, period, your rules, the plan (what it hasn't done yet), and anything that belongs to a later chapter. *Exact checks:* point of view, tense, unknown names, misspelt names, repetition, stock phrases, length, a reply cut off. | Untick findings you don't want acted on. |
-| **Editor** | Marks up the pages: notes on exact passages saying what should change and why. Nothing is rewritten yet. | |
-| **Reader** | Reads like a reader and notes what drags, confuses or doesn't land. | Keep or untick each note. |
-| **Revise** | The Editor fixes the notes you kept. You see a word-by-word diff. | **Accept** (the original stays as the previous swipe) or **Discard**. |
-| **Seal** | Signs the chapter off and writes the hand-off for the next one (see [Memory](#5-memory)). | Choose what's next. |
+| **Lint** | Checks the chapter against the book's own sources — continuity with how the last chapter ended, the timeline, each character, their voice, the period, **your rules**, the plan, and anything that belongs to a later chapter (an early reveal or decision). It reports only what it can quote and show breaks a source; "No problems found" is a normal answer. *Exact checks:* echoed dialogue, a paragraph repeating the line before it, a character's sample line from their profile copied into the story, point of view (a stray "I" in a third-person book), tense, possible unknown names, misspelt names, repetition, stock phrases, length, a reply cut off. | Untick findings you don't want acted on. Possible unknown names start unticked — tick one if it really is a new person. |
+| **Editor** | Marks up the pages with the few notes that matter most — echoes and contradictions first, then out-of-character lines and the AI habits. It leaves your voice alone and never pads with "good, keep". | |
+| **Reader** | Reads like an honest reader who hasn't seen the plan: where they got lost, didn't believe it, got bored, or were ahead of the story. | Its "must" reactions are ticked for Revise; the rest (and anything it liked) are for you — tick any you want acted on. |
+| **Revise** | Fixes the notes you kept with **exact edits** — "replace this passage with that" — never a rewrite of the chapter, so nothing drifts, shrinks or gets invented. An edit whose text isn't found exactly, or that would break quotation marks, is left out and listed. You see a word-by-word diff. | **Accept** (the original stays as the previous swipe) or **Discard**. |
+| **Seal** | Signs the chapter off and writes the hand-off for the next one (see [Memory](#5-memory)), flagging anything that breaks your rules instead of making it canon. | Choose what's next. |
 
-- **Auto ▶** runs whatever's left and seals. It's **lenient**: only hard Lint findings and the notes marked MUST get fixed, while style niggles (repeats, stock phrases, length guesses) are skipped. If the chapter stops mid-sentence, Auto stops after Lint.
+- **Lint takes a second look** at its own "hard" findings before anything is changed. A separate check reads the chapter, the book's facts and each claim — not the first checker's reasoning — and keeps only what really can't be true (a time that contradicts an earlier line, a fact that breaks the plan). A character lying or bluffing, time passing off the page, a matter of taste: dropped. Dropped findings stay on the list, unticked, with the reason — tick one back if you disagree.
+- **What Lint counts that the narrator can't stop doing:** echoed dialogue (a line said back, even shortened or with "I" for "you"), a gesture or bit of business used again in the same chapter, sentences chained with "and… and… and…" (fixed when the chapter leans on them), a single sentence in the wrong tense, and a line copied from a character's profile. These go to Revise; Revise says how many echoes are left after its edits.
+- **Revise never cuts most of a passage** unless a note asked for a cut — that edit is left out and listed — and it fixes an echo without inventing a new fact.
+- **Auto ▶** (and **Next chapter →**) runs whatever's left and seals. It's **lenient**: only hard findings and the notes marked MUST get fixed; "possible" findings (an unknown name, a tense change in a first-person book) and style niggles are shown but never fixed automatically. If the chapter stops mid-sentence, Auto stops after Lint.
 - **↺ Start over** clears the findings, notes and any unaccepted revision, so you can run it all again from Lint. The chat isn't touched.
-- Each role (Checker, Editor, Reader, Seal) has its own personality and can use **its own model**, or be switched off: Extensions → Storyloom → Chapter team.
-- Revise refuses a revision that was cut off, came back much shorter, or never reached its end marker, so a broken reply can't replace your chapter.
+- Each role (Checker, Editor, Reader, Seal) has its own personality and can use **its own model** — a different model from the narrator is a good idea, because models go easy on their own writing — or be switched off: Extensions → Storyloom → Chapter team.
 
 ## 5. Memory
 
 Everything here is stored as switched-off entries in the book's lorebook (so it travels with the book) and sent by Storyloom itself. **It never appears in your chat.** You can read and edit each item on the Memory tab under *What the story AI remembers*. Extensions → Storyloom → Memory placement sets where each goes in the prompt.
 
+Where each piece goes is deliberate. Reference (the book, Story so far) goes at the top. What's true *now* — the hand-off, this chapter's plan, the scene — goes in as the author's notes just before the chapter, and the request for this reply comes last, because that's what models follow most and because some models (DeepSeek) move every "system" note to the top where it loses its pull. Every note says what it is, and the narrator's Main Prompt says which wins when two disagree.
+
 ### Between chapters (written by Seal)
 
 - **Story so far:** everything settled, chapter by chapter.
 - **Previously:** how the last chapter ended:
-  - **Where things stand:** when it is; weather, light and sounds; where each person is, what they're doing and what shape they're in; how people stand with each other; who knows what; things left in a state; promises and plans.
+  - **Where things stand:** when it is; weather, light and sounds; where each person is, what they're doing and what shape they're in; how people stand with each other; who knows what (and doesn't); things left in a state; promises and plans.
   - **What happened:** every significant moment, in order.
   - **Summary,** plus *what changed*, *what the narrator now knows*, *must not drift* and *open threads*.
   - **Last page:** the chapter's final paragraphs, word for word, so the next chapter picks up the exact moment and the voice.
 - **Character current state:** injuries, location, knowledge and possessions, written into each character's entry (offered as Suggestions).
 
-The next chapter's narrator is told that everything in *Where things stand* is still true unless the story shows time passing. Lint checks the new chapter against it too, so if it was raining when Chapter 1 ended, Chapter 2 can't open in sunshine on the same day without Lint noticing.
+Seal writes for the next chapter's AI: plain facts, only what's on the page, guesses marked "(inferred)", every "doesn't know" kept. Lint checks the new chapter against it, so if it was raining when Chapter 1 ended, Chapter 2 can't open in sunshine on the same day without Lint noticing.
 
 ### While you write (live memory)
 
-- **Scene now:** a small card (when, where, who's here and in what shape, conditions, what's in hand, what just happened), refreshed every few replies and sent close to the end of the prompt.
-- **Earlier this chapter:** once a chapter gets long, older messages are folded into a running record, so the model doesn't lose the chapter's start when it falls out of the context. Cleared when you Seal.
+- **Scene now:** a small card (when, where, who's here and in what shape, conditions, what's in hand, what just happened). When chapters are written all at once it updates after every reply; it's cleared when a chapter is sealed, so it never carries a finished chapter's scene into the next.
+- **Earlier this chapter:** for chapters written bit by bit (and roleplay), older messages are folded into a running record so a long chapter doesn't lose its start. Not needed — and not shown — when each chapter is written in one go.
 - **On stage:** before each reply, the lorebook entries of everyone in the scene card are sent, even if nobody has said their name lately.
-
-Each live update is one small call to your model. Turn them on or off and set how often in Extensions → Storyloom → **Live memory**.
 
 ### Always
 
-- **This chapter:** the plan for the chapter you're on, its length, and a line for each later chapter, marked "don't write any of this yet".
-- **Whole outline:** for orientation, with the same warning.
+- **The book:** the book's foundation (title, genre, setting, premise, who's in it) — sent **without** the plot milestones, arcs and ending, because models foreshadow and spoil what they can see. The full foundation stays in the lorebook as the record.
+- **This chapter:** the plan for the chapter you're on, its length, and one line for each later chapter, so they aren't used up early.
+- **Whole outline:** off by default (models foreshadow what they see). Turn it on in Memory placement if you want the narrator to see the whole plan.
+- **Your characters and places** arrive when they're named in the chat — or in this chapter's plan, the hand-off or the scene — so a new chapter has its people from the first line.
 
 ## 6. Moving to the next chapter
 
@@ -146,9 +154,11 @@ If you run Seal yourself (Memory tab), you choose:
 A book on the **Campaign (roleplay / D&D)** template (or any template that counts sessions) runs as a roleplay:
 
 - **Sessions,** not chapters.
+- **What to do next** is on the bar at the top: *Set up the game master →* if the chat still has the novel narrator, then *your move, in the chat* — write what your character does or says and press Send.
+- **Your character is yours.** The wizard writes your character's profile from what you said and the plain facts only — no invented past, feelings or secrets, because the game master reads that profile and would narrate them as if you'd chosen them.
 - **The Game Master.** Writing setup makes the *Storyloom Roleplay* preset and the *Storyloom Game Master* card. It plays the world and everyone in it **except your character**. It never speaks, acts, thinks or decides for you, decides uncertain outcomes fairly, keeps the world consistent, and ends each reply where it's your turn.
 - **Steps: Lint → Seal** (or Auto). The Editor, Reader and Revise don't apply when you write half the text.
-- **Lint** checks the story only: continuity, timeline, character, voice, rules, names and cut-off replies. It adds one more check: **"Acted or spoke for your character"**, which catches the narrator playing you. Your turns are included and marked, so it can tell yours from its own.
+- **Lint** checks the story only: continuity, timeline, character, voice, rules, names and cut-off replies. It adds one more check: **"Acted or spoke for your character"**, which catches the narrator playing you — both the model's own reading and an exact check for narration like "You ease the crawler forward" (what you see, hear or feel is fine). Your turns are included and marked, so it can tell yours from its own.
 - **Seal** also tracks your character between sessions: where they are, their condition, what they carry and know, what they promised, and what they did.
 - **Export** includes both sides, with your turns marked with your character's name.
 - **Compare narrators** flags a setup that never tells the model to leave your character alone.
@@ -183,9 +193,22 @@ Every change is backed up first; **Restore** in Backups puts yours back.
 
 ## 10. The Assistant
 
+**It can change anything in Storyloom you could change by hand** — tell it how you want something to work, in plain words:
+- how the narrator writes ("open every chapter in the middle of something happening"), its Post-History reminder, the narrator card;
+- how each member of the chapter team works ("the Editor should leave dialect and swearing alone"), or switch the Editor or Reader off;
+- what the setup wizard asks and builds ("also ask how I want the ending to feel") — a built-in template gets your own copy, which new books start from;
+- any Storyloom setting ("write chapter 3 bit by bit, 600 words a press"), and what the Memory tab sends where;
+- your book's lorebook and book settings.
+
+It finds the sentence or setting that causes what you describe, says so, and proposes the smallest change as a card. **Apply** makes it **your default for every book** — Writing setup and Storyloom's updates keep your version — and **Undo** puts it back. It also tells you plainly when wording won't fix something (the narrator repeating dialogue is fixed after the draft by Lint and Revise, not by a stronger rule).
+
+**Settings → Your defaults** lists everything that's yours, with **Show** (yours next to Storyloom's) and **Use Storyloom's again**. When a Storyloom update improves one of those texts, you're asked whether to add the improvement to your copy; it's added only where you haven't changed those lines, and never replaces your version.
+
 Ask anything about SillyTavern or your setup. Each question comes with a snapshot of your live settings (prompt order, lorebook scanning, Vector Storage, active lorebooks, Author's Note, the writing setup; **never API keys**) and the relevant sections of the official SillyTavern docs.
 
-It can propose changes to your lorebook, the Storyloom preset's prompts, the book settings or the narrator card. Each one comes back as a card: nothing changes until you click **Apply**, and **Undo** reverses it.
+When you ask for a change — "add me as a character", "make Walter's speech rougher", "the narrator keeps echoing, fix the prompt" — it makes the change itself as a card: your lorebook, the Storyloom preset's prompts, the book settings or the narrator card. Nothing changes until you click **Apply**, and **Undo** reverses it. It uses the real names of your entries; if it ever names one that doesn't exist, the card tells you instead of guessing. It only explains manual steps for things no card can do (sliders, connections).
+
+The chat on the **Story** tab can change the book too, after the plan is built: what you ask for is saved straight away (with Undo), and the status line lists what was saved. If the AI says it changed something but didn't, you're told.
 
 ## 11. Dials
 
@@ -236,7 +259,9 @@ Press Continue either way.
 - With **Dials**, set Storyloom's thinking to **none**. On Venice's deepseek, "low" was ignored in testing and "none" worked.
 - Without Dials, keep *Keep Storyloom's own thinking short* on.
 
-**Replies are much shorter or longer than I want.** Set **Words per narrator reply**, or say the length in your message ("about 300 words"); your direction wins. If replies stay short, check WORDS PER CHAPTER in the book's Story Scale: a reply won't be longer than the whole chapter is planned to be.
+**Chapters come out shorter than planned.** Models write about two-thirds of what they're asked for; Storyloom asks for the planned length with a floor and tells the narrator how to reach it (full scenes, not extra events). Check your **Max Response Length** fits the chapter (the line under the Write button warns if it doesn't), and **Chapter length** in Settings. Saying a length in your message ("about 300 words") always wins.
+
+**I can't find my book's lorebook.** It's named after the book and attached to the chat as its *Chat Lore* (not SillyTavern's global World Info list). The line at the top of the Storyloom panel names it, with an **Open lorebook** button. Until the plan is built it's called "Untitled novel".
 
 **Lint says "came back in a form Storyloom couldn't read."** Usually the model spent its reply thinking. Same fix as above.
 
@@ -250,4 +275,4 @@ Press Continue either way.
 
 ---
 
-*Design notes* (how the prompts are laid out and why) are in this folder: [prompt-slots.md](prompt-slots.md), [novel-craft.md](novel-craft.md), [novel-setups.md](novel-setups.md), [seal-note-reference.md](seal-note-reference.md), [lint-report-reference.md](lint-report-reference.md).
+*Design notes* (how the prompts are laid out and why) are in this folder: **[ai-prompting-research.md](ai-prompting-research.md)** (the research behind every prompt), [prompt-slots.md](prompt-slots.md), [novel-craft.md](novel-craft.md), [novel-setups.md](novel-setups.md), [seal-note-reference.md](seal-note-reference.md), [lint-report-reference.md](lint-report-reference.md).

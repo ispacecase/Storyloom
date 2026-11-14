@@ -16,9 +16,9 @@ test('current chapter text carries only that chapter plus what comes next', () =
   assert.match(one, /Chapter 1 of 2/);
   assert.match(one, /Wren arrives/);
   assert.doesNotMatch(one, /humiliation|notebook/, 'later chapters appear as one line, not their full plan');
-  assert.match(one, /Still to come — do not write any of this yet[\s\S]*- Chapter 2: The Word for It — The clinic\./);
-  assert.match(currentChapterContent(outline, 2), /final chapter: bring the story to its ending/);
-  assert.match(currentChapterContent(outline, 1, 'Chapter', {wordsPerChapter: 'approximately 2,500 (fixed by the writer)'}), /should run about 2,500 words in total/);
+  assert.match(one, /Later chapters — listed only so you don't use their events up here\. Never hint at or foreshadow them:[\s\S]*- Chapter 2: The Word for It — The clinic\./);
+  assert.match(currentChapterContent(outline, 2), /last chapter: bring the story to the ending its plan describes/);
+  assert.match(currentChapterContent(outline, 1, 'Chapter', {wordsPerChapter: 'approximately 2,500 (fixed by the writer)'}), /It runs about 2,500 words in total/);
   assert.equal(currentChapterContent(outline, 9), '');
 });
 
@@ -46,7 +46,8 @@ test('layout switches planning entries off and adds an always-on current chapter
   const create = b => (b.entries[9] = {uid: 9});
   const out = layoutBook(book, {chapter: 2, create});
   assert.equal(book.entries[1].disable, undefined, 'source untouched');
-  assert.equal(out.entries[0].constant, true);
+  assert.equal(out.entries[0].disable, true, 'the foundation reaches the narrator through Storyloom, without the ending');
+  assert.match(out.entries[0].content, /^\(Storyloom: kept here as the full record/);
   assert.equal(out.entries[1].disable, true);
   assert.equal(out.entries[2].disable, true);
   assert.equal(out.entries[3].constant, true);
@@ -78,7 +79,7 @@ test('the cast list is labelled as an index, once', async () => {
 test('switched-off planning entries say why, once, without breaking the chapter list', () => {
   const book = {entries: {1: {uid: 1, comment: 'Novel Outline', content: outline}, 2: {uid: 2, comment: 'Story Scale', content: 'CHAPTERS: 2'}}};
   const out = layoutBook(layoutBook(book, {create: b => (b.entries[9] = {uid: 9})}), {create: () => null});
-  assert.match(out.entries[1].content, /^\(Storyloom: switched off here on purpose\. The Memory tab sends it as “Whole outline”/);
+  assert.match(out.entries[1].content, /^\(Storyloom: switched off here on purpose\. The narrator gets this chapter’s plan from it/);
   assert.equal(out.entries[1].content.match(/\(Storyloom:/g).length, 1);
   assert.match(out.entries[2].content, /^\(Storyloom: planning notes, switched off on purpose/);
   assert.deepEqual(chapterList(out.entries[1].content).map(c => c.number), [1, 2]);
@@ -95,7 +96,7 @@ test('with the general narrator, the voice entry stays saved but is switched off
   assert.equal(off.entries[0].disable, true);
   assert.match(off.entries[0].content, /^\(Storyloom: kept here[\s\S]*POV: Third person, Mara\.\nTENSE: Past\.$/);
   const back = layoutBook(off, {template: NOVEL});
-  assert.equal(back.entries[0].content, 'POV: Third person, Mara.\nTENSE: Past.');
+  assert.equal(back.entries[0].content, `[${voiceTitle}]\nPOV: Third person, Mara.\nTENSE: Past.`, 'sent again, labelled');
 });
 
 test('outline edits merge by chapter: changed and new chapters replace or add, the rest stay', async () => {
@@ -128,4 +129,25 @@ test('the chapter length reads cleanly even with a stray full stop', async () =>
 test('a chapter length without a number is left out of the plan', async () => {
   const {currentChapterContent} = await import('../lorebook-layout.mjs');
   assert.doesNotMatch(currentChapterContent('Session 1 — A\nEvents: x', 1, 'Session', {wordsPerChapter: "one evening's worth"}), /should run about/);
+});
+
+test('what the narrator reads names its subject, has no review marks, and gives nothing away', async () => {
+  const {foundationForNarrator, labelled, stripAiMarks, ARCS_TITLE} = await import('../lorebook-layout.mjs');
+  const f = '(Storyloom: kept here)\nNOVEL TITLE: Small Hours\nPREMISE: A nurse finds out.\nRELATIONSHIP ARCS: From friends to a standoff.\nMAJOR PLOT MILESTONES: Monday: the ring.\nThursday: she tells him.\nENDING DIRECTION: The book ends before she speaks.\nTHE KEEPSAKES (AI-suggested): Brown paper.\n\nAll established events and character histories must remain consistent unless explicitly revised.\n\nAll established events and character histories must remain consistent unless explicitly revised.';
+  const n = foundationForNarrator(f);
+  assert.match(n, /^NOVEL TITLE: Small Hours\nPREMISE: A nurse finds out\./);
+  assert.doesNotMatch(n, /Monday|Thursday|ends before|standoff|AI-suggested|Storyloom:/);
+  assert.match(n, /THE KEEPSAKES: Brown paper\./);
+  assert.equal(n.match(/must remain consistent/g).length, 1);
+  assert.equal(labelled('Character — Walter', 'ROLE: porter.'), '[Character — Walter]\nROLE: porter.');
+  assert.equal(labelled('Character — Walter', labelled('Character — Walter', 'x')), '[Character — Walter]\nx', 'once');
+  assert.equal(stripAiMarks('BASICS: 67. AI-suggested: he lives alone. (AI-suggested) Quiet.'), 'BASICS: 67. he lives alone. Quiet.');
+  const book = {entries: {
+    1: {uid: 1, comment: 'Character — Walter Bray', content: 'ROLE IN THE STORY: The porter.\nARC THROUGH THE NOVEL: In Chapter 4 he does not argue.\nVOICE AND MANNERISMS: Short sentences.', key: ['Walter']},
+  }};
+  const out = layoutBook(book, {create: b => (b.entries[9] = {uid: 9})});
+  assert.equal(out.entries[1].content, '[Character — Walter Bray]\nROLE IN THE STORY: The porter.\nVOICE AND MANNERISMS: Short sentences.');
+  assert.equal(out.entries[9].comment, ARCS_TITLE);
+  assert.equal(out.entries[9].disable, true);
+  assert.match(out.entries[9].content, /WALTER BRAY: In Chapter 4 he does not argue\./);
 });

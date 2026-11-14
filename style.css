@@ -351,3 +351,7 @@
 #na-panel .storyloom-write-btn.is-done:hover:not(:disabled) { background:#3f5a35; }
 #na-panel .storyloom-write-btn:disabled { opacity:.7; cursor:progress; }
 #na-panel .storyloom-advanced-note { margin:0 0 .5rem; }
+#na-panel .storyloom-write-btn.is-stop { background:#7a3b32; }
+#na-panel .storyloom-write-btn.is-stop:hover:not(:disabled) { background:#5e2c25; }
+#na-panel .storyloom-bookline { display:flex; align-items:center; gap:.5rem; justify-content:space-between; padding:.35rem .75rem; font-size:.75rem; color:var(--sl-muted); border-bottom:1px solid var(--sl-line); }
+#na-panel .storyloom-bookline button { font-size:.72rem; padding:.2rem .5rem; flex:none; }

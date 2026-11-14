@@ -7,6 +7,37 @@
 import {NOVEL} from './templates.mjs';
 export const CURRENT_CHAPTER='Current Chapter';
 const ORDER={foundation:100,voice:95,chapter:90,character:80,place:70};
+export const ARCS_TITLE='Character Arcs (planning)';
+/** Headings in the book's foundation that give away later events or the ending — kept out of what the narrator is sent. */
+export const SPOILER_HEADING=/^(?:MAJOR PLOT MILESTONES|PLOT MILESTONES|MILESTONES|ENDING(?: DIRECTION)?|RELATIONSHIP ARCS|ARCS?|TWISTS?|CLIMAX|RESOLUTION|OUTCOME|CAMPAIGN ARC|PLANNED EVENTS)$/i;
+const NOTE_LINE=/^\(Storyloom:[^\n]*\)\n?/;
+const AI_MARK=/\s*\((?:AI[- ]suggested)\)|\bAI[- ]suggested:\s*/gi;
+/** Remove the wizard's "(AI-suggested)" review markers: the writer reviews in Storyloom; the narrator shouldn't read them. */
+export const stripAiMarks=text=>String(text||'').replace(AI_MARK,'').replace(/[ \t]+\n/g,'\n');
+/** Split "HEADING: text" sections (capitalised headings at line start); text before the first heading is under ''. */
+function capsSections(text) {
+  const out=[]; let cur={head:'',lines:[]};
+  for(const line of String(text||'').split('\n')) {
+    const m=line.match(/^[\s*_#-]*([A-Z][A-Z0-9 &/'’()-]{2,60}?)[*_]*\s*:\s*(.*)$/);
+    if(m && m[1]===m[1].toUpperCase()){out.push(cur); cur={head:m[1].trim(),lines:[m[2]]};}
+    else cur.lines.push(line);
+  }
+  out.push(cur);
+  return out.filter(x=>x.head||x.lines.join('').trim());
+}
+const joinSections=parts=>parts.map(x=>x.head?`${x.head}: ${x.lines.join('\n')}`.trimEnd():x.lines.join('\n').trim()).join('\n').replace(/\n{3,}/g,'\n\n').trim();
+/** The book's foundation as the narrator gets it: without milestones, arcs and the ending (models foreshadow what they see), without review marks or Storyloom's notes. */
+export function foundationForNarrator(content) {
+  const text=stripAiMarks(String(content||'').replace(NOTE_LINE,''));
+  const kept=capsSections(text).filter(x=>!SPOILER_HEADING.test(x.head));
+  const body=joinSections(kept), seen=new Set();
+  return body.split('\n').filter(l=>{const k=l.trim(); if(/^All established events and character histories must remain consistent/i.test(k)){if(seen.has(k))return false; seen.add(k);} return true;}).join('\n').trim();
+}
+/** The first line of an entry the narrator reads names what it describes (only an entry's text reaches the model). */
+export function labelled(title,content) {
+  const label=`[${String(title).trim()}]`, text=String(content||'');
+  return text.startsWith(label)?text:`${label}\n${text.replace(/^\[[^\]\n]{1,120}\]\n/,'')}`;
+}
 
 const GENERIC=new Set(['mother','father','mum','mom','dad','mama','papa','brother','sister','son','daughter','aunt','uncle','niece','nephew','cousin','wife','husband','partner','grandmother','grandfather','grandma','grandpa','granddaughter','grandson','girl','boy','man','woman','child','kid','baby','dog','cat','horse','vet','doctor','nurse','teacher','boss','friend','stranger','lad','lass','curator','priest','king','queen','guard','captain']);
 
@@ -35,10 +66,10 @@ export function currentChapterContent(outline,number,unit='Chapter',{wordsPerCha
   const u=unit.toLowerCase();
   const length=String(wordsPerChapter||'').replace(/\(.*?\)/g,'').replace(/^(approximately|approx\.?|about|around|roughly|~)\s*/i,'').trim().replace(/[.;,:]+$/,'');
   const size=!/\d/.test(length) ? '' : (!/word/i.test(length) ? `${length} words` : length); // only a real number of words
-  const parts=[`The story is currently in ${unit} ${now.number} of ${chapters.length}. Follow this plan for the ${u}; let scenes unfold naturally rather than rushing through every event.${size?` This ${u} should run about ${size} in total, across all the replies that make it up.`:''}`, now.text];
+  const parts=[`This is ${unit} ${now.number} of ${chapters.length}. Write it to this plan, giving each planned event its own scene rather than rushing through them.${size?` It runs about ${size} in total.`:''}`, now.text];
   parts.push(later.length
-    ? `Still to come — do not write any of this yet, and do not use up these events early:\n${later.map(c=>`- ${unit} ${c.number}: ${gist(c)}`).join('\n')}`
-    : `This is the final ${u}: bring the story to its ending.`);
+    ? `Later ${u}s — listed only so you don't use their events up here. Never hint at or foreshadow them:\n${later.map(c=>`- ${unit} ${c.number}: ${gist(c)}`).join('\n')}`
+    : `This is the last ${u}: bring the story to the ending its plan describes.`);
   return parts.join('\n\n');
 }
 
@@ -68,7 +99,9 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarra
   const find=title=>entries.find(e=>String(e.comment||'').trim().toLocaleLowerCase()===title.toLocaleLowerCase());
   const set=(entry,props)=>{if(entry)Object.assign(entry,props);};
   const hasProfiles=entries.some(e=>/^character\s*[—–-]/i.test(String(e.comment||'')));
-  set(find(t.summary.title),{constant:true,disable:false,order:ORDER.foundation});
+  // The foundation reaches the narrator through Storyloom ("The book", Memory tab) without milestones, arcs and the ending.
+  const foundation=find(t.summary.title);
+  if(foundation){set(foundation,{constant:false,disable:true,order:ORDER.foundation}); foundation.content=`(Storyloom: kept here as the full record and switched off on purpose — the narrator gets it as “The book” from the Memory tab, without the milestones, arcs and ending, so it can’t foreshadow them.)\n${String(foundation.content||'').replace(NOTE_LINE,'')}`;}
   for(const e of t.entries) {
     if(e.show==='always')set(find(e.title),{constant:true,disable:false,order:ORDER.voice});
     else if(e.show==='off')set(find(e.title),{disable:true});
@@ -85,7 +118,7 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarra
   if(hasProfiles)set(find(t.cast),{disable:true});
   // Planning-only entries are switched off on purpose; say so inside them, since the editor only shows "disabled".
   const note=(entry,text)=>{if(entry)entry.content=`(Storyloom: ${text})\n${String(entry.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'')}`;};
-  note(find(t.outline.title),'switched off here on purpose. The Memory tab sends it as “Whole outline”, with an instruction to use it for direction and never write ahead.');
+  note(find(t.outline.title),'switched off here on purpose. The narrator gets this chapter’s plan from it (Memory tab: This chapter); the whole outline is only sent if you turn on “Whole outline”.');
   for(const e of t.entries)if(e.show==='off')note(find(e.title),'planning notes, switched off on purpose — the story chat doesn’t need them.');
   // The cast list is only an index; label it so it isn't mistaken for thin character entries.
   const castEntry=find(t.cast), label='(Cast index for Storyloom — not sent to the story. Full profiles are the “Character — Name” entries.)';
@@ -95,6 +128,26 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarra
   // Memory entries are sent by Storyloom itself (Memory tab), never by lorebook scanning.
   for(const e of entries)if(/^storyloom memory\s*[—–-]/i.test(String(e.comment||'')))set(e,{disable:true,constant:false});
   cleanCharacterKeys(entries);
+  // A profile's "arc through the novel" narrates the person's future and is sent whenever they're named: kept as planning instead.
+  const arcs=[];
+  for(const e of entries.filter(x=>/^character\s*[—–-]/i.test(String(x.comment||'')))) {
+    const parts=capsSections(String(e.content||'')), i=parts.findIndex(x=>/^ARC\b/i.test(x.head));
+    if(i<0)continue;
+    const name=String(e.comment).replace(/^character\s*[—–-]\s*/i,'').trim();
+    arcs.push(`${name.toUpperCase()}: ${parts[i].lines.join('\n').trim()}`);
+    parts.splice(i,1); e.content=joinSections(parts);
+  }
+  if(arcs.length) {
+    let arcEntry=find(ARCS_TITLE);
+    if(!arcEntry && typeof create==='function'){arcEntry=create(book); if(arcEntry){arcEntry.comment=ARCS_TITLE; arcEntry.key=[]; arcEntry.content='';}}
+    if(arcEntry){const prev=String(arcEntry.content||'').replace(NOTE_LINE,'').trim(); arcEntry.content=`(Storyloom: planning notes, switched off on purpose — how each person changes over the book. Kept out of the narrator's view so it can't play their future early.)\n${[prev,...arcs].filter(Boolean).join('\n\n')}`; set(arcEntry,{disable:true,constant:false});}
+  }
+  // Everything the narrator can be sent says what it is, and carries no review marks.
+  for(const e of entries) {
+    const title=String(e.comment||'').trim();
+    if(!title || e.disable || /^storyloom memory\s*[—–-]/i.test(title) || title===CURRENT_CHAPTER)continue;
+    e.content=labelled(title,stripAiMarks(e.content));
+  }
   const outline=find(t.outline.title)?.content;
   const scaleEntry=t.entries.map(e=>find(e.title)).find(e=>/WORDS PER/i.test(String(e?.content||'')));
   const wordsPerChapter=(String(scaleEntry?.content||'').match(/^[\s*_-]*WORDS PER [A-Z]+\s*:\s*(.+)$/mi)||[])[1]||'';

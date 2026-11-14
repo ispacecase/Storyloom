@@ -58,7 +58,7 @@ test('layout follows the template’s show settings', () => {
   entries[20] = {uid: 20, comment: 'Character — Kael', content: 'x', key: ['Kael']};
   const out = layoutBook({entries}, {chapter: 2, template: CAMPAIGN, create: b => (b.entries[30] = {uid: 30})});
   const by = t => Object.values(out.entries).find(e => e.comment === t);
-  assert.equal(by('Campaign Overview').constant, true);
+  assert.equal(by('Campaign Overview').disable, true, 'sent by Storyloom without the arc');
   assert.equal(by('Table Rules and Voice').constant, true);
   assert.equal(by('Campaign Scale').disable, true);
   assert.equal(by('Campaign Arc').disable, true);

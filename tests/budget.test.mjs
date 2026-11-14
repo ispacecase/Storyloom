@@ -14,8 +14,8 @@ test('length categories follow the SFWA thresholds', () => {
   assert.deepEqual([7499, 7500, 17499, 17500, 39999, 40000].map(lengthCategory), ['short story', 'novelette', 'novelette', 'novella', 'novella', 'novel']);
 });
 
-test('the core share comes from the writer, never silently invented', () => {
-  assert.deepEqual(coreShare('the encounter — about 80% of it'), {share: 0.8, source: 'you said 80%'});
+test('the core share is labelled with where it came from (the proposal), never claimed as the writer’s', () => {
+  assert.deepEqual(coreShare('the encounter — about 80% of it'), {share: 0.8, source: 'as the proposal puts it'});
   assert.equal(coreShare('the whole thing is their night together').share, 0.9);
   assert.equal(coreShare('mostly the heist').share, 0.75);
   assert.match(coreShare('').source, /not stated/);

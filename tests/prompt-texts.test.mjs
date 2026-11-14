@@ -15,3 +15,10 @@ test('edited prompt parts replace only the editable wording; locked mechanics st
   setPromptOverrides({});
   assert.match(planningSystem('simple'), /^You are Storyloom/);
 });
+
+test('the outline puts something that goes wrong in every chapter', async () => {
+  const {PROMPT_DEFAULTS} = await import('../prompt-texts.mjs');
+  const outline = Object.values(PROMPT_DEFAULTS).find(x => x.label === 'How the outline is written').text;
+  assert.match(outline, /In every chapter, something goes wrong for the main character/);
+  assert.match(outline, /never from nowhere/);
+});

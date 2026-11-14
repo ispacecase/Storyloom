@@ -9,15 +9,15 @@ import {paragraphs, quote} from './lint.mjs';
 export const ROLES = Object.freeze({
   checker: {label: 'Checker', step: 'Lint', model: 'copyeditor and continuity checker',
     job: 'Checks grammar, spelling and punctuation, and checks the chapter against the book — character voices, the outline, the timeline, the period, the writer’s rules, point of view and tense. Quotes the exact line and names the rule it breaks. Never rewrites.',
-    persona: 'You are the Checker: a meticulous copyeditor and continuity checker. You are literal and exact, and you have no opinions about taste — you do not care whether a sentence is pretty, only whether it is correct and consistent with the book. You never rewrite. When you are not sure something is wrong, you say “possible” instead of guessing.',
+    persona: 'You are the Checker: a meticulous copyeditor and continuity checker. You are literal and exact, and you have no opinions about taste — you do not care whether a sentence is pretty, only whether it is correct and consistent with the book. You report only what you can quote and show, you never pad a list, and "No problems found" is an answer you are glad to give. You never rewrite. When you are not sure something is wrong, you say “Possible:” instead of guessing.',
     sampling: {temperature: 0.2}},
   editor: {label: 'Editor', step: 'Editor', model: 'line and story editor',
     job: 'Pass 1: marks up the pages with notes pinned to exact passages — what should change and why. Pass 2: revises the chapter, fixing only the notes the writer approved.',
-    persona: 'You are the Editor: an experienced line and story editor. You protect the writer’s voice above everything and make the smallest change that fixes a problem. You are firm but respectful and always say why. You never add characters, events or plot, and you never “improve” what is not broken.',
+    persona: 'You are the Editor: an experienced line and story editor. You protect the writer’s voice above everything and make the smallest change that fixes a problem. You make few notes, the ones that matter, and you never pad them with praise. You are firm but respectful and always say why. You never add characters, events or plot, and you never “improve” what is not broken.',
     sampling: {temperature: 0.5}},
   reader: {label: 'Reader', step: 'Reader', model: 'beta reader',
     job: 'Reads the chapter like someone who picked up the book, knowing only what came before. Marks where they got lost, didn’t believe something, got bored, or something didn’t land. Doesn’t fix grammar and doesn’t rewrite.',
-    persona: 'You are the Reader: an honest, plain-spoken beta reader who reads a lot. You react as a reader, not a writer — “I didn’t buy that she’d forgive him this fast”, “I lost track of who was talking here”. You are candid but never cruel, and you say what worked as well as what didn’t, briefly.',
+    persona: 'You are the Reader: an honest, plain-spoken beta reader who reads a lot of novels and has no stake in this one. You react as a reader, not a writer — “I didn’t buy that she’d forgive him this fast”, “I lost track of who was talking here”. You don’t flatter; you are candid but never cruel, and you mention what worked only when it truly did.',
     sampling: {temperature: 0.7}},
   seal: {label: 'Seal', step: 'Seal', model: 'archivist',
     job: 'Signs off the finished chapter and writes its seal note: summary, what changed, what the narrator now knows, what must not drift, open threads. Updates Story so far.',
@@ -65,17 +65,33 @@ export function parseNotes(text, source) {
   }
   return out;
 }
+// A note that asks for nothing ("leave it", "no change needed", "fine as is") isn't a note: Revise would have nothing to do with it.
+const NO_CHANGE = /\bno change (?:needed|required|beyond)\b|\bfine as is\b|\b(?:needs|need) no (?:change|cast)|\bnothing to change\b|^\s*(?:good|fine|works)\b[^.]*\.?\s*$|\b(?:keep|leave) (?:it|this|as is)\.?\s*$/i;
+// Reader praise ("Worked: …", or "nice, …", "best moment…" with no "but"): shown to the writer, never sent to Revise.
+export const isPraise = note => /^\s*worked\s*:/i.test(note || '') || (/^\s*(?:nice|good|great|best|strong|lovely|love|loved|effective|quiet and effective|flat and funny|funny|clever|excellent|beautiful|perfect|i (?:like|liked|love|loved)|this works|works|small, and)\b/i.test(note || '') && !/\b(?:but|though|although|however|except|only)\b/i.test(note || ''));
+export const notesAskingForChange = notes => (notes || []).filter(n => !NO_CHANGE.test(n.note || ''));
 export const overallLine = text => (String(text || '').match(/^\s*OVERALL\s*:\s*(.+)$/mi) || [])[1]?.trim() || '';
 
-/** Editor pass 1: mark up the pages. */
+/** Editor pass 1: mark up the pages. Research: docs/ai-prompting-research.md §5. */
 export function markupInstruction({unit = 'Chapter', number = 1, parts = [], facts = '', findings = []}) {
+  const u = unit.toLowerCase();
   const missing = findings.filter(f => f.kind === 'PLAN'); findings = findings.filter(f => f.kind !== 'PLAN');
-  return `Mark up ${unit} ${number}. Do not rewrite it — write editing notes pinned to exact passages, the way an editor marks up pages.
-${missing.length ? `Still to write (the writer will write these in the chat; do not write them and do not make notes asking for them): ${missing.map(f => `"${f.quote}"`).join('; ')}.\n` : ''}${findings.length ? `The writer approved these findings from the check. Write a note for each one saying how to fix it (they come first):\n${findings.map(f => `- ${f.where || ''} ${f.kind}: "${f.quote}" — ${f.rule}`).join('\n')}\n\nThen add` : 'Write'} any other notes a good line and story editor would make: clarity, pacing, flat or overwritten sentences, dialogue that doesn’t sound like the person, scenes that don’t do their job in the outline. Fewer, better notes beat many small ones. Leave alone what works.
-Each line of the chapter is numbered ("12| …"). Write one line per note, exactly like this:
+  return `Mark up ${unit} ${number} the way a line editor marks up pages: short notes pinned to exact passages, each saying what should change and why. Don't rewrite anything yourself.
+Editors built on language models fail in known ways: they make far too many notes, pad the list with praise ("good, keep"), treat the author's deliberate style as errors, push the prose toward their own taste (more description, explanation, metaphor, emotion words), and miss the problems that matter most. So:
+- Fewer, better notes: the changes that would most improve this ${u}, usually five to fifteen. Every note asks for a change — never a note that says "good", "keep" or "leave it".
+- Start with the biggest problems. In order, look for:
+  1. Echoed dialogue — a line that only repeats what was just said ("Lasagne." "Lasagne."; "You know about Friday." "I know about Friday.") — and a paragraph that restates the one before it.
+  2. Facts that don't fit: times, who is where, who is on duty or in the room, what someone knows, anything that contradicts the book's facts or an earlier line.
+  3. Someone acting or speaking unlike their profile, or two people who sound the same.
+  4. The AI habits: explained subtext, "not X but Y", endings on a quotable line or a moral, counsellor talk, conflict that resolves too easily, nodding/sighing/smiling on every line, stock phrases, a detail repeated until it's worn out, sentences chained with "and… and… and".
+  5. Clarity: a reader can't tell who is speaking, what happened, or why someone reacts as they do.
+- Leave the author's voice alone: their sentence lengths, fragments, dialect, plain words, rhythm, and the way they write numbers and names stay ("a hundred and forty" is never "140"). Never suggest adding dashes, fancier words, emotion words, metaphors or explanations.
+- Never ask for new events, people or facts, or for anything the book's facts or rules forbid — and never ask to cut a moment only because the plan doesn't mention it.
+- What a character says isn't a fact: never ask to "correct" a line where someone lies, bluffs or is wrong.
+- Mark a note must when it fixes a broken fact, rule, plan, an echo, a contradiction, a tense slip, a line copied from a profile, a gesture repeated from earlier in the chapter or a sentence chained with "and… and…" that the check found; everything else is suggest. For a repeated gesture, write one note for each repeat after the first, at its own line.
+${missing.length ? `Still to write (the writer will write these in the chat; don't write them and don't make notes asking for them): ${missing.map(f => `"${f.quote}"`).join('; ')}.\n` : ''}${findings.length ? `The writer approved these findings from the check. For each one that needs the text changed, write a note saying how to fix it with the smallest change (they come first). If one needs no change once you look at it — a brand, place or object rather than a new person, a fact that turns out to fit — skip it: don't write a note saying so.\n${findings.map(f => `- ${f.where || ''} ${f.kind}: "${f.quote}" — ${f.rule}`).join('\n')}\n\nThen add your own notes.\n` : ''}Each line of the ${u} is numbered ("12| …"). Write one line per note, exactly like this:
 - [must|suggest] line N: "exact quote from that line, under 20 words" — what should change and why, in one or two sentences
-Mark it must if it breaks the book or the writer's rules, suggest if it is your judgment.
-After the notes write one line: OVERALL: your one-sentence verdict on the ${unit.toLowerCase()}.
+After the notes write one line: OVERALL: the ${u}'s biggest problem and its biggest strength, in one sentence.
 
 THE BOOK'S FACTS
 ${facts}
@@ -86,12 +102,16 @@ ${numberedParts(parts)}`;
 
 /** Reader: only the chapter and what came before — not the plan, so it reacts like a real reader. */
 export function readerInstruction({unit = 'Chapter', number = 1, parts = [], storySoFar = '', previously = ''}) {
-  return `Read ${unit} ${number} as a reader would. You have not seen the author's plan or notes — only the story so far, below. Mark the places where, as a reader, you got lost or confused, didn't believe something, got bored, couldn't tell who was speaking, or where something should have landed and didn't. Also mark at most two places that really worked.
-Do not fix grammar. Do not rewrite. Speak as a reader ("I", "me"), not a writer.
+  const u = unit.toLowerCase();
+  return `Read ${unit} ${number} as a reader would. You haven't seen the author's plan or notes — only the story so far, below.
+Readers simulated by language models fail in known ways: they open with praise and tack on timid criticism, give the predictable reaction, and talk about style instead of whether the story made sense and held them. Be an honest reader instead:
+- React as you go, each reaction pinned to a line: where you got lost or confused, didn't believe something, got bored, couldn't tell who was speaking, saw a line said twice, were ahead of the story, or where something should have landed and didn't.
+- Praise only the same way, quoting the line and saying what it did — at most two, and start them with "Worked:". No opening compliments.
+- Don't fix grammar and don't rewrite. Speak as a reader ("I", "me"), not a writer.
 Each line is numbered ("12| …"). Write one line per reaction, exactly like this:
 - [must|suggest] line N: "exact quote from that line, under 20 words" — your reaction as a reader
-Use must for places that would make you stop reading or lose the thread, suggest for the rest. For a place that worked, start the reaction with "Worked:".
-After the reactions write one line: OVERALL: how the ${unit.toLowerCase()} felt to read, in one sentence.
+Use must for places that would make you stop reading or lose the thread, suggest for the rest.
+After the reactions write one line: OVERALL: how the ${u} felt to read, and what you expect to happen next, in one or two sentences.
 
 THE STORY SO FAR (what a reader already knows)
 ${storySoFar || '(this is the beginning of the book)'}
@@ -100,25 +120,115 @@ ${unit.toUpperCase()} ${number}
 ${numberedParts(parts)}`;
 }
 
-/** Editor pass 2: revise, fixing only the approved notes, returning every part. */
+/**
+ * Editor pass 2: fix only the approved notes, as exact edits (find this text → replace it), never a rewrite of whole parts.
+ * Research (docs/ai-prompting-research.md §5): whole-text revisions drift, shorten, smooth the voice and invent; exact edits don't.
+ */
 export function reviseInstruction({unit = 'Chapter', number = 1, parts = [], facts = '', notes = []}) {
-  return `Revise ${unit} ${number}, fixing exactly the notes below and nothing else. Keep everything that no note touches word for word. Keep the writer's voice, point of view and tense. Do not add characters, events or plot. Do not summarise or shorten.
+  const u = unit.toLowerCase();
+  return `Revise ${unit} ${number} by making the edits the approved notes ask for, and nothing else. This is someone else's prose: your job is the smallest change that fixes each note.
+Language models revising prose fail in known ways: they rewrite far more than asked, smooth the author's voice into their own (more dashes and commas, longer words, emotion words, explanations), shorten, shift what a passage means, invent new events — and when two notes pull different ways, make the ${u} contradict itself. So:
+- Change only the words that need changing to fix the note.
+- Keep the author's habits: sentence lengths, punctuation, contractions, plain words, dialect, tense and point of view. Add no dashes, semicolons, emotion words, explanations or summaries — never name what a passage shows ("the lie", "her fear") and never add a line that says what something means.
+- What a character says isn't a fact: never change a line where someone lies, bluffs or is wrong to make it true.
+- Never add a new event, person or fact, and never change a fact (a time, a name, who was there) unless the note says that fact is wrong. A note that asks "whose is it?" or "when?" gets no invented answer (a licence plate, an owner, a new time): skip it.
+- A reader's confusion is fixed by making the existing words clearer (word order, who is speaking, one name instead of "he"), never by adding a sentence that explains ("…and he is the one who is dead").
+- Keep numbers, units and spellings as the text writes them: "a hundred and forty" stays in words, "forty" on a road stays a speed.
+- Add nothing the note didn't ask for: no gestures or habits from a profile, no extra closing beat, no new detail to make a line "land".
+- An echoed line is fixed only when nobody repeats anyone any more: replace the repeated words with a reply that does something else — a question back, a dodge, a refusal, an action, or something the chapter has already established. Never answer with a new fact (a time, a date, a number, a name, a reason) that the book doesn't have: an echo fixed by inventing one makes a contradiction later. Shortening the repeat ("The road past them." → "Past them.") or swapping in another word the last speaker used is still an echo. Keep the rest of that paragraph as it is.
+- A note can be wrong. Check its claim against the ${u} and the book's facts before acting; if the claim doesn't hold (the text already says it, the "contradiction" isn't one), skip it and say so.
+- Read the whole ${u}: if fixing one place makes another place wrong or repetitive (a time, who is on shift, what someone knows, the same thing now said twice), fix that place too, as its own edit. Before you change a time, check every other time in the ${u}.
+- If a note can't be fixed without inventing something or breaking another part, skip it and say why at the end. Skipping is better than a fix that makes the ${u} worse.
+
 THE APPROVED NOTES
 ${notes.map(n => `- ${n.where}: "${n.quote}" — ${n.note}`).join('\n')}
 
-Return the ${unit.toLowerCase()} part by part, without line numbers, in exactly this form:
-=== PART 1
-(the full revised text of part 1, or the single word UNCHANGED if no note touches it)
-=== PART 2
+Write each edit in exactly this form:
+=== EDIT 1
+NOTE: which note it fixes (its line)
+FIND: the exact text to change, copied character for character from the ${u} below — without the line numbers — within one paragraph and long enough to appear only once (usually one whole sentence)
+REPLACE: the new text that goes in its place
+=== EDIT 2
 (…)
 === END
-There are ${parts.length} part${parts.length === 1 ? '' : 's'}; list all of them, in order. Write UNCHANGED for a part you do not change instead of copying it. A part you change must come back complete, from its first word to its last — never stop part-way. Finish with === END.
+SKIPPED: the notes you didn't fix and why, or "none"
+Storyloom applies an edit only if it finds its FIND text in the ${u} exactly once; any other edit is left out and shown to the author.
 
 THE BOOK'S FACTS (for reference)
 ${facts}
 
 ${unit.toUpperCase()} ${number} AS WRITTEN
 ${numberedParts(parts)}`;
+}
+/** Read edits back: [{note, find, replace}] (null if the reply has none and doesn't say there's nothing to do). */
+export function parseEdits(text) {
+  const body = String(text || '').replace(/\r\n?/g, '\n');
+  const edits = [];
+  const re = /^[\s*_#>]*===\s*EDIT\b[^\n]*\n([\s\S]*?)(?=^[\s*_#>]*===\s*(?:EDIT\b|END\b)|(?![\s\S]))/gmi;
+  for (const m of body.matchAll(re)) {
+    const block = m[1];
+    const f = block.match(/^[\s*_]*FIND[\s*_]*:\s*([\s\S]*?)\n[\s*_]*REPLACE[\s*_]*:[ \t]*\n?([\s\S]*)$/mi);
+    if (!f) continue;
+    const note = (block.match(/^[\s*_]*NOTE[\s*_]*:\s*(.*)$/mi) || [])[1]?.trim() || '';
+    // A model sometimes writes FIND: or REPLACE: twice; only the text after the last label is the edit.
+    const afterLast = (t, label) => String(t).split(new RegExp(`^[\\s*_]*${label}[\\s*_]*:[ \\t]*`, 'mi')).pop();
+    const find = afterLast(f[1], 'FIND').replace(/^\s*\d+\|\s?/gm, '').trim().replace(/^["“]|["”]$/g, '');
+    const replace = afterLast(f[2], 'REPLACE').replace(/^\s*\d+\|\s?/gm, '').trim().replace(/^["“](?![\s\S]*["“])|["”]$/g, '');
+    if (find) edits.push({note, find, replace});
+  }
+  const skipped = (body.match(/^[\s*_]*SKIPPED[\s*_]*:\s*(.*)$/mi) || [])[1]?.trim() || '';
+  if (!edits.length && !/===\s*END\b/i.test(body)) return null;
+  return {edits, skipped};
+}
+/** A pattern for FIND that tolerates curly/straight quotes, dash kinds and spacing — nothing else. */
+const looseRe = find => new RegExp(String(find).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  .replace(/[“”"]/g, '[“”"]').replace(/[‘’']/g, "[‘’']").replace(/[—–]|--/g, '(?:—|–|--)').replace(/\.\.\.|…/g, '(?:\\.\\.\\.|…)').replace(/\s+/g, '\\s+'), 'g');
+/** Where numbered line n (as numberedParts counts them) sits: {i: part, start, end} in that part's text, or null. */
+function lineSpan(parts, n) {
+  if (!n) return null;
+  let count = 0;
+  for (let i = 0; i < parts.length; i++) {
+    let from = 0;
+    for (const p of paragraphs(parts[i])) {
+      const start = parts[i].indexOf(p.text, from); from = start + p.text.length;
+      if (++count === n) return start < 0 ? null : {i, start, end: start + p.text.length};
+    }
+  }
+  return null;
+}
+/** Apply edits to the chapter parts: each FIND must occur exactly once across the chapter. Returns {parts, applied, missed}. */
+export function applyEdits(parts, edits) {
+  const out = parts.map(String), applied = [], missed = [];
+  for (const e of edits || []) {
+    const re = looseRe(e.find);
+    let hits = [];
+    out.forEach((t, i) => { for (const m of t.matchAll(re)) hits.push({i, index: m.index, len: m[0].length}); });
+    // A short FIND that occurs more than once ("Sunday night.") is placed by the line its note names, when that line holds exactly one.
+    if (hits.length > 1) { const span = lineSpan(out, Number((String(e.note).match(/\bline\s*(\d+)/i) || [])[1])); if (span) { const inLine = hits.filter(h => h.i === span.i && h.index >= span.start && h.index < span.end); if (inLine.length === 1) hits = inLine; } }
+    if (hits.length !== 1) { missed.push({...e, why: hits.length ? `found ${hits.length} times` : 'not found in the chapter'}); continue; }
+    const h = hits[0], t = out[h.i];
+    let rep = String(e.replace);
+    // Use the chapter's own quote style (models often answer curly quotes with straight ones, or the reverse).
+    const curlyText = /[“”]/.test(t), straightText = /"/.test(t);
+    if (curlyText && !straightText && /"/.test(rep)) { let open = true; rep = rep.replace(/"/g, () => (open = !open) ? '”' : '“'); }
+    if (straightText && !curlyText && /[“”]/.test(rep)) rep = rep.replace(/[“”]/g, '"');
+    // The model often copies FIND without the quote mark that opens or closes it, then puts one in the replacement: don't double it.
+    const before = t.slice(0, h.index), after = t.slice(h.index + h.len);
+    if (/[“"‘]$/.test(before) && /^[“"‘]/.test(rep)) rep = rep.slice(1);
+    if (/^[”"’]/.test(after) && /[”"’]$/.test(rep) && !/^[”"’]/.test(t.slice(h.index + h.len - 1))) rep = rep.slice(0, -1);
+    const next = before + rep + after;
+    // Never leave a paragraph with a quotation opened and not closed.
+    const para = (txt, at) => { const a = txt.lastIndexOf('\n\n', at) + 1, b = txt.indexOf('\n\n', at); return txt.slice(a, b < 0 ? undefined : b); };
+    const balanced = q => (q.match(/“/g) || []).length === (q.match(/”/g) || []).length && (q.match(/"/g) || []).length % 2 === 0;
+    if (balanced(para(t, h.index)) && !balanced(para(next, h.index))) { missed.push({...e, why: 'would break the quotation marks', replace: rep}); continue; }
+    // An edit that throws away most of a passage when its note didn't ask for a cut loses the writer's text (a test chapter lost a whole
+    // line of dialogue to a three-word "fix" for an echo): leave it out and show it.
+    const wc = x => (String(x).match(/[\p{L}\p{N}']+/gu) || []).length, fw = wc(e.find), rw = wc(rep);
+    if (fw >= 12 && rw < fw * 0.5 && !/\b(cut|remove|delete|drop|trim|shorten|tighten|condense|lose|too long|overwritten|redundant)\b/i.test(e.note || '')) { missed.push({...e, why: `would cut ${fw - rw} of its ${fw} words though the note didn’t ask for a cut`, replace: rep}); continue; }
+    out[h.i] = next;
+    applied.push(e);
+  }
+  return {parts: out, applied, missed};
 }
 /**
  * Read the revision back. `originals` is the chapter's parts (or just their count). Returns null unless every part

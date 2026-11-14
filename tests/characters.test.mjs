@@ -51,3 +51,25 @@ test('when the writer named the cast, extra people are split out for approval', 
   assert.deepEqual(extras.map(l => l.split('|')[0].trim()), ['Cath', 'Mrs Ovey']);
   assert.deepEqual(splitExtraCast(cast, 'Jimmy and Lilyanne').extras.length, 4, 'partial name matches do not count');
 });
+
+test('profiles list no habits or gestures (the narrator repeats whatever is listed)', async () => {
+  const {PROMPT_DEFAULTS} = await import('../prompt-texts.mjs');
+  const style = Object.values(PROMPT_DEFAULTS).find(x => x.label === 'How character profiles are written').text;
+  assert.match(style, /List no habits, gestures or bits of business/);
+  assert.doesNotMatch(style, /at most one habit/);
+  const ins = characterProfilesInstruction(['Ada'], ['Ada'], PROFILE_SECTIONS);
+  assert.match(ins, /Speech only: no habits, gestures/);
+  assert.doesNotMatch(ins, /carry themselves/);
+  // The narrator copied every sample line into the book (4 of 4 test drafts): voices are described, never quoted.
+  assert.match(ins, /described, never quoted/);
+  assert.match(style, /no quoted lines or sample dialogue anywhere in the profile/);
+  assert.doesNotMatch(style, /sample lines that sound like/);
+});
+
+test('in a campaign, the player’s own character gets only what the player said — no invented inner life', () => {
+  const mine = characterProfilesInstruction(['Reyes'], ['Reyes', 'Tomasz'], PROFILE_SECTIONS, 'Session', {player: 'Reyes'});
+  assert.match(mine, /Reyes is the player's own character/);
+  assert.match(mine, /Invent no past events, inner life, contradictions, fears, secrets or KEPT HIDDEN/);
+  const npc = characterProfilesInstruction(['Tomasz'], ['Reyes', 'Tomasz'], PROFILE_SECTIONS, 'Session', {player: 'Reyes'});
+  assert.doesNotMatch(npc, /player's own character/);
+});

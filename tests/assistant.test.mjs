@@ -95,3 +95,54 @@ test('the assistant can propose writing-setup changes, checked strictly', async 
   assert.match(assistantSystem(), /HOW STORYLOOM SETS UP WRITING[\s\S]*Storyloom Novel/);
   assert.match(assistantSystem(), /never the writer's own presets/);
 });
+
+test('the Assistant can change Storyloom itself: edit-text, set-option, set-team-member, set-memory cards', async () => {
+  const {parseActions, applyTextEdit, describeAction, formatStoryloom, assistantSystem, OPTIONS} = await import('../assistant.mjs');
+  const reply = `I'd make the Editor leave dialect alone.
+=== ACTION: edit-text
+TEXT: team:editor
+FIND:
+You protect the writer’s voice above everything
+REPLACE:
+You protect the writer’s voice above everything, dialect and swearing included,
+=== END
+=== ACTION: set-option
+NAME: how-chapters-get-written
+VALUE: bit-by-bit
+=== END
+=== ACTION: set-team-member
+ROLE: reader
+ENABLED: no
+=== END
+=== ACTION: set-memory
+ITEM: outline
+WHERE: chat-depth
+DEPTH: 4
+ROLE: user
+=== END
+=== ACTION: set-option
+NAME: chapter-length
+VALUE: lots
+=== END`;
+  const {actions, problems, reply: text} = parseActions(reply);
+  assert.equal(text, 'I’d make the Editor leave dialect alone.'.replace('’', "'"));
+  assert.deepEqual(actions.map(a => a.type), ['edit-text', 'set-option', 'set-team-member', 'set-memory']);
+  assert.equal(actions[0].find, 'You protect the writer’s voice above everything');
+  assert.equal(actions[0].replace, 'You protect the writer’s voice above everything, dialect and swearing included,');
+  assert.equal(actions[1].value, 'bit-by-bit'); assert.equal(actions[2].enabled, false); assert.equal(actions[3].depth, 4);
+  assert.equal(problems.length, 1, 'a bad value is a problem, not a card'); assert.match(problems[0], /chapter-length must be a number/);
+  assert.match(describeAction(actions[0]), /the editor’s personality/);
+  // Edits find their words once, tolerating quote kinds; otherwise they explain.
+  assert.equal(applyTextEdit('A "quoted" rule. Another.', 'A “quoted” rule.', 'A new rule.'), 'A new rule. Another.');
+  assert.throws(() => applyTextEdit('x and x', 'x', 'y'), /appear 2 times/);
+  assert.throws(() => applyTextEdit('abc', 'zzz', 'y'), /aren’t in the current text/);
+  assert.equal(applyTextEdit('Rules.', '', 'One more rule.'), 'Rules.\nOne more rule.');
+  // The snapshot lists every option with its value, and every text with its wording.
+  const snap = formatStoryloom({options: {'how-chapters-get-written': 'all-at-once'}, team: [{role: 'editor', label: 'Editor', enabled: true}], texts: [{id: 'team:editor', label: 'Editor', what: 'x', text: 'You are the Editor.', yours: false}]});
+  for (const id of Object.keys(OPTIONS)) assert.ok(snap.includes(`- ${id} (“`), id);
+  assert.match(snap, /how-chapters-get-written \(“How chapters get written” in Settings\) = all-at-once \(all-at-once \| bit-by-bit; all books\)/);
+  assert.equal(describeAction(actions[1]), 'Settings: “How chapters get written” → bit by bit (all books)');
+  assert.match(snap, /--- team:editor — Editor \[Storyloom’s\]/);
+  assert.match(assistantSystem(), /You can change anything in Storyloom/);
+  assert.match(assistantSystem(), /no quoted sample lines/);
+});

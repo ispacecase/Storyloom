@@ -32,7 +32,9 @@ test('the reader is not shown the plan; the editor gets the approved findings', 
 
 test('a revision is accepted only when every part comes back', () => {
   const ask = reviseInstruction({parts: ['a', 'b'], notes: [{where: 'line 1', quote: 'a', note: 'fix'}]});
-  assert.match(ask, /There are 2 parts/);
+  assert.match(ask, /=== EDIT 1\nNOTE:/);
+  assert.match(ask, /smallest change that fixes each note/);
+  assert.match(ask, /Never add a new event, person or fact/);
   assert.deepEqual(parseRevision('=== PART 1\nNew a\n=== PART 2\n2| New b\n=== END', 2), ['New a', 'New b']);
   assert.equal(parseRevision('=== PART 1\nNew a\n=== END', 2), null);
 });
@@ -101,4 +103,79 @@ test('a revision that was cut off, shortened or never finished is refused', () =
   assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== PART 2\nHe said, "There is ice cream."\n=== END', orig), null, 'much shorter');
   assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== PART 2\nHe said, "There is ice cream in the freezer, if she asks." Then he went out.', orig), null, 'no END and the last part is short');
   assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== END', 1), null, 'UNCHANGED needs the originals');
+});
+
+test('Revise edits exact passages; an edit that isn\'t found exactly once is left out and reported', async () => {
+  const {parseEdits, applyEdits} = await import('../roles.mjs');
+  const parts = ['Dev came on at half six with his coat still on.', '“It’s on the chart,” Dev said. It was. It was.'];
+  const raw = '=== EDIT 1\nNOTE: line 1\nFIND: Dev came on at half six with his coat still on.\nREPLACE: Dev came back from the drug fridge at half six.\n=== EDIT 2\nNOTE: line 2\nFIND: "It\'s on the chart," Dev said.\nREPLACE: “Then it\'s on the chart,” Dev said.\n=== EDIT 3\nFIND: It was.\nREPLACE: It is.\n=== EDIT 4\nFIND: not in the text\nREPLACE: x\n=== END\nSKIPPED: none';
+  const p = parseEdits(raw);
+  assert.equal(p.edits.length, 4);
+  assert.equal(p.skipped, 'none');
+  const r = applyEdits(parts, p.edits);
+  assert.equal(r.parts[0], 'Dev came back from the drug fridge at half six.');
+  assert.match(r.parts[1], /^“Then it's on the chart,” Dev said\. It was\. It was\.$/, 'curly/straight quotes still match');
+  assert.deepEqual(r.missed.map(m => m.why), ['found 2 times', 'not found in the chapter']);
+  assert.equal(parseEdits('just some text'), null);
+  assert.deepEqual(parseEdits('=== END\nSKIPPED: all — nothing needed').edits, []);
+});
+
+test('Revise never doubles or drops quotation marks', async () => {
+  const {applyEdits} = await import('../roles.mjs');
+  const parts = ['“It is the coin thing.” He put the sheets away.\n\n“The ring.” Good, she thought. Straight in. “Will she want it?”'];
+  const r = applyEdits(parts, [
+    {find: 'It is the coin thing.” He put the sheets away.', replace: '“It is the coin thing.” He put the sheets in the cupboard.'},
+    {find: 'The ring.” Good, she thought. Straight in. “Will', replace: 'The ring. “Will'},
+  ]);
+  assert.equal(r.parts[0].split('\n\n')[0], '“It is the coin thing.” He put the sheets in the cupboard.');
+  assert.deepEqual(r.missed.map(m => m.why), ['would break the quotation marks']);
+});
+
+test('Editor notes that ask for no change are left out', async () => {
+  const {notesAskingForChange} = await import('../roles.mjs');
+  const n = [
+    {note: 'Kenmore is a brand, not a person, so it needs no cast slot; confirm it’s the stove’s make and leave it.'},
+    {note: 'Cabin is the pattern word, not a place; no change needed beyond the pattern note above.'},
+    {note: 'Keys reads as an object, not a person; fine as is, but the line is doing two jobs and could be split.'},
+    {note: 'Echoes line 17. Give him something new: the pair count, a condition note, or a dodge.'},
+    {note: 'The “not X but Y” construction; line 72 already made the point. Keep one, trim the other.'},
+    {note: 'Log Cabin is a quilt pattern, not a person; keep, but say “a Log Cabin pattern” so it doesn’t read as a place.'},
+  ];
+  assert.deepEqual(notesAskingForChange(n).map(x => x.note.slice(0, 6)), ['Echoes', 'The “n', 'Log Ca']);
+});
+
+test('Reader praise without the Worked: label is still kept away from Revise', async () => {
+  const {isPraise} = await import('../roles.mjs');
+  const yes = ['nice, I know exactly what kind of driver this is', 'quiet and effective, I felt the dead man without being told', 'best moment in the chapter, and it arrives with no setup', 'flat and funny, and it lands because he\'s right', 'Worked: the porch'];
+  const no = ['good detail, but I had to reread to be sure', 'nice, but the narrator explains the symbolism a touch more than needed', 'I tripped here; the door is being shoved from inside', 'strong close, though the window knocking felt like a second ending'];
+  assert.ok(yes.every(isPraise)); assert.ok(no.every(n => !isPraise(n)));
+});
+
+test('a doubled REPLACE label never reaches the chapter; a repeated FIND is placed by its note\'s line', async () => {
+  const {parseEdits, applyEdits} = await import('../roles.mjs');
+  const r = parseEdits('=== EDIT 1\nNOTE: line 3 — boots\nFIND: Clem takes his boots off, in the middle of it.\nREPLACE: Clem takes his boots off, in the middle of it.\nREPLACE: Clem takes his boots off where he stands.\n=== END\nSKIPPED: none');
+  assert.equal(r.edits[0].replace, 'Clem takes his boots off where he stands.');
+  const parts = ['Chapter 1', '“Sunday night.”\n\n“So I’m writing it. Sunday night.”\n\n“Sunday night.”\n\nClem takes his boots off, in the middle of it.'];
+  const e = parseEdits('=== EDIT 1\nNOTE: line 4 — echo of line 3\nFIND: Sunday night.\nREPLACE: Then I’ll need the drawers done by noon.\n=== END');
+  const out = applyEdits(parts, e.edits);
+  assert.equal(out.applied.length, 1);
+  assert.match(out.parts[1], /“Sunday night\.”\n\n“So I’m writing it\. Sunday night\.”\n\n“Then I’ll need the drawers done by noon\.”/);
+});
+
+test('the Editor marks tense slips, repeated gestures and and-chains from the check as must', () => {
+  const m = markupInstruction({parts: ['x'], findings: [{kind: 'GESTURE', where: 'lines 4, 9', quote: 'dries her hands', rule: 'The same bit of business 2 times.'}]});
+  assert.match(m, /a tense slip, a line copied from a profile, a gesture repeated from earlier in the chapter or a sentence chained with "and… and…"/);
+  assert.match(m, /one note for each repeat after the first/);
+  assert.match(m, /GESTURE: "dries her hands"/);
+});
+
+test('an edit that cuts most of a passage without being asked to is left out', async () => {
+  const {applyEdits} = await import('../roles.mjs');
+  const part = '“It gets in everywhere.”\n\n“It gets in the cars, too.” Denise set the folder down and squared it with the edge of the counter. “I won’t keep you. You’ve got a lesson at nine, I expect.”';
+  const bad = applyEdits([part], [{note: 'line 2: echo — answer with something new', find: '“It gets in the cars, too.” Denise set the folder down and squared it with the edge of the counter. “I won’t keep you. You’ve got a lesson at nine, I expect.”', replace: '“It will be.”'}]);
+  assert.equal(bad.applied.length, 0); assert.match(bad.missed[0].why, /would cut/);
+  const ok = applyEdits([part], [{note: 'line 2: echo — answer with something new', find: '“It gets in the cars, too.”', replace: '“Salt’s the least of it.”'}]);
+  assert.equal(ok.applied.length, 1);
+  const asked = applyEdits([part], [{note: 'line 2: cut the folder business, it is redundant', find: 'Denise set the folder down and squared it with the edge of the counter. “I won’t keep you.', replace: '“I won’t keep you.'}]);
+  assert.equal(asked.applied.length, 1, 'a note that asks for a cut may cut');
 });
