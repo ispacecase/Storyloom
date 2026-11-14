@@ -27,7 +27,7 @@ import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcript
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
-import { wordBudget, castFit, budgetLines, SCENE_MIN, parseNumber } from './budget.mjs';
+import { wordBudget, castFit, budgetLines, SCENE_MIN, parseNumber, coreShare } from './budget.mjs';
 import { exactLint, lintInstruction, parseFindings, countsLine, biggestProblem, ALL_BUCKETS } from './lint.mjs';
 import { addEntry, filterEntries, logText } from './log.mjs';
 import { ROLES, ROLE_KEYS, STEPS, roleSettings, roleSystem, activeSteps, parseNotes, overallLine, markupInstruction, readerInstruction, reviseInstruction, parseRevision, wordDiff, narratorInstruction, parseNarrator, narratorLabel, suggestNarrators, parseNarratorTemplate, narratorTemplateText, defaultMainPrompt } from './roles.mjs';
@@ -1224,7 +1224,7 @@ function renderProposal() {
   const f=d.proposal.fields, t=tpl(d), b=proposalBudget(d), fit=castFit(b,f.cast.map(c=>c.name));
   const body=box.querySelector('.storyloom-proposal-body'); body.replaceChildren();
   const add=(label,text,cls='')=>{if(!text)return;const l=document.createElement('div');l.className='storyloom-sugg-label';l.textContent=label;const p=document.createElement('p');p.className='storyloom-proposal-text '+cls;p.textContent=text;body.append(l,p);};
-  add('What it’s about',`${f.core}${f.coreShare?` (${f.coreShare} of the words)`:''}`);
+  add('What it’s about',`${f.core}${f.coreShare?` (about ${Math.round(coreShare(f.coreShare).share*100)}% of the words)`:''}`);
   add('Timeline',f.timeline);
   add('What happens',f.happens);
   const perN=parseNumber(f.wordsPerChapter), chN=parseNumber(f.chapters);

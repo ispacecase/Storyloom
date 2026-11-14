@@ -176,7 +176,7 @@ export const NARRATOR_TEMPLATE = Object.freeze([
   ['WHAT THEY KNOW', 'What the narrator knows, doesn’t know, and must not reveal yet at this point in the book.'],
   ['RELIABILITY', 'Whether to trust them, and how any unreliability shows.'],
   ['TONE', 'The emotional temperature of the narration.'],
-  ['FORMAT', 'Length per reply, paragraphing, how dialogue is set out; never speak for the writer’s own character.'],
+  ['FORMAT', 'Length per reply, paragraphing, how dialogue is set out.'],
   ['NEVER', 'The writer’s never/don’ts for this narrator.'],
 ]);
 /** Ask for narrator instructions: the template guides, the story decides. */
