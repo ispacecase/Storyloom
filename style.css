@@ -323,3 +323,4 @@
 .storyloom-compare .storyloom-diff ins { background:rgba(80,180,100,.28); text-decoration:none; color:inherit; }
 .storyloom-compare .storyloom-hint { opacity:.8; font-size:.88em; }
 .storyloom-compare button { width:auto; white-space:nowrap; flex:none; }
+#chat .mes.storyloom-chapter-end .mes_text::after { content:"✓ End of chapter — the plan's ending is reached. Next: Auto, or Lint → Seal (Memory tab)."; display:block; margin-top:.6em; padding:.35em .6em; border-left:3px solid #5aa86c; background:rgba(90,168,108,.14); font-size:.8em; font-style:normal; }

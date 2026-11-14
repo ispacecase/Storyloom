@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.20 (2026-11-14)
+- **Chapter done / not finished** notices, so you don't have to read a chapter to know where it stands: the narrator signals the planned ending (the signal is removed from the text and the export), Storyloom marks the reply and tells you. Optional **Keep going until the chapter is done** (off by default).
 - **One reply = one whole chapter** by default: the narrator's instructions no longer say "one passage at a time", and the hidden 1,500-word cap is gone. Writing a chapter over several replies is now an option (Extensions → Storyloom), off by default. Existing Storyloom Novel presets: run Writing setup… (first box) to update them.
 
 ## 0.19 (2026-11-14)

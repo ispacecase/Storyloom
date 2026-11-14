@@ -56,3 +56,13 @@ test('provider junk like <ds_safety> is removed from replies', async () => {
   assert.equal(cleanReply('She went. <ds_safety>'), 'She went. ');
   assert.equal(cleanReply('Nothing odd [here].'), 'Nothing odd [here].');
 });
+
+test('the end-of-chapter signal is never part of the book', async () => {
+  const {splitEndMark, cleanReply, chapterProse} = await import('../export.mjs');
+  assert.deepEqual(splitEndMark('She shut the door.\n\n[END OF CHAPTER]'), {done: true, text: 'She shut the door.'});
+  assert.deepEqual(splitEndMark('She shut the door. [End of Chapter 2]'), {done: true, text: 'She shut the door.'});
+  assert.deepEqual(splitEndMark('She shut the door.'), {done: false, text: 'She shut the door.'});
+  assert.equal(cleanReply('The end.\n[END OF CHAPTER]'), 'The end.');
+  assert.equal(chapterProse([{mes: 'One.'}, {mes: 'Two.\n\n[END OF CHAPTER]'}]), 'One.\n\nTwo.');
+  assert.equal(splitEndMark('He talked about the end of the chapter in his book.').done, false, 'ordinary words are not the signal');
+});

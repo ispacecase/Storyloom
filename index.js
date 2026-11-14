@@ -2,7 +2,7 @@ import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
 import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
-import { chapterProse, bookText, bookDocx, fileName, cleanReply } from './export.mjs';
+import { chapterProse, bookText, bookDocx, fileName, cleanReply, splitEndMark } from './export.mjs';
 import { sceneInstruction, parseScene, sceneNames, foldRange, sessionInstruction, parseSession } from './live.mjs';
 import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction, fixInstruction, parseFix } from './compare.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
@@ -745,7 +745,8 @@ function applyReplyLength(on=null, unit='Chapter') {
   const asked=asksForLength(said);
   const note=on && !asked?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords(),{roleplay:isRP(),passages:writePassages()}):'';
   if(on && asked)logEvent('info','Reply length','your message sets the length, so Storyloom’s own length note was left out');
-  c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
+  c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1);
+  let endNote=''; try{endNote=on && !isRP()?endMarkNote(unit):'';}catch{} c.setExtensionPrompt('storyloom_end_mark',endNote,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
 }
 let memoryTimer;
 const queueMemory=()=>{clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),400);};
@@ -1064,6 +1065,33 @@ function forceOnStage() {
   const key=hits.map(e=>e.uid).join(','); if(key!==stageCache.logged){stageCache.logged=key; logEvent('info','Live memory',`on stage, sent with every reply: ${hits.map(e=>String(e.comment).replace(/^character\s*[—–-]\s*/i,'')).join(', ')}`);}
 }
 
+/* ---------- End of chapter: the narrator signals it; Storyloom tells the writer (who doesn't read until it's done) ---------- */
+const keepGoingOpts=()=>{const s=context().extensionSettings.storyloom||{}; return {on:s.keepGoing===true, max:Math.max(1,Math.min(20,Number(s.keepGoingMax)||6))};};
+let keepRounds=0, keepChat='';
+function endMarkNote(unit='Chapter'){const U=unit.toUpperCase(), u=unit.toLowerCase(); return `END OF ${U}: when this reply reaches the ending this ${u}'s plan describes, finish the prose, then add one final line on its own: [END OF ${U}]. Only then — never before the planned ending. If the ${u} isn't finished when you stop, don't add it.`;}
+function afterChapterReply(ended,cut) {
+  let d; try{d=data();}catch{return;}
+  const c=context(), u=tpl(d).unit, n=d.chapter||1;
+  if(keepChat!==c.chatId){keepChat=c.chatId; keepRounds=0;}
+  if(ended) {
+    keepRounds=0;
+    logEvent('info','End of chapter',`${u} ${n}: the narrator reached the plan’s ending`);
+    toastr.success(`${u} ${n} is done — the plan’s ending is reached. Click here to open the steps (Auto, or Lint → Seal).`,`Storyloom: ${u} ${n} finished`,{timeOut:0,extendedTimeOut:0,closeButton:true,onclick:()=>{const p=document.getElementById('na-panel'); if(p)p.hidden=false; activeTab='memory'; settingsOpen=false; renderPanelView();}});
+    renderTeam();
+    return;
+  }
+  const k=keepGoingOpts(), box=document.getElementById('send_textarea');
+  if(k.on && keepRounds<k.max && !(box?.value||'').trim()) {
+    keepRounds++;
+    logEvent('info','Keep going',`${u} ${n} isn’t finished — continuing (${keepRounds} of ${k.max})`);
+    toastr.info(`${u} ${n} isn’t finished yet — continuing (${keepRounds} of ${k.max})…`,'Storyloom',{timeOut:4000});
+    setTimeout(()=>{try{const cx=context(); if((document.getElementById('send_textarea')?.value||'').trim())return; cx.generate(cut?'continue':'normal');}catch(e){warnLog('Storyloom keep going:',e);}},1500);
+    return;
+  }
+  if(k.on && keepRounds>=k.max){toastr.warning(`${u} ${n} still isn’t finished after ${k.max} replies — Storyloom stopped. Press Send to keep going, or check the chapter.`,'Storyloom',{timeOut:12000}); logEvent('warn','Keep going',`stopped after ${k.max} replies without the end of ${u} ${n}`); keepRounds=0; return;}
+  if(!cut)toastr.info(`${u} ${n} isn’t finished yet — press Send with an empty box to continue.`,'Storyloom',{timeOut:8000});
+}
+
 /* ---------- Cut-off replies: marked in the chat (display only, never sent to the model), left out on export ---------- */
 const isHeading=t=>{t=String(t||'').trim(); return !t.includes('\n') && (t.match(/\S+/g)||[]).length<=12;};
 function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatMetadata?.world_info===d.book);}catch{return false;}}
@@ -1118,6 +1146,7 @@ function markCutOffs() {
   for(const el of document.querySelectorAll('#chat .mes[mesid]')) {
     const m=c.chat?.[Number(el.getAttribute('mesid'))];
     el.classList.toggle('storyloom-cutoff',on && !!m && !m.is_user && !m.is_system && !isHeading(m.mes) && endsCutOff(m.mes));
+    el.classList.toggle('storyloom-chapter-end',on && !!m?.extra?.storyloom_chapter_end);
   }
 }
 /* ---------- Export book: the narration of every chapter, in order, as .docx or .txt ---------- */
@@ -2878,6 +2907,7 @@ function renderExtSettings() {
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
   const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
   const ps=document.getElementById('sl-passages'); if(ps)ps.checked=writePassages();
+  {const k=keepGoingOpts(), a=document.getElementById('sl-keep-going'), b=document.getElementById('sl-keep-going-max'); if(a)a.checked=k.on; if(b && document.activeElement!==b)b.value=k.max;}
   {const o=liveOpts(), set=(id,v)=>{const e=document.getElementById(id); if(e && document.activeElement!==e){if(e.type==='checkbox')e.checked=v; else e.value=v;}}; set('sl-live-scene',o.scene); set('sl-live-session',o.session); set('sl-live-stage',o.stage); set('sl-live-scene-every',o.sceneEvery); set('sl-live-session-every',o.sessionEvery);}
   const dr=document.getElementById('sl-dials-row'); if(dr){dr.hidden=!dialsOn(); const ds=document.getElementById('sl-dials-same'); if(ds)ds.checked=dialsSameAsChat();}
   for(const [id,text,off] of [['sl-send-effort',' — Dials is installed and sends SillyTavern’s settings itself.',true],['sl-short-thinking',' — Dials is installed and decides this (it knows what each model supports).',true]]){const box=document.getElementById(id), lab=box?.closest('label'); if(!lab)continue; box.disabled=off && dialsOn(); let n=lab.querySelector('.sl-dials-note'); if(dialsOn() && !n){n=document.createElement('small');n.className='sl-dials-note storyloom-hint';n.textContent=text;lab.append(n);} if(!dialsOn())n?.remove();}
@@ -2891,6 +2921,7 @@ function buildExtSettings(openButton,panel) {
     <div class="storyloom-row" title="Kept up while you write, not only when you Seal. Each one is a small, quick call to your model every few replies (with Dials, set Storyloom’s thinking to none to keep them fast)."><b>Live memory</b> <label class="checkbox_label"><input id="sl-live-scene" type="checkbox"> Scene now (every <input id="sl-live-scene-every" class="text_pole" type="number" min="1" max="20" style="width:3.5em"> replies)</label> <label class="checkbox_label"><input id="sl-live-session" type="checkbox"> Earlier this chapter (every <input id="sl-live-session-every" class="text_pole" type="number" min="6" max="100" style="width:3.5em"> messages)</label> <label class="checkbox_label"><input id="sl-live-stage" type="checkbox"> Always send the lorebook entries of whoever is in the scene</label></div>
     <div id="sl-dials-row" class="storyloom-row" hidden><b>Dials</b> <label class="checkbox_label" title="Storyloom’s own AI calls (Lint, Editor, Reader, Seal, planning, the Assistant) use the options you set in Dials for SillyTavern’s chat on the same connection. Anything you set for Storyloom itself in Dials (“Settings for: Storyloom”) wins."><input id="sl-dials-same" type="checkbox"> Use the same Dials settings as SillyTavern’s chat</label><button id="sl-dials-open" type="button" class="menu_button">Dials settings…</button></div>
     <div class="storyloom-row"><label title="How long each of the narrator’s replies should be. Storyloom tells the narrator to aim for this many words per reply. Blank: the chapter’s planned length from the book’s setup, or as much as your Max Response Length fits.">Words per narrator reply <input id="sl-reply-words" class="text_pole" type="number" min="0" step="100" placeholder="auto" style="width:7em"></label><small id="sl-reply-words-hint" class="storyloom-hint"></small></div>
+    <div class="storyloom-row"><label class="checkbox_label" title="Off by default. When a narrator reply comes back without the end-of-chapter signal, Storyloom presses Send for you and keeps going until the chapter reaches its planned ending — so you can come back to a finished chapter. It stops after this many replies, or if you type something."><input id="sl-keep-going" type="checkbox"> Keep going until the chapter is done (up to <input id="sl-keep-going-max" class="text_pole" type="number" min="1" max="20" style="width:3.5em"> replies)</label></div>
     <label class="checkbox_label" title="Off (the default): each reply is a whole chapter, written to the ending its plan describes. On: the narrator writes a chapter over several replies, one passage at a time, and you steer between them. After changing this, run Writing setup… (first box only) so the preset’s Main Prompt and Post-History match."><input id="sl-passages" type="checkbox"> Write each chapter over several replies, a passage at a time (off: one reply = one whole chapter)</label>
     <label class="checkbox_label" title="SillyTavern ignores its own Reasoning Effort setting on Custom (OpenAI-compatible) endpoints such as Venice, unless the model is one of OpenAI’s. This sends it anyway, through the request’s body — only when it is set to something other than Auto, and never over a reasoning_effort you put in Include Body yourself."><input id="sl-send-effort" type="checkbox"> Send SillyTavern’s Reasoning Effort to Custom endpoints (Venice and others) in the story chat</label>
     <label class="checkbox_label" title="Thinking models (deepseek and others) can spend a whole reply thinking and write nothing. This asks them for low reasoning effort on Storyloom’s own work — Lint, Editor, Reader, Seal, planning, the Assistant. Your story chat keeps your preset’s setting."><input id="sl-short-thinking" type="checkbox"> Keep Storyloom’s own thinking short (low reasoning effort; never your story chat)</label>
@@ -2933,6 +2964,8 @@ function buildExtSettings(openButton,panel) {
   for(const [id,key,num] of [['sl-live-scene','scene'],['sl-live-session','session'],['sl-live-stage','stage'],['sl-live-scene-every','sceneEvery',true],['sl-live-session-every','sessionEvery',true]])wrap.querySelector('#'+id).onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};const l=c.extensionSettings.storyloom.live ??= {};l[key]=num?Math.max(1,Math.round(Number(e.target.value)||0)):e.target.checked;saveSettings();logEvent('info','Settings',`live memory ${key}: ${l[key]}`);};
   wrap.querySelector('#sl-dials-same').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.dialsSameAsChat=e.target.checked;saveSettings();logEvent('info','Settings',`Storyloom uses ${e.target.checked?'the same Dials settings as SillyTavern’s chat':'only its own Dials settings'}`);};
   wrap.querySelector('#sl-dials-open').onclick=()=>openDials();
+  wrap.querySelector('#sl-keep-going').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.keepGoing=e.target.checked;saveSettings();logEvent('info','Settings',`keep going until the chapter is done: ${e.target.checked?'on':'off'}`);};
+  wrap.querySelector('#sl-keep-going-max').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.keepGoingMax=Math.max(1,Math.min(20,Math.round(Number(e.target.value)||6)));saveSettings();};
   wrap.querySelector('#sl-passages').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.passages=e.target.checked;saveSettings();applyReplyLength();logEvent('info','Settings',`chapters ${e.target.checked?'over several replies (passages)':'in one reply each'}`);toastr.info('Run Writing setup… (first box only) on the Memory tab so your Storyloom Novel preset matches.','Storyloom',{timeOut:8000});};
   wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
@@ -3304,6 +3337,7 @@ function init() {
   const c=context();
   setPromptOverrides(c.extensionSettings.storyloom?.prompts);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
+  if(c.event_types.MESSAGE_SENT)c.eventSource.on(c.event_types.MESSAGE_SENT,()=>{keepRounds=0;});
   // Dials may load before or after Storyloom: try now, when the app is ready, and a few times after.
   registerWithDials(); if(c.event_types.APP_READY)c.eventSource.on(c.event_types.APP_READY,registerWithDials); for(const ms of [1000,3000,8000])setTimeout(registerWithDials,ms);
   // SillyTavern drops its Reasoning Effort for Custom endpoints (except OpenAI's models); put it in the request body so Venice & co. get it.
@@ -3334,10 +3368,12 @@ function init() {
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED,(id,type)=>{try{
     if(type==='first_message'||type==='quiet')return;
     const m=context().chat[id]; if(!m||m.is_user||m.is_system||!inBookChat())return;
-    const clean=cleanReply(m.mes);
-    if(clean!==m.mes){m.mes=clean.trim(); if(Array.isArray(m.swipes))m.swipes[m.swipe_id??0]=m.mes; const cx=context(); try{cx.updateMessageBlock(id,m);}catch{} cx.saveChat().catch(()=>{}); logEvent('info','Narrator',`removed provider junk (<ds_safety>) from reply ${id}`);}
+    const ended=!isRP() && splitEndMark(m.mes).done, clean=cleanReply(m.mes);
+    if(clean!==m.mes || ended){m.mes=clean.trim(); if(Array.isArray(m.swipes))m.swipes[m.swipe_id??0]=m.mes; if(ended){m.extra ??= {}; m.extra.storyloom_chapter_end=true;} const cx=context(); try{cx.updateMessageBlock(id,m);}catch{} cx.saveChat().catch(()=>{}); if(clean.trim()!==splitEndMark(m.mes).text.trim())logEvent('info','Narrator',`removed provider junk (<ds_safety>) from reply ${id}`);}
     if(!isHeading(m.mes))setTimeout(queueLive,1500);
-    if(!isHeading(m.mes) && endsCutOff(m.mes))explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
+    const cut=!isHeading(m.mes) && endsCutOff(m.mes);
+    if(cut)explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
+    if(!isHeading(m.mes) && !isRP())afterChapterReply(ended,cut);
   }catch(e){warnLog('Storyloom cut-off check:',e);}});
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED, (id,type)=>{try {
     if(type==='first_message') return;

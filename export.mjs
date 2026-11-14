@@ -6,9 +6,17 @@
 
 import {endsCutOff} from './lint.mjs';
 
+/** The narrator's end-of-chapter signal: "[END OF CHAPTER]" on its own line (any unit: CHAPTER, SESSION…). */
+export const END_MARK_RE = /\n?[ \t]*[\[(]\s*END OF (?:THE )?(?:CHAPTER|SESSION|PART|ACT|EPISODE)[^\]\n)]{0,20}[\])][ \t]*/gi;
+/** Whether a reply carries the end signal, and the reply without it. */
+export function splitEndMark(text) {
+  const t = String(text || ''), found = END_MARK_RE.test(t); END_MARK_RE.lastIndex = 0;
+  return {done: found, text: found ? t.replace(END_MARK_RE, '').replace(/\s+$/, '') : t};
+}
+
 /** Provider junk that leaks into a reply, e.g. Venice's uncensored deepseek: "<ds_safety>[Internal thinking]" at the start, or a whole <ds_safety>…</ds_safety> block. */
 export function cleanReply(text) {
-  return String(text || '')
+  return splitEndMark(text).text
     .replace(/<ds_safety>[\s\S]*?<\/ds_safety>\s*/gi, '')
     .replace(/^\s*<\/?ds_safety>\s*(?:\[[^\]\n]{0,40}\]\s*)?/i, '')
     .replace(/<\/?ds_safety>/gi, '');
