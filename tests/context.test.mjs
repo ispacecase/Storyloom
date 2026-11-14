@@ -34,3 +34,13 @@ test('the current writing directive remains in planning context',()=>{
  const entries=[{title:'Unrelated',content:'x'.repeat(900),keys:[]},{title:'Current Writing Directive',content:'POV: Third-person limited',keys:[]}];
  const result=selectLore(entries,'unrelated',500);assert.ok(result.entries.some(e=>e.title==='Current Writing Directive'));
 });
+
+test('only rewrites of partly-seen entries are unsafe; the rest still save', async () => {
+  const {unsafeUpdates, planningBudget, selectLore} = await import('../context.mjs');
+  const writes = [{uid: 1, update: {title: 'Novel Foundation'}}, {uid: 2, update: {title: 'Character — Ann'}}, {uid: null, update: {title: 'New Place'}}];
+  assert.deepEqual(unsafeUpdates(writes, {incomplete: ['Novel Foundation']}).map(w => w.update.title), ['Novel Foundation']);
+  assert.equal(planningBudget(4095), 48000);
+  assert.equal(planningBudget(200000), 96000);
+  const sel = selectLore([{title: 'Novel Foundation', content: 'x'.repeat(9000)}], '', planningBudget(4095));
+  assert.deepEqual(sel.incomplete, []);
+});

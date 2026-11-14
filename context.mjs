@@ -25,7 +25,14 @@ export function recentConversation(messages,budget=12000) {
  }
  return out;
 }
-export function ensureCompleteUpdates(writes,selection) {
+/** Rewrites of entries the model only saw part of are unsafe (they would cut the real entry short). Returns them so the caller can skip them and keep the rest. */
+export function unsafeUpdates(writes,selection) {
  const incomplete=new Set(selection.incomplete.map(x=>String(x).trim().toLocaleLowerCase()));
- for(const w of writes) if(w.uid!==null && incomplete.has(w.update.title.trim().toLocaleLowerCase())) throw Error(`“${w.update.title}” was not fully included in context; it was not rewritten.`);
+ return writes.filter(w=>w.uid!==null && incomplete.has(w.update.title.trim().toLocaleLowerCase()));
 }
+export function ensureCompleteUpdates(writes,selection) {
+ const bad=unsafeUpdates(writes,selection);
+ if(bad.length) throw Error(`“${bad[0].update.title}” was not fully included in context; it was not rewritten.`);
+}
+/** Characters of lorebook text Storyloom's own requests can carry — independent of the story chat's Context Size. */
+export const planningBudget=maxContext=>Math.max(48000,Math.min(96000,(Number(maxContext)||0)*3));

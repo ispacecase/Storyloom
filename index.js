@@ -11,7 +11,7 @@ import { foundationTemplate, initialDirective, normalizeFoundation, foundationTi
 import { buildChange, undoChange, classifyChange, describeChange } from './history.mjs';
 import { generate, profileOptions, requestModel } from './generation.mjs';
 import { queueContinuity, completeContinuity, continuityPrompt } from './continuity.mjs';
-import { selectLore, recentConversation, ensureCompleteUpdates } from './context.mjs';
+import { selectLore, recentConversation, ensureCompleteUpdates, unsafeUpdates, planningBudget } from './context.mjs';
 import { saveVerified } from './persistence.mjs';
 import { linkBook, linkState } from './lorelink.mjs';
 import { repairOutline } from './outline-repair.mjs';
@@ -1720,7 +1720,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     const before = await freshBook(bookName);
     const ref = referenceName ? await freshBook(referenceName) : null;
     if(input.length>30000) throw Error('The message is too long for one request. Split it into smaller parts.');
-    const budget=Math.max(4000,Math.min(24000,(Number(c.maxContext)||8192)*2));
+    const budget=planningBudget(c.maxContext); // Storyloom's own request — not limited by the story chat's Context Size
     const history=(interview?.sourceOnly || (interview?.requireOutline && d.interview?.mode==='deep')) ? [] : recentConversation(d.messages,Math.floor(budget*.25));
     const query=history.map(x=>x.content).join(' ')+input;
     const targetEntries=synopsis(before);
@@ -1832,7 +1832,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
       d.suggestions.push({id:crypto.randomUUID(),...castHeld,at:new Date().toISOString()});
       held.push(castHeld); await persist();
     }
-    let skippedFoundation=false;
+    let skippedFoundation=false, skippedPartial=[];
     if(!fromMain && !interview?.requireOutline) {
       const foundation=result.updates.find(entry=>entry.title.trim().toLowerCase()===tpl(d).summary.title.toLowerCase());
       if(foundation) {
@@ -1843,8 +1843,10 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
         }
       }
     }
-    const writes = planWrites(fresh, result.updates, {...tpl(d).summary,required:requiredOf(tpl(d).summary,true)});
-    ensureCompleteUpdates(writes.filter(w=>w.update.storyloomKind!=='interview_notes'),current);
+    let writes = planWrites(fresh, result.updates, {...tpl(d).summary,required:requiredOf(tpl(d).summary,true)});
+    // A rewrite of an entry the model only saw part of would cut it short: skip just those, keep the rest.
+    const unsafe=unsafeUpdates(writes.filter(w=>w.update.storyloomKind!=='interview_notes'),current);
+    if(unsafe.length){writes=writes.filter(w=>!unsafe.includes(w)); logEvent('warn','Save',`kept ${unsafe.map(w=>`“${w.update.title}”`).join(', ')} as they were — the model only saw part of ${unsafe.length===1?'it':'them'}, so its rewrite would have cut ${unsafe.length===1?'it':'them'} short`); skippedPartial=unsafe.map(w=>w.update.title);}
     for (const w of writes) {
       const entry = w.uid === null ? createWorldInfoEntry(bookName, fresh) : fresh.entries[w.uid];
       if (!entry) throw new Error('Unable to create entry');
@@ -1872,7 +1874,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if (!fromMain) { if(!interview?.silentUser)d.messages.push({role:'user',content:input}); d.messages.push({role:'assistant',content:result.reply}); await persist(); showMessages(); }
     if(held.length)renderSuggestions();
     const heldNote=held.length?` ${held.length} suggestion${held.length===1?'':'s'} waiting for your OK under “Suggestions”.`:'';
-    status((result.ignoredUpdates?'Reply received. The proposed lorebook updates could not be read.':skippedFoundation?'Reply received. Storyloom kept the existing foundation because the proposed update could not be read.':writes.length ? `Saved ${writes.length} World Info ${writes.length === 1 ? 'entry' : 'entries'}.` : 'No entry changes.')+heldNote);
+    status((result.ignoredUpdates?'Reply received. The proposed lorebook updates could not be read.':skippedFoundation?'Reply received. Storyloom kept the existing foundation because the proposed update could not be read.':writes.length ? `Saved ${writes.length} World Info ${writes.length === 1 ? 'entry' : 'entries'}.` : 'No entry changes.')+(skippedPartial.length?` Kept ${skippedPartial.map(t=>`“${t}”`).join(', ')} as it was — the AI only saw part of it, so its rewrite would have cut it short.`:'')+heldNote);
     return result;
   } finally { renderModelWork(null); busy = false; queueSync(); if(!draining)scheduleDrain(); }
 }
