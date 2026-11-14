@@ -1092,6 +1092,30 @@ function afterChapterReply(ended,cut) {
   if(!cut)toastr.info(`${u} ${n} isn’t finished yet — press Send with an empty box to continue.`,'Storyloom',{timeOut:8000});
 }
 
+/* ---------- Writing settings in Storyloom's own Settings (same values as the Extensions menu) ---------- */
+function slSet(fn){const c=context(); c.extensionSettings.storyloom ??= {}; fn(c.extensionSettings.storyloom); c.extensionSettings.storyloom.live ??= c.extensionSettings.storyloom.live; c.saveSettingsDebounced(); try{renderExtSettings();}catch{} renderWritingSettings(); try{applyReplyLength();}catch{}}
+function renderWritingSettings() {
+  const q=id=>document.getElementById(id); if(!q('na-w-words'))return;
+  const val=(id,v)=>{const e=q(id); if(e && document.activeElement!==e){if(e.type==='checkbox')e.checked=!!v; else e.value=v??'';}};
+  for(const r of document.querySelectorAll('input[name="na-w-mode"]'))r.checked=(r.value==='passages')===writePassages();
+  val('na-w-words',replyTarget()||''); const h=q('sl-reply-words-hint'); try{replyWordsHint();}catch{} if(q('na-w-words-hint'))q('na-w-words-hint').textContent=h?.textContent||'';
+  const k=keepGoingOpts(); val('na-w-keep',k.on); val('na-w-keep-max',k.max);
+  const o=liveOpts(); val('na-w-scene',o.scene); val('na-w-scene-every',o.sceneEvery); val('na-w-session',o.session); val('na-w-session-every',o.sessionEvery); val('na-w-stage',o.stage);
+  q('na-w-dials').hidden=!dialsOn(); q('na-w-nodials').hidden=dialsOn(); val('na-w-dials-same',dialsSameAsChat()); val('na-w-short',shortThinking()); val('na-w-effort',sendEffort());
+}
+function bindWritingSettings() {
+  const q=id=>document.getElementById(id), num=(e,min,max,def)=>Math.max(min,Math.min(max,Math.round(Number(e.target.value)||def)));
+  for(const r of document.querySelectorAll('input[name="na-w-mode"]'))r.onchange=e=>{slSet(s=>{s.passages=e.target.value==='passages';}); logEvent('info','Settings',`chapters ${writePassages()?'over several replies':'in one reply each'}`); toastr.info('Run Writing setup… (first box only) on the Memory tab so your Storyloom Novel preset matches.','Storyloom',{timeOut:8000});};
+  q('na-w-words').onchange=e=>slSet(s=>{const v=Math.max(0,Math.round(Number(e.target.value)||0)); s.replyWords=v||null;});
+  q('na-w-keep').onchange=e=>slSet(s=>{s.keepGoing=e.target.checked;});
+  q('na-w-keep-max').onchange=e=>slSet(s=>{s.keepGoingMax=num(e,1,20,6);});
+  for(const [id,key,isNum,min,max,def] of [['na-w-scene','scene'],['na-w-session','session'],['na-w-stage','stage'],['na-w-scene-every','sceneEvery',1,1,20,3],['na-w-session-every','sessionEvery',1,6,100,20]])q(id).onchange=e=>slSet(s=>{s.live ??= {}; s.live[key]=isNum?num(e,min,max,def):e.target.checked;});
+  q('na-w-dials-same').onchange=e=>slSet(s=>{s.dialsSameAsChat=e.target.checked;});
+  q('na-w-dials-open').onclick=()=>openDials();
+  q('na-w-short').onchange=e=>slSet(s=>{s.shortThinking=e.target.checked;});
+  q('na-w-effort').onchange=e=>slSet(s=>{s.sendEffort=e.target.checked;});
+}
+
 /* ---------- Cut-off replies: marked in the chat (display only, never sent to the model), left out on export ---------- */
 const isHeading=t=>{t=String(t||'').trim(); return !t.includes('\n') && (t.match(/\S+/g)||[]).length<=12;};
 function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatMetadata?.world_info===d.book);}catch{return false;}}
@@ -2238,6 +2262,7 @@ const noChatOpen=()=>!context().chatId;
 function renderPanelView() {
   const panel=document.getElementById('na-panel'), none=noChatOpen();
   document.querySelector('#na-settings').hidden=!settingsOpen;
+  if(settingsOpen)try{renderWritingSettings();}catch(e){warnLog('Storyloom writing settings:',e);}
   document.querySelector('#na-nochat').hidden=!none || settingsOpen || activeTab==='assistant';
   document.querySelector('#na-workspace').hidden=none || settingsOpen || activeTab!=='story';
   renderTabs();
@@ -3023,6 +3048,28 @@ function init() {
     <nav class="storyloom-tabs" role="tablist"><button id="na-tab-story" type="button" role="tab" class="is-active">Story</button><button id="na-tab-memory" type="button" role="tab">Memory</button><button id="na-tab-assistant" type="button" role="tab">Assistant</button></nav>
     <section id="na-settings" class="storyloom-settings" aria-label="Storyloom settings" hidden>
       <div class="storyloom-settings-body">
+        <section class="storyloom-wcard"><h4>Chapters</h4>
+          <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="whole"> <span><b>One reply writes the whole chapter</b><small>The narrator writes the chapter to the ending its plan describes, in one go.</small></span></label>
+          <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="passages"> <span><b>A passage at a time</b><small>The chapter is built over several replies; you steer between them. After switching, run Writing setup… (Memory tab) so your preset matches.</small></span></label>
+          <label class="storyloom-wnum">Words per reply <input id="na-w-words" type="number" min="0" step="100" placeholder="auto"></label>
+          <small id="na-w-words-hint" class="storyloom-hint"></small>
+          <label class="storyloom-wopt"><input id="na-w-keep" type="checkbox"> <span><b>Keep going until the chapter is done</b><small>If a reply stops before the chapter’s ending, Storyloom presses Send for you, up to <input id="na-w-keep-max" type="number" min="1" max="20"> replies. Stops if you type.</small></span></label>
+        </section>
+        <section class="storyloom-wcard"><h4>Memory while you write</h4>
+          <label class="storyloom-wopt"><input id="na-w-scene" type="checkbox"> <span><b>Scene now</b><small>Where, when, who’s here and in what shape — refreshed every <input id="na-w-scene-every" type="number" min="1" max="20"> replies.</small></span></label>
+          <label class="storyloom-wopt"><input id="na-w-session" type="checkbox"> <span><b>Earlier this chapter</b><small>A running record of the chapter so far, so a long chapter doesn’t forget its start — every <input id="na-w-session-every" type="number" min="6" max="100"> messages.</small></span></label>
+          <label class="storyloom-wopt"><input id="na-w-stage" type="checkbox"> <span><b>Send who’s on stage</b><small>Everyone in the scene gets their lorebook entry sent with each reply, even if nobody said their name lately.</small></span></label>
+        </section>
+        <section class="storyloom-wcard"><h4>Thinking</h4>
+          <div id="na-w-dials" hidden>
+            <label class="storyloom-wopt"><input id="na-w-dials-same" type="checkbox"> <span><b>Use the same Dials settings as SillyTavern’s chat</b><small>Storyloom’s own calls (Lint, Seal, planning…) use what you set in Dials; anything set for Storyloom itself wins. Tip: set Storyloom’s thinking to “none” there.</small></span></label>
+            <button id="na-w-dials-open" type="button">Dials settings…</button>
+          </div>
+          <div id="na-w-nodials">
+            <label class="storyloom-wopt"><input id="na-w-short" type="checkbox"> <span><b>Keep Storyloom’s own thinking short</b><small>Asks thinking models for low effort on Lint, Seal and planning. Never your story chat.</small></span></label>
+            <label class="storyloom-wopt"><input id="na-w-effort" type="checkbox"> <span><b>Send SillyTavern’s Reasoning Effort to Custom endpoints</b><small>SillyTavern leaves it out for Venice and other Custom connections; this sends it.</small></span></label>
+          </div>
+        </section>
         <label>AI connection<select id="na-profile"></select></label><p class="storyloom-hint">Which AI Storyloom talks to. “Use current connection” uses whatever is set in SillyTavern’s API Connections; pick another to use a different model just for Storyloom.</p>
         <div id="na-direct" class="storyloom-direct" hidden>
           <label>Provider<select id="na-provider"></select></label>
@@ -3117,6 +3164,7 @@ function init() {
   for(const provider of PROVIDERS)document.querySelector('#na-provider').add(new Option(provider.name,provider.id));
   document.querySelector('#na-close').onclick=()=>{panel.hidden=true;settingsOpen=false;};
   document.querySelector('#na-wide').onclick=()=>setWide(!wideView);
+  bindWritingSettings();
   setupFolds();
   document.querySelector('#na-settings-toggle').onclick=()=>{settingsOpen=!settingsOpen;renderPanelView();};
   document.querySelector('#na-back').onclick=()=>{atStart=!atStart;settingsOpen=false;renderInterview();renderPanelView();};

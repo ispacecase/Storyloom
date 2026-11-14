@@ -195,7 +195,7 @@ Storyloom works fully without Dials.
 
 ## 12. Settings reference
 
-Extensions → Storyloom:
+The everyday writing settings are in **Storyloom's own Settings** (the Settings button in the Storyloom panel), grouped as **Chapters**, **Memory while you write** and **Thinking**, each with a plain explanation under it. The same settings, plus the rest, are also in Extensions → Storyloom:
 
 | Setting | What it does |
 |---|---|
