@@ -2,6 +2,7 @@ import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
 import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
+import { chapterProse, bookText, bookDocx, fileName } from './export.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
 import { synchronize, resolveConflict, planInitialLink } from './sync.mjs';
@@ -807,6 +808,68 @@ async function startChapterChat(narrator=null) {
   status(`This is a fresh chat for ${t.unit} ${n}${title?` — ${title}`:''}. Story so far, Previously, the plan and the narrator are in place.`);
 }
 
+/* ---------- Export book: the narration of every chapter, in order, as .docx or .txt ---------- */
+async function chatFile(avatar,file) {
+  const r=await fetch('/api/chats/get',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({avatar_url:avatar,file_name:String(file).replace(/\.jsonl$/,'')}),cache:'no-store'});
+  if(!r.ok)return null;
+  const lines=await r.json(); return Array.isArray(lines)&&lines.length?lines.slice(1):null;
+}
+async function chatNames(avatar) {
+  try {const r=await fetch('/api/characters/chats',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({avatar_url:avatar,simple:true})}); const v=await r.json(); return Array.isArray(v)?v.map(x=>x.file_id):[];}
+  catch{return [];}
+}
+/** Find each chapter's prose: the chat recorded at seal, else a chat named “Book — Chapter N…”, else this chat for the current chapter. */
+async function collectChapters(d,c) {
+  const u=tpl(d).unit, outline=d.outlineChapters||[], cur=d.chapter||1, rec=d.chapterChats||{};
+  const avatars=[...new Set([c.characters?.[c.characterId]?.avatar,...narratorRegistry(d).map(x=>x.avatar),...Object.values(rec).map(x=>x.avatar)].filter(Boolean))];
+  const prefix=`${d.book} — ${u} `.replace(/[\\/:*?"<>|]/g,'-');
+  let named=null;
+  const byName=async n=>{
+    named ??= (await Promise.all(avatars.map(async a=>(await chatNames(a)).map(f=>({avatar:a,file:f}))))).flat();
+    return named.filter(x=>x.file.startsWith(prefix) && new RegExp(`^${u}\\s+${n}(\\D|$)`,'i').test(x.file.slice(prefix.length-u.length-1))).sort((a,b)=>a.file.length-b.file.length)[0];
+  };
+  const chapters=[], numbers=[...new Set([...outline.map(x=>x.number),...Object.keys(rec).map(Number),cur])].filter(Number.isFinite).sort((a,b)=>a-b);
+  for(const n of numbers) {
+    const title=outline.find(x=>x.number===n)?.title||'', heading=`${u} ${n}${title?` — ${title}`:''}`;
+    let text='', where='';
+    try {
+      const r=rec[n];
+      if(r) {
+        const msgs=r.chatId===c.chatId?c.chat:await chatFile(r.avatar,r.chatId);
+        if(msgs){text=chapterProse(msgs,{start:r.start||0,end:r.chatId===c.chatId&&n===cur?null:r.end,unit:u});where=r.chatId;}
+      }
+      if(!text && n===cur) {
+        const start=d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===n ? d.chapterStart.index : (rec[n-1]?.chatId===c.chatId?rec[n-1].end:0);
+        text=chapterProse(c.chat,{start,unit:u}); where=c.chatId;
+      }
+      if(!text) {const f=await byName(n); if(f){const msgs=await chatFile(f.avatar,f.file); if(msgs){text=chapterProse(msgs,{unit:u});where=f.file;}}}
+    } catch(e){warnLog(`Storyloom export: ${u} ${n}:`,e);}
+    chapters.push({number:n,heading,text,where});
+  }
+  const last=Math.max(0,...chapters.filter(x=>x.text).map(x=>x.number));
+  return chapters.filter(x=>x.number<=last);
+}
+function saveFile(name,bytes,type) {
+  const url=URL.createObjectURL(new Blob([bytes],{type})), a=Object.assign(document.createElement('a'),{href:url,download:name});
+  document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),10000);
+}
+async function exportBook() {
+  const c=context(), d=data(), u=tpl(d).unit;
+  if(!d.book)throw Error('Open a chat that has a Storyloom book first.');
+  status('Gathering the chapters…');
+  const chapters=await collectChapters(d,c);
+  if(!chapters.some(x=>x.text))throw Error(`No ${u.toLowerCase()} text was found yet. Write ${u} 1 in the main chat first.`);
+  const missing=chapters.filter(x=>!x.text).map(x=>x.number), words=chapters.reduce((n,x)=>n+(x.text.match(/\S+/g)||[]).length,0);
+  const R=c.POPUP_RESULT||{};
+  const pick=await new c.Popup(`<h3>Export ${escHtml(d.book)}</h3><p>${chapters.length} ${u.toLowerCase()}${chapters.length===1?'':'s'}, about ${words.toLocaleString()} words — the narrator’s text only (the showing swipe), without your directions or the chapter-heading greetings.</p>${missing.length?`<p><b>Not found:</b> ${u} ${missing.join(', ')}. Their chats may have been renamed or deleted; those ${u.toLowerCase()}s get a placeholder line.</p>`:''}<p><b>Word (.docx)</b> opens in Word, Google Docs and LibreOffice, with each ${u.toLowerCase()} on a new page. <b>Text (.txt)</b> is plain text.</p>`,c.POPUP_TYPE.TEXT,'',{okButton:'Word (.docx)',cancelButton:'Cancel',customButtons:[{text:'Text (.txt)',result:2}]}).show();
+  const book={title:d.book,chapters};
+  if(pick===2)saveFile(fileName(d.book,'txt'),bookText(book),'text/plain;charset=utf-8');
+  else if(pick===(R.AFFIRMATIVE??1))saveFile(fileName(d.book,'docx'),bookDocx(book),'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  else return status('Nothing was exported.');
+  logEvent('info','Export book',`${chapters.length} ${u.toLowerCase()}s, ${words} words${missing.length?`; not found: ${missing.join(', ')}`:''}`,chapters.map(x=>`${x.heading}: ${x.where||'not found'}`).join('\n'));
+  status(`Exported ${chapters.length} ${u.toLowerCase()}${chapters.length===1?'':'s'} (${words.toLocaleString()} words). Check your browser’s downloads.`);
+}
+
 /* ---------- Log: what Storyloom did, what failed and why (Extensions → Storyloom → Log) ---------- */
 const LOG_KEY='storyloom-log';
 const fullLog=()=>{try{return !!context().extensionSettings.storyloom?.logFull;}catch{return false;}};
@@ -1264,11 +1327,20 @@ async function sealChapter() {
   const summary=(result.updates||[]).find(u=>u.title.trim().toLocaleLowerCase()===sumTitle.toLocaleLowerCase());
   if(!summary){logEvent('error','Seal','no seal note came back');throw Error(`Seal didn’t return the ${t.unit.toLowerCase()} seal note. Nothing was moved on; try again.`);}
   await saveMemoryItem(MEMORY_ITEMS[1],summary.content);
-  markDone(teamState(d),'seal'); await persist();
+  markDone(teamState(d),'seal'); recordChapterChat(d,n,c); await persist();
   logEvent('info','Seal',`${t.unit} ${n} sealed`);
   status(`${t.unit} ${n} is sealed.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
   renderMemory();
-  if(n<total)await whatNext(); else status(`${t.unit} ${n} is sealed. That was the last ${t.unit.toLowerCase()} in the outline.`);
+  if(n<total)await whatNext();
+  else {
+    status(`${t.unit} ${n} is sealed. That was the last ${t.unit.toLowerCase()} in the outline.`);
+    if(await c.Popup.show.confirm('The book is finished','<p>That was the last chapter in the outline. Save the whole book as a file now? (You can do it any time with <b>Export book…</b> on the Memory tab.)</p>'))await exportBook();
+  }
+}
+/** Remember which chat (and which part of it) a chapter was written in, for Export book. */
+function recordChapterChat(d,n,c) {
+  const start=d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===n ? d.chapterStart.index : 0;
+  d.chapterChats ??= {}; d.chapterChats[n]={avatar:c.characters?.[c.characterId]?.avatar||'',chatId:c.chatId,start,end:c.chat.length};
 }
 /** After a seal: stay, go on in this chat, or go on in a fresh session. */
 async function whatNext() {
@@ -1276,6 +1348,7 @@ async function whatNext() {
   const P=c.Popup, R=c.POPUP_RESULT||{};
   const pick=await new P(`<h3>${u} ${n} is sealed. What next?</h3><p><b>Keep working on ${u} ${n}</b> — stay here; nothing moves on.<br><b>${u} ${n+1} in this chat</b> — memory moves forward; you keep writing in this session.<br><b>${u} ${n+1} in a fresh session</b> — a new chat whose narrator hasn’t seen this one, already connected to the lorebook, directive and memory. This chat is kept.</p>`,c.POPUP_TYPE.TEXT,'',{okButton:`${u} ${n+1} in a fresh session`,cancelButton:`Keep working on ${u} ${n}`,customButtons:[{text:`${u} ${n+1} in this chat`,result:2}]}).show();
   if(pick===2) {
+    d.chapterStart={chapter:n+1,chatId:c.chatId,index:c.chat.length}; await persist();
     await organizeBook(n+1); await applyMemory(); options(); renderMemory();
     status(`Now on ${u} ${n+1}${nextTitle?` — ${nextTitle}`:''}, in this chat. Memory has moved forward.`);
     logEvent('info','Next chapter',`${u} ${n+1} in the same chat`);
@@ -2517,7 +2590,7 @@ function init() {
       <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
       <div id="na-team" class="storyloom-team" hidden>
         <p id="na-team-label" class="storyloom-team-label"></p>
-        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button></div>
+        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button><button id="na-export" type="button" title="Save the story — every chapter’s narration, in order, without your directions — as a Word (.docx) or text (.txt) file.">Export book…</button></div>
         <ol id="na-team-steps" class="storyloom-steps"></ol>
         <p id="na-team-hint" class="storyloom-hint"></p>
         <button id="na-team-next" type="button" class="storyloom-team-next">Next →</button>
@@ -2711,6 +2784,7 @@ function init() {
   document.querySelector('#na-start-book').onclick=()=>{lastAction='Start a new book';startNewBook().catch(fail);};
   document.querySelector('#na-writing-setup').onclick=()=>{lastAction='Writing setup';writingSetup().catch(fail);};
   document.querySelector('#na-book-settings').onclick=()=>{lastAction='Book settings';editBookSettings().catch(fail);};
+  document.querySelector('#na-export').onclick=()=>{lastAction='Export book';exportBook().catch(fail);};
   document.querySelector('#na-narrator-undo').onclick=()=>{lastAction='Undo narrator change';undoNarrator().catch(fail);};
   const sendAssistant=async()=>{const input=document.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
   document.querySelector('#na-assistant-send').onclick=sendAssistant;
