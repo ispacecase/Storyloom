@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.23 (2026-11-14)
+- **The narrator is taught how *not* to write like an AI.** The Storyloom Novel (and Roleplay) Main Prompt is rewritten as instructions to the model about the model's own failings, with a list of **AI writing habits — never do these**: echoed lines ("Lasagne." "Lasagne."), explained subtext, "not X but Y", punchline endings, therapy-speak, conflicts that melt into a hug, body-language autopilot, stock phrases, rhythms of three, hedging, recaps — each with what to write instead. Existing Storyloom presets are updated automatically when you update (backed up first); a prompt you edited yourself is left alone and you're told.
+- Auto: if the Editor's rewrite comes back incomplete, the chapter is kept as written and Auto goes on to Seal (you're told) instead of stopping.
+- **One button to write the book.** At the top of the Storyloom panel: **✍ Write Chapter 1**. Press it and the narrator writes the chapter. When the chapter reaches its ending the button turns into **✓ Chapter 1 is done — Next chapter →**: one click checks and seals it, opens Chapter 2 in a fresh chat with the same narrator, and starts writing. A line under the button says where you are (chapter, title, words so far, and a warning if your response limit is too small).
+- Fixed: **Words per reply no longer caps a chapter** when chapters are written all at once. The chapter's length comes from the book's plan; you can change it for every chapter in Settings (**Chapter length**).
+- Settings reworded in plain words and marked as optional: *How chapters get written* (All at once / Bit by bit), *Help the narrator remember*, *Speed*.
+- Switching All at once / Bit by bit updates the Storyloom Novel preset itself — only Storyloom's own text; anything you edited is left alone and you're told.
+
 ## 0.22 (2026-11-14)
 - The writing settings (chapter length, keep going, live memory, thinking) are in Storyloom's own Settings, grouped and explained in plain words; still in the Extensions menu too.
 - One calculation for how many words fit the response limit.

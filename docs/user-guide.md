@@ -63,7 +63,7 @@ You write in SillyTavern's own chat, **one chat per chapter** (or session). Stor
 
 On the Memory tab, **Writing setup…** does three things, each with its own tick box:
 
-- **How to write a book** (or **How to run the story** for a campaign). Makes the *Storyloom Novel* (or *Storyloom Roleplay*) preset as a **copy of your current preset**, and switches to it. Only its writing prompts change; your sliders and your own preset stay exactly as they are.
+- **How to write a book** (or **How to run the story** for a campaign). Makes the *Storyloom Novel* (or *Storyloom Roleplay*) preset as a **copy of your current preset**, and switches to it. Only its writing prompts change; your sliders and your own preset stay exactly as they are. Its Main Prompt is written to the model about the model: the ways language models write fiction badly — rushing scenes, frictionless conflict, named feelings, polished same-voice dialogue — and a list of **AI writing habits to never do** (echoed lines like "Lasagne." "Lasagne.", explained subtext, "not X but Y", punchline endings, therapy-speak, body-language autopilot, stock phrases…), each with what to write instead. When Storyloom updates these instructions, it updates your Storyloom presets too — unless you've edited that prompt yourself, in which case it's left alone and you're told.
 - **The narrator** (or **The game master**). Uses the general *Storyloom Narrator* (or *Storyloom Game Master*), creating it if needed, and opens this chapter in a fresh chat with it. Everything carries over.
 - **This book's settings.** Fills the narrator's blanks from the lorebook.
 
@@ -71,11 +71,16 @@ On the Memory tab, **Writing setup…** does three things, each with its own tic
 
 ## 3. Writing a chapter
 
-- **Starting:** press **Send with an empty box** and the narrator writes the chapter from its plan and memory, through to its planned ending, in one reply. Or type a direction ("Tom comes back at dusk"). Prefer to build a chapter over several replies? Turn on *Write each chapter over several replies* in Extensions → Storyloom.
-- **Length:** each reply aims for the chapter's planned length (WORDS PER CHAPTER from setup, or this chapter's own number from Book settings), as far as your **Max Response Length** fits it. Set your own in Extensions → Storyloom → **Words per narrator reply**.
-  - **Your direction always wins.** If your message asks for a length ("about 200 words", "keep it short", "one paragraph"), Storyloom leaves its own length instruction out for that reply.
-- **Knowing when a chapter is done, without reading it:** the narrator ends the chapter with a hidden signal when it reaches the plan's ending. Storyloom removes the signal (it never appears in your story or the export), marks the reply *"✓ End of chapter"* and tells you *"Chapter N is done"*. Click that message to go to the steps. If a reply stops before the ending you get *"Chapter N isn't finished yet — press Send to continue."*
-- **Keep going until the chapter is done** (Extensions → Storyloom, off by default): Storyloom presses Send for you until the chapter reaches its ending, up to the number of replies you set, and stops if you type something.
+- **The Write button.** At the top of the Storyloom panel there's one big button. It always says what happens next:
+  - **✍ Write Chapter 1** — the narrator writes the whole chapter, from its plan and memory, to the planned ending. Want to steer? Type a direction in the chat box first ("start at the funeral"), then press it. (Pressing SillyTavern's own Send with an empty box does the same.)
+  - **✍ Keep writing Chapter 1** — the chapter isn't at its ending yet (or the last reply was cut off); this carries on from where it stopped.
+  - **✓ Chapter 1 is done — Next chapter →** — one click checks the chapter (Auto), seals it, opens Chapter 2 in a fresh chat with the same narrator, and starts writing it.
+  - The line under the button says where you are: chapter, title, words so far against the chapter's length, and a warning if your Max Response Length is too small for the chapter.
+- **Length:** a chapter is written to its length from the book's plan (WORDS PER CHAPTER). Change it for every chapter in Settings → **Chapter length**, or for one chapter in Book settings…. As far as your **Max Response Length** fits.
+  - **Your direction always wins.** If your message asks for a length ("about 200 words", "keep it short"), Storyloom leaves its own length instruction out for that reply.
+  - *Bit by bit* (Settings → How chapters get written) writes a chapter over several presses instead; there, **Words each time you press Write** sets the size of each part.
+- **Knowing when a chapter is done, without reading it:** the narrator ends the chapter with a hidden signal at the plan's ending. Storyloom removes it (it never appears in your story or the export), marks the reply *"✓ End of chapter"*, tells you *"Chapter N is done"*, and the button turns into **Next chapter**.
+- **Keep going by itself** (Settings, off by default): if the narrator stops before the chapter's end, Storyloom carries on for you, up to the number of times you set, and stops if you start typing.
 - **Under each reply** you'll see a small line, e.g. *1,014 words · 1,320 tokens · thinking 850 · 2,170 of 8,196*. It turns orange near the response limit. (With Dials installed, Dials shows its own line instead.)
 - **Cut-off replies:** if a reply stops mid-sentence, Storyloom marks it (*"✂ This reply stopped mid-sentence"*) and tells you why: the response limit (thinking counts against it) or something else. Press **Continue** (☰ beside the message box) to finish it.
 - **Dictation:** the 🎤 buttons on Storyloom's message boxes type what you say.
@@ -128,7 +133,9 @@ Each live update is one small call to your model. Turn them on or off and set ho
 
 ## 6. Moving to the next chapter
 
-After Seal, choose:
+The easy way: press **Next chapter →** on the Write button. Storyloom checks and seals the chapter, opens the next one in a fresh chat with the same narrator, and starts writing. If the Editor's rewrite comes back incomplete, the chapter is kept exactly as written and Seal goes ahead (you're told).
+
+If you run Seal yourself (Memory tab), you choose:
 
 - **Keep working on this chapter.** Nothing moves on.
 - **Next chapter in this chat.** Memory moves forward; you keep writing in the same session.
@@ -195,16 +202,16 @@ Storyloom works fully without Dials.
 
 ## 12. Settings reference
 
-The everyday writing settings are in **Storyloom's own Settings** (the Settings button in the Storyloom panel), grouped as **Chapters**, **Memory while you write** and **Thinking**, each with a plain explanation under it. The same settings, plus the rest, are also in Extensions → Storyloom:
+**You don't need to change any settings** — Storyloom works as it is. The everyday ones are in **Storyloom's own Settings** (the Settings button in the panel), in plain words: **How chapters get written** (All at once / Bit by bit, Chapter length, keep going by itself), **Help the narrator remember**, and **Speed**. The same settings, plus the rest, are also in Extensions → Storyloom:
 
 | Setting | What it does |
 |---|---|
-| **Live memory** | Scene now (every N replies), Earlier this chapter (every N messages), and sending on-stage characters' entries. |
-| **Dials** (shown when installed) | Use the same Dials settings as SillyTavern's chat; Dials settings…. |
-| **Write each chapter over several replies** | Off (default): one reply is a whole chapter, written to its planned ending. On: a passage at a time, and you steer between replies. Run Writing setup… afterwards so the preset matches. |
-| **Words per narrator reply** | How long each reply should be. Blank: the chapter's planned length, within what your Max Response Length fits. |
+| **Live memory** | Keep track of the current scene (every N replies), a summary of the chapter so far (every N messages), and reminding the narrator about everyone in the scene. |
+| **Dials** (shown when installed) | Use your Dials chat settings for Storyloom too; open Dials. |
+| **Write each chapter over several replies** | Off (default): each press writes a whole chapter, to its planned ending. On: bit by bit. Switching updates the Storyloom Novel preset's instructions to match (only Storyloom's own text — anything you edited is left alone and you're told). |
+| **Words per narrator reply** | Only for bit-by-bit and roleplay: how long each reply should be. Not used when chapters are written all at once. |
 | **Send SillyTavern's Reasoning Effort to Custom endpoints** | SillyTavern leaves its Reasoning Effort out for Custom endpoints such as Venice. This sends it. (Dials does it instead when installed.) |
-| **Keep Storyloom's own thinking short** | Asks thinking models for low effort on Storyloom's own calls. (Dials decides instead when installed.) |
+| **Keep Storyloom's own thinking short** | Makes Lint, Seal and planning faster on thinking models. Your story isn't affected. (Dials decides instead when installed.) |
 | **Chapter team** | Each role on or off, its model, and its personality. |
 | **Narrator template** | The headings Storyloom uses when it drafts a non-general narrator. |
 | **Memory placement** | Where each memory item goes in the prompt, as which role, with what instruction. |

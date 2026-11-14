@@ -7,7 +7,7 @@
 Storyloom is a SillyTavern extension that works alongside the main chat. It interviews you about your book or campaign and builds the lorebook. It sets up a narrator (or game master) that knows how to write. Then, while you write, it keeps the story consistent from reply to reply and chapter to chapter. The story is written in SillyTavern's own chat, one chat per chapter or session. Storyloom supplies the right information and checks the result.
 
 - **Setup wizard.** Answer a few questions (Simple) or talk each part through (Deep). Storyloom proposes the story, and once you approve it builds the lorebook: summary, voice and rules, places, cast, a full profile per character, and a chapter-by-chapter outline.
-- **A narrator that knows how to write a book.** A "Storyloom Novel" preset teaches the craft (live scene, subtext, point of view, ending on an open beat). A general narrator card fills in your book's point of view, tense, voice, tone, genre and rules. For roleplay there's a **Game Master** that plays the world and everyone in it, and never acts or speaks for your character.
+- **A narrator that knows how to write a book.** A "Storyloom Novel" preset is written to the model about the model: how language models write fiction badly, and a list of AI writing habits it must never use (echoed lines, explained subtext, "not X but Y", punchline endings, therapy-speak, stock phrases…), each with what to write instead. A general narrator card fills in your book's point of view, tense, voice, tone, genre and rules. For roleplay there's a **Game Master** that plays the world and everyone in it, and never acts or speaks for your character.
 - **Memory that doesn't drop things.**
   - **Seal** writes a hand-off for the next chapter: where things stand (time, weather, who is where and in what shape, who knows what, promises), everything that happened, and the last page word for word.
   - **While you write**, Storyloom keeps a *Scene now* card and a running record of the chapter, and makes sure everyone on stage has their lorebook entry sent.
@@ -31,9 +31,11 @@ Requires SillyTavern **1.19.0** or later. Chat Completion connections are recomm
 1. Open Storyloom with no chat open and click **Start a new book**, or open a chat and pick **＋ Start a new novel** under *Lorebook for this chat*.
 2. Pick the **Novel** template, then **Simple** or **Deep**, and answer. Approve the proposal; Storyloom builds the lorebook and outline.
 3. On the **Memory** tab, click **Writing setup…** and keep all three ticks. You get the *Storyloom Novel* preset, the general narrator, and this book's settings, in a fresh Chapter 1 chat.
-4. Write in the main chat. Press Send with an empty box to let the narrator start, or type a direction ("Mara finds the letter").
-5. When the chapter's done: **Auto**, or the steps one by one (**Lint → Editor → Reader → Revise → Seal**). Then choose **Chapter 2 in a fresh session**.
-6. At the end: **Export book…**
+4. Press **✍ Write Chapter 1** at the top of the Storyloom panel. The narrator writes the whole chapter. (Want to steer? Type a direction in the chat box first.)
+5. When it's done the button says **✓ Chapter 1 is done — Next chapter →**. One click checks and seals it, opens Chapter 2, and starts writing. Repeat.
+6. At the end the button offers to save the book as a file (or use **Export book…**).
+
+You don't need to change any settings. If you want to, they're under **Settings** in the panel, in plain words.
 
 ## Quick start: a roleplay or campaign
 

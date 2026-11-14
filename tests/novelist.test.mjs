@@ -66,3 +66,27 @@ test('a chapter per reply is the default; passages are an option', async () => {
   assert.match(replyLengthNote(8196, 'Chapter', 3000), /write this whole chapter/);
   assert.match(replyLengthNote(8196, 'Chapter', 0, {passages: true}), /one passage of the chapter/);
 });
+
+test('switching all-at-once / bit-by-bit swaps only Storyloom’s own text', async () => {
+  const {switchPresetMode, writingKit, novelPreset} = await import('../novelist.mjs');
+  const whole = novelPreset({}, {passages: false}), bits = writingKit(false, {passages: true});
+  const r = switchPresetMode(whole, true);
+  assert.deepEqual(r.swapped, ['Main Prompt', 'Post-History Instructions']);
+  assert.equal(r.preset.prompts.find(p => p.identifier === 'main').content, bits.main);
+  assert.equal(whole.prompts.find(p => p.identifier === 'main').content, writingKit(false).main, 'the original is not changed');
+  const edited = structuredClone(whole); edited.prompts.find(p => p.identifier === 'main').content = 'My own main prompt.';
+  const e = switchPresetMode(edited, true);
+  assert.deepEqual(e.kept, ['Main Prompt']);
+  assert.equal(e.preset.prompts.find(p => p.identifier === 'main').content, 'My own main prompt.');
+  assert.deepEqual(switchPresetMode(whole, false).swapped, [], 'already matching: nothing to do');
+});
+
+test('the narrator prompt is written to a model about model habits, and old Storyloom text upgrades', async () => {
+  const {CRAFT_MAIN, CRAFT_MAIN_PASSAGES, RP_MAIN, AI_HABITS, syncPresetText, textPrint, OLD_TEXTS, writingKit} = await import('../novelist.mjs');
+  for (const t of [CRAFT_MAIN, CRAFT_MAIN_PASSAGES, RP_MAIN]) assert.ok(t.includes(AI_HABITS));
+  assert.match(AI_HABITS, /Echo dialogue/);
+  assert.match(CRAFT_MAIN, /Language models, this one included/);
+  assert.ok(!OLD_TEXTS.has(textPrint(CRAFT_MAIN)), 'the current text is not "old"');
+  const old = {prompts: [{identifier: 'main', content: 'x'}, {identifier: 'jailbreak', content: writingKit(false).postHistory}]};
+  [...OLD_TEXTS].length && assert.equal(syncPresetText(old).kept[0], 'Main Prompt', 'unknown text is the writer’s and stays');
+});

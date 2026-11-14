@@ -342,3 +342,12 @@
 #na-panel .storyloom-settings .storyloom-wnum { display:flex !important; flex-direction:row !important; align-items:center; gap:.6rem; }
 #na-panel .storyloom-settings .storyloom-wnum input { width:7em !important; flex:none; }
 #na-panel .storyloom-settings .storyloom-wcard h4 { text-align:left; }
+
+/* The Write button: the one obvious thing to press for each chapter */
+#na-panel .storyloom-write { display:flex; flex-direction:column; gap:.35rem; padding:.6rem .75rem; border-bottom:1px solid var(--sl-line); }
+#na-panel .storyloom-write-btn { width:100%; border:0; border-radius:10px; background:var(--sl-accent); color:#fff; padding:.75rem 1rem; font-size:1rem; font-weight:700; cursor:pointer; }
+#na-panel .storyloom-write-btn:hover:not(:disabled) { background:var(--sl-accent-dark); }
+#na-panel .storyloom-write-btn.is-done { background:#4f7a43; }
+#na-panel .storyloom-write-btn.is-done:hover:not(:disabled) { background:#3f5a35; }
+#na-panel .storyloom-write-btn:disabled { opacity:.7; cursor:progress; }
+#na-panel .storyloom-advanced-note { margin:0 0 .5rem; }

@@ -1,6 +1,6 @@
 import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
-import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
+import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, switchPresetMode, syncPresetText, RP_PRESET_NAME as RP_PRESET, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { chapterProse, bookText, bookDocx, fileName, cleanReply, splitEndMark } from './export.mjs';
 import { sceneInstruction, parseScene, sceneNames, foldRange, sessionInstruction, parseSession } from './live.mjs';
@@ -151,7 +151,13 @@ function changeBook(book) {
   if (current.directive && current.book !== book) throw Error('This chat already has a linked writing directive. Open a different chat for another novel.');
   return selectNovel(state,book);
 }
-async function persist() { await saveVerified(context); }
+/** Save this chat's Storyloom data and read it back. Right after a new chat opens SillyTavern may still be saving it, so a mismatch is retried a few times. */
+async function persist() {
+  for(let i=0;;i++){
+    try{return await saveVerified(context);}
+    catch(e){if(i>=3 || !/not confirmed/.test(String(e?.message)))throw e; await new Promise(r=>setTimeout(r,600*(i+1)));}
+  }
+}
 let lastAction='';
 function status(s) { const el=document.getElementById('na-status'); el.textContent = s; el.classList.remove('is-error'); }
 /** Show a failure with the button that triggered it, so the bottom line says what went wrong where. */
@@ -728,6 +734,7 @@ async function applyMemory() {
 function replyWordsHint() {
   const h=document.getElementById('sl-reply-words-hint'); if(!h)return;
   const c=context(), want=replyTarget(), max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
+  if(wholeChapters()){let per=0; try{per=chapterTarget();}catch{} h.textContent=`Not used right now: each Send writes a whole chapter${per?`, about ${per.toLocaleString()} words (the chapter length)`:''}. This number only counts when chapters are written a passage at a time, or in roleplay.`; h.classList.remove('is-warning'); return;}
   if(!want){let per=0; try{per=chapterTarget();}catch{} const a=autoReplyWords(); h.textContent=!a?(max?`Auto: up to about ${replyWords(max).toLocaleString()} words per reply — as much as your Max Response Length (${max.toLocaleString()} tokens) fits, leaving room for thinking. ${(()=>{try{return isRP()?'Roleplay replies don’t follow a chapter length.':'This book has no chapter length set.';}catch{return '';}})()} Type a number here to aim for a specific length.`:'Auto: sized to fit your Max Response Length.'):a<per?`Auto: this chapter is planned at ${per.toLocaleString()} words, but your Max Response Length only fits about ${a.toLocaleString()} with thinking — raise it to get the whole chapter in one reply.`:`Auto: ${a.toLocaleString()} words per reply — this chapter’s planned length from the book’s setup (change it per chapter in Book settings…).`; h.classList.toggle('is-warning',!!a && a<per); return;}
   const need=tokensFor(want);
   let per=0; try{per=chapterTarget();}catch{}
@@ -1076,7 +1083,7 @@ function afterChapterReply(ended,cut) {
   if(ended) {
     keepRounds=0;
     logEvent('info','End of chapter',`${u} ${n}: the narrator reached the plan’s ending`);
-    toastr.success(`${u} ${n} is done — the plan’s ending is reached. Click here to open the steps (Auto, or Lint → Seal).`,`Storyloom: ${u} ${n} finished`,{timeOut:0,extendedTimeOut:0,closeButton:true,onclick:()=>{const p=document.getElementById('na-panel'); if(p)p.hidden=false; activeTab='memory'; settingsOpen=false; renderPanelView();}});
+    toastr.success(`${u} ${n} is done — it reached its planned ending. Click here, then press “Next ${u.toLowerCase()} →”.`,`Storyloom: ${u} ${n} finished`,{timeOut:0,extendedTimeOut:0,closeButton:true,onclick:()=>{const p=document.getElementById('na-panel'); if(p)p.hidden=false; settingsOpen=false; renderPanelView();}});
     renderTeam();
     return;
   }
@@ -1089,7 +1096,107 @@ function afterChapterReply(ended,cut) {
     return;
   }
   if(k.on && keepRounds>=k.max){toastr.warning(`${u} ${n} still isn’t finished after ${k.max} replies — Storyloom stopped. Press Send to keep going, or check the chapter.`,'Storyloom',{timeOut:12000}); logEvent('warn','Keep going',`stopped after ${k.max} replies without the end of ${u} ${n}`); keepRounds=0; return;}
-  if(!cut)toastr.info(`${u} ${n} isn’t finished yet — press Send with an empty box to continue.`,'Storyloom',{timeOut:8000});
+  if(!cut)toastr.info(`${u} ${n} isn’t finished yet — press “Keep writing” in Storyloom (or Send with an empty box) to carry on.`,'Storyloom',{timeOut:8000});
+}
+
+/** Bring Storyloom's own presets up to date (new writing instructions, or the other way of writing), never touching text the writer changed. */
+async function syncPresets({why='update'}={}) {
+  const c=context(); if(c.mainApi!=='openai')return {swapped:[],kept:[],found:false};
+  const pm=c.getPresetManager('openai'), list=pm.getPresetList(), out={swapped:[],kept:[],found:false};
+  for(const [name,roleplay] of [[PRESET_NAME,false],[RP_PRESET,true]]) {
+    if(list.preset_names?.[name]===undefined)continue; out.found=true;
+    const selected=pm.getSelectedPresetName()===name, now=selected?getChatCompletionPreset():pm.getCompletionPresetByName(name);
+    const opts={roleplay,passages:!roleplay && writePassages()}, {swapped,kept}=syncPresetText(now,opts);
+    if(swapped.length)await changePreset(name,p=>{const r=syncPresetText(p,opts).preset; for(const k of Object.keys(p))delete p[k]; Object.assign(p,r);},why==='mode'?'switch how chapters are written':'Storyloom update');
+    out.swapped.push(...swapped.map(x=>`${name}: ${x}`)); out.kept.push(...kept.map(x=>`${name}: ${x}`));
+  }
+  if(out.swapped.length||out.kept.length)logEvent('info','Presets',`${why}: ${out.swapped.length?`updated ${out.swapped.join(', ')}`:'nothing updated'}${out.kept.length?`; left alone (your own changes): ${out.kept.join(', ')}`:''}`);
+  return out;
+}
+/** Once per Storyloom version: update the presets' writing instructions and say what happened. */
+let upgradingPresets=false;
+async function upgradePresetsOnce() {
+  if(upgradingPresets)return; upgradingPresets=true; try{await upgradePresetsNow();}finally{upgradingPresets=false;}
+}
+async function upgradePresetsNow() {
+  const c=context(), st=(c.extensionSettings.storyloom ??= {}), v=MANIFEST_VERSION||'';
+  if(!v || st.presetsSyncedFor===v)return;
+  const r=await syncPresets({why:'update'}); if(!r.found)return;
+  st.presetsSyncedFor=v; c.saveSettingsDebounced();
+  if(r.swapped.length)toastr.success(`Storyloom ${v} updated your narrator's writing instructions (${r.swapped.join(', ')}): they now tell the model exactly which AI writing habits to avoid — echoed lines, explained subtext, stock phrases and the rest. The old version is in Backups.`,'Storyloom',{timeOut:20000,closeButton:true});
+  if(r.kept.length)toastr.info(`You've changed ${r.kept.join(' and ')}, so Storyloom left ${r.kept.length>1?'them':'it'} alone. This version has new writing instructions — Compare narrators… on the Memory tab shows them next to yours.`,'Storyloom',{timeOut:20000,closeButton:true});
+}
+/** After switching all-at-once / bit-by-bit: update the presets to match, leaving anything the writer edited alone. */
+async function matchPresetToMode() {
+  const how=writePassages()?'bit by bit':'all at once';
+  try{if(isRP())return;}catch{}
+  const r=await syncPresets({why:'mode'});
+  if(r.kept.length)toastr.warning(`Chapters will be written ${how}. You've changed ${r.kept.join(' and ')}, so Storyloom left ${r.kept.length>1?'them':'it'} alone — ${r.kept.length>1?'they':'it'} may still describe the other way. Ask the Assistant to update ${r.kept.length>1?'them':'it'} if you like.`,'Storyloom',{timeOut:15000});
+  else toastr.success(`Chapters will be written ${how}.${r.swapped.length?' The narrator’s instructions are updated to match (the old version is in Backups).':''}`,'Storyloom');
+}
+
+/* ---------- The Write button: one obvious thing to press for each chapter ---------- */
+let genBusy=false, writeBusy='', genPoll=null;
+/** Whether SillyTavern is generating a reply right now (its Stop button shows only then). */
+const isGenerating=()=>{const b=document.getElementById('mes_stop'); return !!b && getComputedStyle(b).display!=='none';};
+const notConnected=()=>{try{return context().onlineStatus==='no_connection';}catch{return false;}};
+/** Where this chapter stands: nothing written yet, part written, finished, or the book is done. */
+function writeState() {
+  let d; try{if(noChatOpen())return null; d=data();}catch{return null;}
+  if(!d.book || d.interview?.phase!=='done' || !inBookChat() || isRP(d))return null;
+  const c=context(), n=d.chapter||1, u=tpl(d).unit, total=d.outlineChapters?.length||0, t=teamState(d);
+  const from=d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===n?d.chapterStart.index:0;
+  const replies=c.chat.slice(from).filter(m=>!m.is_user && !m.is_system && !isHeading(m.mes));
+  const words=replies.reduce((a,m)=>a+(String(m.mes||'').match(/\S+/g)||[]).length,0);
+  const sealed=t.done.includes('seal'), ended=sealed || replies.some(m=>m.extra?.storyloom_chapter_end);
+  const last=replies.at(-1), cut=!!last && !ended && endsCutOff(last.mes);
+  const title=(d.outlineChapters||[]).find(x=>x.number===n)?.title||'';
+  return {d,n,u,total,title,replies:replies.length,words,sealed,ended,cut,target:chapterTarget(d,n),last:total>0 && n>=total};
+}
+function renderWriteBar() {
+  const bar=document.getElementById('na-write'); if(!bar)return;
+  const s=writeState(); bar.hidden=!s || settingsOpen; if(!s)return;
+  const btn=bar.querySelector('#na-write-btn'), line=bar.querySelector('#na-write-line');
+  const U=`${s.u} ${s.n}`, of=s.total?` of ${s.total}`:'', name=s.title?` — “${s.title}”`:'';
+  let label, kind='', disabled=false, say;
+  const fits=autoReplyWords(), max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
+  const warn=s.target && fits && fits<s.target && !writePassages()?` ⚠ Your Max Response Length (${max.toLocaleString()} tokens) only fits about ${fits.toLocaleString()} words — raise it in the left panel, or the chapter comes out shorter.`:'';
+  if(writeBusy){label=writeBusy; disabled=true; say='You can leave this running.';}
+  else if(isGenerating()){clearTimeout(genPoll); genPoll=setTimeout(()=>{try{renderWriteBar();}catch{}},2000); label=`Writing ${U}…`; disabled=true; say=`The narrator is writing. You’ll get a message when ${U} is done.`;}
+  else if(s.ended && s.sealed && s.last){label='✓ The book is finished — Save it as a file'; kind='is-done'; say=`All ${s.total} ${s.u.toLowerCase()}s are written and sealed.`;}
+  else if(s.ended && s.last){label=`✓ ${U} is done — Check and finish the book`; kind='is-done'; say=`${U}${of}${name} reached its planned ending (${s.words.toLocaleString()} words). This is the last one: Storyloom checks it, seals it, and offers to save the book.`;}
+  else if(s.ended){label=`✓ ${U} is done — Next ${s.u.toLowerCase()} →`; kind='is-done'; say=`${U}${of}${name} reached its planned ending (${s.words.toLocaleString()} words). Next checks and seals it, opens ${s.u} ${s.n+1} in a fresh chat, and starts writing it.`;}
+  else if(!s.replies){label=`✍ Write ${U}`; say=notConnected()?'⚠ SillyTavern isn’t connected to an AI yet — connect in API Connections (the plug icon), then press Write.':`${U}${of}${name}${s.target?` · about ${s.target.toLocaleString()} words`:''}. Press it and the narrator writes the ${s.u.toLowerCase()}${writePassages()?' — the first part of it':''}. Want to steer? Type a direction in the chat box first (“start at the funeral”).${warn}`;}
+  else {label=`✍ Keep writing ${U}`; say=`${U}${of}${name}: ${s.words.toLocaleString()}${s.target?` of about ${s.target.toLocaleString()}`:''} words so far${s.cut?', and the last reply stopped mid-sentence':', not at its ending yet'}. Press to carry on from where it stopped.${warn}`;}
+  btn.textContent=label; btn.disabled=disabled; btn.className=`storyloom-write-btn ${kind}`; line.textContent=say;
+}
+/** Write (or carry on writing) this chapter — the same as pressing Send in the chat. */
+function writeChapter() {
+  const s=writeState(); if(!s)throw Error('Open your book’s chat first.');
+  if(notConnected())throw Error('SillyTavern isn’t connected to an AI. Connect in API Connections (the plug icon at the top), then press Write again.');
+  const box=document.getElementById('send_textarea');
+  if(s.cut && !(box?.value||'').trim()){context().generate('continue'); return;}
+  const send=document.getElementById('send_but'); if(!send)throw Error('SillyTavern’s Send button wasn’t found.');
+  send.click();
+}
+/** One click at the end of a chapter: check and seal it (Auto), open the next chapter in a fresh chat with the same narrator, and start writing. */
+async function nextChapter() {
+  const s=writeState(); if(!s)throw Error('Open your book’s chat first.');
+  const {u,n}=s;
+  if(s.sealed && s.last){await exportBook(); return;}
+  try {
+    writeBusy=`Checking and sealing ${u} ${n}…`; renderWriteBar();
+    await autoChapter({ask:s.last});
+    if(s.last)return;
+    const d=data(); if(!teamState(d).done.includes('seal'))return;
+    const cur=currentNarrator(d,context()); if(!cur)throw Error('The narrator’s chat isn’t open.');
+    writeBusy=`Opening ${u} ${n+1}…`; renderWriteBar();
+    if((d.chapter||1)!==n+1)await organizeBook(n+1);
+    d.pendingFresh=n+1; await persist();
+    await startChapterChat({avatar:cur.avatar,notes:cur.notes||{}});
+  } finally {writeBusy=''; renderWriteBar();}
+  await new Promise(r=>setTimeout(r,800));
+  const next=writeState(); if(next && !next.replies && next.n===n+1){logEvent('info','Next chapter',`${u} ${n+1}: writing started`); writeChapter();}
 }
 
 /* ---------- Writing settings in Storyloom's own Settings (same values as the Extensions menu) ---------- */
@@ -1098,15 +1205,27 @@ function renderWritingSettings() {
   const q=id=>document.getElementById(id); if(!q('na-w-words'))return;
   const val=(id,v)=>{const e=q(id); if(e && document.activeElement!==e){if(e.type==='checkbox')e.checked=!!v; else e.value=v??'';}};
   for(const r of document.querySelectorAll('input[name="na-w-mode"]'))r.checked=(r.value==='passages')===writePassages();
-  val('na-w-words',replyTarget()||''); const h=q('sl-reply-words-hint'); try{replyWordsHint();}catch{} if(q('na-w-words-hint'))q('na-w-words-hint').textContent=h?.textContent||'';
+  const whole=wholeChapters(); let d=null; try{d=data(); if(!d.book || d.interview?.phase!=='done')d=null;}catch{d=null;}
+  q('na-w-chlen-row').hidden=!whole || !d; q('na-w-words-row').hidden=whole;
+  val('na-w-words',replyTarget()||''); val('na-w-chlen',d?.chapterLength||'');
+  if(q('na-w-chlen'))q('na-w-chlen').placeholder=d && Number(d.budget?.perChapter)>=200?Number(d.budget.perChapter).toLocaleString():'from plan';
+  const hint=q('na-w-words-hint');
+  if(hint){
+    if(whole){
+      const plan=Number(d?.budget?.perChapter)||0, len=d?bookChapterLength(d):0, fits=autoReplyWords(), max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
+      hint.textContent=!d?'Open a book’s chat to set its chapter length.':`${d.chapterLength?`You set ${len.toLocaleString()} words for every chapter of this book.`:`From this book’s plan${plan?`: ${plan.toLocaleString()} words`:''}.`} Type a number to change it; clear the box to go back to the plan.${len && fits && fits<len?` ⚠ Your Max Response Length (${max.toLocaleString()} tokens) only fits about ${fits.toLocaleString()} words — raise it in the left panel or chapters will come out shorter.`:''}`;
+      hint.classList.toggle('is-warning',!!(len && fits && fits<len));
+    } else {const h=q('sl-reply-words-hint'); try{replyWordsHint();}catch{} hint.textContent=h?.textContent||''; hint.classList.toggle('is-warning',!!h?.classList.contains('is-warning'));}
+  }
   const k=keepGoingOpts(); val('na-w-keep',k.on); val('na-w-keep-max',k.max);
   const o=liveOpts(); val('na-w-scene',o.scene); val('na-w-scene-every',o.sceneEvery); val('na-w-session',o.session); val('na-w-session-every',o.sessionEvery); val('na-w-stage',o.stage);
   q('na-w-dials').hidden=!dialsOn(); q('na-w-nodials').hidden=dialsOn(); val('na-w-dials-same',dialsSameAsChat()); val('na-w-short',shortThinking()); val('na-w-effort',sendEffort());
 }
 function bindWritingSettings() {
   const q=id=>document.getElementById(id), num=(e,min,max,def)=>Math.max(min,Math.min(max,Math.round(Number(e.target.value)||def)));
-  for(const r of document.querySelectorAll('input[name="na-w-mode"]'))r.onchange=e=>{slSet(s=>{s.passages=e.target.value==='passages';}); logEvent('info','Settings',`chapters ${writePassages()?'over several replies':'in one reply each'}`); toastr.info('Run Writing setup… (first box only) on the Memory tab so your Storyloom Novel preset matches.','Storyloom',{timeOut:8000});};
+  for(const r of document.querySelectorAll('input[name="na-w-mode"]'))r.onchange=e=>{slSet(s=>{s.passages=e.target.value==='passages';}); logEvent('info','Settings',`chapters ${writePassages()?'over several replies':'in one reply each'}`); matchPresetToMode().catch(e=>fail(e,'Switch how chapters are written'));};
   q('na-w-words').onchange=e=>slSet(s=>{const v=Math.max(0,Math.round(Number(e.target.value)||0)); s.replyWords=v||null;});
+  q('na-w-chlen').onchange=async e=>{try{const d=data(); const v=Math.max(0,Math.round(Number(e.target.value)||0)); if(v && v<200){toastr.warning('A chapter needs at least 200 words.','Storyloom'); e.target.value=d.chapterLength||''; return;} if(v)d.chapterLength=v; else delete d.chapterLength; await persist(); logEvent('info','Settings',`chapter length: ${v||'from the plan'}`); applyReplyLength(); renderWritingSettings(); renderWriteBar();}catch(err){fail(err,'Chapter length');}};
   q('na-w-keep').onchange=e=>slSet(s=>{s.keepGoing=e.target.checked;});
   q('na-w-keep-max').onchange=e=>slSet(s=>{s.keepGoingMax=num(e,1,20,6);});
   for(const [id,key,isNum,min,max,def] of [['na-w-scene','scene'],['na-w-session','session'],['na-w-stage','stage'],['na-w-scene-every','sceneEvery',1,1,20,3],['na-w-session-every','sessionEvery',1,6,100,20]])q(id).onchange=e=>slSet(s=>{s.live ??= {}; s.live[key]=isNum?num(e,min,max,def):e.target.checked;});
@@ -1239,7 +1358,9 @@ async function exportBook() {
 const LOG_KEY='storyloom-log';
 const replyTarget=()=>{try{return Math.max(0,Math.round(Number(context().extensionSettings.storyloom?.replyWords)||0));}catch{return 0;}};
 /** This chapter's planned length: its own word count if one was set (Book settings), else the book's WORDS PER CHAPTER from setup. */
-function chapterTarget(d=data(),n=d.chapter||1){const w=Number(d.chapterWords?.[n])||Number(d.budget?.perChapter)||0; return w>=200?w:0;}
+function chapterTarget(d=data(),n=d.chapter||1){const w=Number(d.chapterWords?.[n])||bookChapterLength(d); return w>=200?w:0;}
+/** The book's chapter length: what the writer typed in Settings, else WORDS PER CHAPTER from setup. */
+function bookChapterLength(d=data()){const w=Number(d.chapterLength)||Number(d.budget?.perChapter)||0; return w>=200?w:0;}
 /** Words per reply when the writer hasn't set one: the chapter's planned length, as far as Max Response Length fits it with thinking. */
 function autoReplyWords() {
   let per=0; try{per=isRP()?0:chapterTarget();}catch{} // roleplay: sessions aren't word counts; replies stay conversational unless you set a number
@@ -1248,7 +1369,9 @@ function autoReplyWords() {
   const fits=max?replyWords(max):Infinity; // one calculation everywhere
   return Math.min(fits,per);
 }
-const effectiveReplyWords=()=>replyTarget()||autoReplyWords();
+/** One reply = one whole chapter: the chapter's length, never "words per reply" (that only applies to passages and roleplay). */
+const wholeChapters=()=>{try{return !isRP() && !writePassages();}catch{return !writePassages();}};
+const effectiveReplyWords=()=>wholeChapters()?autoReplyWords():(replyTarget()||autoReplyWords());
 let sentEffortLogged=false;
 const sendEffort=()=>{try{return context().extensionSettings.storyloom?.sendEffort!==false;}catch{return true;}};
 const shortThinking=()=>{try{return context().extensionSettings.storyloom?.shortThinking!==false;}catch{return true;}};
@@ -1424,7 +1547,7 @@ async function acceptRevision() {
 /** Auto: run every step that's left — Lint, Editor, Reader, Revise (keeping every note), accept the revision — then Seal. Only the what-next choice is asked. */
 /** Lint kinds Auto never sends on: mechanical style checks and guesses. */
 const AUTO_SKIP=['REPEAT','STOCK','LENGTH','UNLISTED'];
-async function autoChapter() {
+async function autoChapter({ask=true}={}) {
   const d=data(); readyForTeam(d);
   const u=tpl(d).unit, n=d.chapter||1, run={lint:stepLint,markup:stepMarkup,reader:stepReader};
   logEvent('info','Auto',`${u} ${n}: started`);
@@ -1446,12 +1569,20 @@ async function autoChapter() {
         const must=allNotes(t).filter(x=>x.weight==='must');
         logEvent('info','Auto',`Revise: ${must.length} of ${allNotes(t).length} notes kept (“must” only)`);
         if(!must.length){status('Nothing serious to fix — going straight to Seal.');markDone(t,'revise');await persist();continue;}
-        t.notePicks=must.map(x=>x.id); await persist(); await stepRevise();
+        t.notePicks=must.map(x=>x.id); await persist();
+        try{await stepRevise();}
+        catch(e){
+          if(!/didn’t come back whole/.test(String(e?.message)))throw e;
+          const tt=teamState(data()); tt.revision=null; markDone(tt,'revise'); await persist();
+          logEvent('warn','Auto',`Revise: the Editor’s revision of ${u} ${n} came back incomplete — kept the chapter as written and went on to Seal`,String(e.message));
+          toastr.warning(`The Editor’s rewrite of ${u} ${n} came back incomplete, so ${u} ${n} is kept exactly as the narrator wrote it. Auto carried on to Seal.`,'Storyloom',{timeOut:15000,closeButton:true});
+          continue;
+        }
       }
       if(!teamState(data()).accepted)await acceptRevision();
       continue;
     }
-    if(s==='seal')await sealChapter({auto:true});
+    if(s==='seal')await sealChapter({auto:true,ask});
   }
   logEvent('info','Auto',`${u} ${n}: finished`);
 }
@@ -1493,6 +1624,7 @@ function checkList(items,picked,onToggle,render) {
 }
 const noteBits=n=>[el('b',{className:`storyloom-sev is-${n.weight==='must'?'hard':'soft'}`,textContent:n.weight==='must'?'MUST':'SUGGEST'}),el('small',{textContent:` ${n.where} `}),el('q',{textContent:n.quote}),el('div',{textContent:n.note})];
 function renderTeam(d=null) {
+  try{renderWriteBar();}catch{}
   const box=document.getElementById('na-team'); if(!box)return;
   try{d ??= data();}catch{return;}
   const t=teamState(d), rs=teamSettings(), steps=teamSteps(d,rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
@@ -1764,7 +1896,7 @@ async function newNarration(next,cur) {
 
 /* ---------- Seal and what comes next ---------- */
 const escHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-async function sealChapter({auto=false}={}) {
+async function sealChapter({auto=false,ask=true}={}) {
   requireIdle();
   const c=context(), d=data(), t=tpl(d);
   if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
@@ -1791,7 +1923,7 @@ async function sealChapter({auto=false}={}) {
   logEvent('info','Seal',`${t.unit} ${n} sealed`);
   status(`${t.unit} ${n} is sealed.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
   renderMemory();
-  if(n<total)await whatNext();
+  if(n<total){if(ask)await whatNext();}
   else {
     status(`${t.unit} ${n} is sealed. That was the last ${t.unit.toLowerCase()} in the outline.`);
     if(await c.Popup.show.confirm('The book is finished','<p>That was the last chapter in the outline. Save the whole book as a file now? (You can do it any time with <b>Export book…</b> on the Memory tab.)</p>'))await exportBook();
@@ -1959,8 +2091,9 @@ async function cloneNarrator(fromAvatar,{name,description,greeting,mainPrompt=nu
 const ICON_URL=new URL('assets/storyloom-icon-128.png',import.meta.url).href;
 const EXTENSION_FOLDER=decodeURIComponent(new URL(import.meta.url).pathname.split('/').at(-2));
 let updateCheckedAt=0, updateGlobal=false;
+let MANIFEST_VERSION='';
 async function showVersion() {
-  try {const m=await (await fetch(new URL('manifest.json',import.meta.url),{cache:'no-store'})).json(); const el=document.getElementById('na-version'); if(el)el.textContent=`v${m.version}`;} catch {}
+  try {const m=await (await fetch(new URL('manifest.json',import.meta.url),{cache:'no-store'})).json(); MANIFEST_VERSION=m.version||''; const el=document.getElementById('na-version'); if(el)el.textContent=`v${m.version}`;} catch {}
 }
 async function versionInfo(global) {
   const r=await fetch('/api/extensions/version',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({extensionName:EXTENSION_FOLDER,global})});
@@ -2263,6 +2396,7 @@ function renderPanelView() {
   const panel=document.getElementById('na-panel'), none=noChatOpen();
   document.querySelector('#na-settings').hidden=!settingsOpen;
   if(settingsOpen)try{renderWritingSettings();}catch(e){warnLog('Storyloom writing settings:',e);}
+  try{renderWriteBar();}catch(e){warnLog('Storyloom write bar:',e);}
   document.querySelector('#na-nochat').hidden=!none || settingsOpen || activeTab==='assistant';
   document.querySelector('#na-workspace').hidden=none || settingsOpen || activeTab!=='story';
   renderTabs();
@@ -2313,7 +2447,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if(context().chatId !== chatId || data() !== d) throw Error('Chat changed; nothing saved.');
     const before = await freshBook(bookName);
     const ref = referenceName ? await freshBook(referenceName) : null;
-    if(input.length>30000) throw Error('The message is too long for one request. Split it into smaller parts.');
+    if(!sourceKind && input.length>30000) throw Error('The message is too long for one request. Split it into smaller parts.'); // only what the writer types; Storyloom's own steps (Seal on a long chapter) bring their own text
     const budget=planningBudget(c.maxContext); // Storyloom's own request — not limited by the story chat's Context Size
     const history=(interview?.sourceOnly || (interview?.requireOutline && d.interview?.mode==='deep')) ? [] : recentConversation(d.messages,Math.floor(budget*.25));
     const query=history.map(x=>x.content).join(' ')+input;
@@ -2991,7 +3125,7 @@ function buildExtSettings(openButton,panel) {
   wrap.querySelector('#sl-dials-open').onclick=()=>openDials();
   wrap.querySelector('#sl-keep-going').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.keepGoing=e.target.checked;saveSettings();logEvent('info','Settings',`keep going until the chapter is done: ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-keep-going-max').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.keepGoingMax=Math.max(1,Math.min(20,Math.round(Number(e.target.value)||6)));saveSettings();};
-  wrap.querySelector('#sl-passages').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.passages=e.target.checked;saveSettings();applyReplyLength();logEvent('info','Settings',`chapters ${e.target.checked?'over several replies (passages)':'in one reply each'}`);toastr.info('Run Writing setup… (first box only) on the Memory tab so your Storyloom Novel preset matches.','Storyloom',{timeOut:8000});};
+  wrap.querySelector('#sl-passages').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.passages=e.target.checked;saveSettings();applyReplyLength();logEvent('info','Settings',`chapters ${e.target.checked?'over several replies (passages)':'in one reply each'}`);try{renderWritingSettings();renderWriteBar();}catch{} matchPresetToMode().catch(err=>fail(err,'Switch how chapters are written'));};
   wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};
@@ -3046,28 +3180,31 @@ function init() {
       </div>
     </header>
     <nav class="storyloom-tabs" role="tablist"><button id="na-tab-story" type="button" role="tab" class="is-active">Story</button><button id="na-tab-memory" type="button" role="tab">Memory</button><button id="na-tab-assistant" type="button" role="tab">Assistant</button></nav>
+    <section id="na-write" class="storyloom-write" hidden><button id="na-write-btn" type="button" class="storyloom-write-btn"></button><small id="na-write-line" class="storyloom-hint"></small></section>
     <section id="na-settings" class="storyloom-settings" aria-label="Storyloom settings" hidden>
       <div class="storyloom-settings-body">
-        <section class="storyloom-wcard"><h4>Chapters</h4>
-          <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="whole"> <span><b>One reply writes the whole chapter</b><small>The narrator writes the chapter to the ending its plan describes, in one go.</small></span></label>
-          <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="passages"> <span><b>A passage at a time</b><small>The chapter is built over several replies; you steer between them. After switching, run Writing setup… (Memory tab) so your preset matches.</small></span></label>
-          <label class="storyloom-wnum">Words per reply <input id="na-w-words" type="number" min="0" step="100" placeholder="auto"></label>
+        <p class="storyloom-hint storyloom-advanced-note"><b>You don’t need to change anything here.</b> Storyloom works as it is — to write, use the big button above the tabs. These are for when you want something different.</p>
+        <section class="storyloom-wcard"><h4>How chapters get written</h4>
+          <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="whole"> <span><b>All at once</b> <small>(normal)</small><small>Press Write once and the narrator writes the whole chapter, start to finish.</small></span></label>
+          <label class="storyloom-wopt"><input type="radio" name="na-w-mode" value="passages"> <span><b>Bit by bit</b><small>Each press writes the next part of the chapter, and you can steer in between.</small></span></label>
+          <label id="na-w-chlen-row" class="storyloom-wnum">Chapter length <input id="na-w-chlen" type="number" min="0" step="100" placeholder="from plan"> words</label>
+          <label id="na-w-words-row" class="storyloom-wnum">Words each time you press Write <input id="na-w-words" type="number" min="0" step="100" placeholder="auto"></label>
           <small id="na-w-words-hint" class="storyloom-hint"></small>
-          <label class="storyloom-wopt"><input id="na-w-keep" type="checkbox"> <span><b>Keep going until the chapter is done</b><small>If a reply stops before the chapter’s ending, Storyloom presses Send for you, up to <input id="na-w-keep-max" type="number" min="1" max="20"> replies. Stops if you type.</small></span></label>
+          <label class="storyloom-wopt"><input id="na-w-keep" type="checkbox"> <span><b>If the narrator stops before the chapter’s end, keep going by itself</b><small>Up to <input id="na-w-keep-max" type="number" min="1" max="20"> times. It stops as soon as you start typing.</small></span></label>
         </section>
-        <section class="storyloom-wcard"><h4>Memory while you write</h4>
-          <label class="storyloom-wopt"><input id="na-w-scene" type="checkbox"> <span><b>Scene now</b><small>Where, when, who’s here and in what shape — refreshed every <input id="na-w-scene-every" type="number" min="1" max="20"> replies.</small></span></label>
-          <label class="storyloom-wopt"><input id="na-w-session" type="checkbox"> <span><b>Earlier this chapter</b><small>A running record of the chapter so far, so a long chapter doesn’t forget its start — every <input id="na-w-session-every" type="number" min="6" max="100"> messages.</small></span></label>
-          <label class="storyloom-wopt"><input id="na-w-stage" type="checkbox"> <span><b>Send who’s on stage</b><small>Everyone in the scene gets their lorebook entry sent with each reply, even if nobody said their name lately.</small></span></label>
+        <section class="storyloom-wcard"><h4>Help the narrator remember</h4><small class="storyloom-hint">All on is best. Each one is a small, quick extra call to your AI.</small>
+          <label class="storyloom-wopt"><input id="na-w-scene" type="checkbox"> <span><b>Keep track of the current scene</b><small>Where and when it is, who’s there, and how they’re doing. Updated every <input id="na-w-scene-every" type="number" min="1" max="20"> replies.</small></span></label>
+          <label class="storyloom-wopt"><input id="na-w-session" type="checkbox"> <span><b>Keep a summary of this chapter so far</b><small>So a long chapter doesn’t forget how it started. Updated every <input id="na-w-session-every" type="number" min="6" max="100"> messages.</small></span></label>
+          <label class="storyloom-wopt"><input id="na-w-stage" type="checkbox"> <span><b>Remind the narrator about everyone in the scene</b><small>Their details from the lorebook go with every reply, even if nobody has said their name lately.</small></span></label>
         </section>
-        <section class="storyloom-wcard"><h4>Thinking</h4>
+        <section class="storyloom-wcard"><h4>Speed</h4>
           <div id="na-w-dials" hidden>
-            <label class="storyloom-wopt"><input id="na-w-dials-same" type="checkbox"> <span><b>Use the same Dials settings as SillyTavern’s chat</b><small>Storyloom’s own calls (Lint, Seal, planning…) use what you set in Dials; anything set for Storyloom itself wins. Tip: set Storyloom’s thinking to “none” there.</small></span></label>
-            <button id="na-w-dials-open" type="button">Dials settings…</button>
+            <label class="storyloom-wopt"><input id="na-w-dials-same" type="checkbox"> <span><b>Use my Dials chat settings for Storyloom too</b><small>Storyloom’s checks (Lint, Seal, planning) use what you set in Dials for the chat. Tip: set Storyloom’s thinking to “none” in Dials — checks then take seconds.</small></span></label>
+            <button id="na-w-dials-open" type="button">Open Dials</button>
           </div>
           <div id="na-w-nodials">
-            <label class="storyloom-wopt"><input id="na-w-short" type="checkbox"> <span><b>Keep Storyloom’s own thinking short</b><small>Asks thinking models for low effort on Lint, Seal and planning. Never your story chat.</small></span></label>
-            <label class="storyloom-wopt"><input id="na-w-effort" type="checkbox"> <span><b>Send SillyTavern’s Reasoning Effort to Custom endpoints</b><small>SillyTavern leaves it out for Venice and other Custom connections; this sends it.</small></span></label>
+            <label class="storyloom-wopt"><input id="na-w-short" type="checkbox"> <span><b>Make Storyloom’s checks faster</b><small>Lint, Seal and planning think less. Your story itself is never affected.</small></span></label>
+            <label class="storyloom-wopt"><input id="na-w-effort" type="checkbox"> <span><b>Use my Reasoning Effort setting with Venice and similar</b><small>SillyTavern normally leaves it out for those connections. This sends it.</small></span></label>
           </div>
         </section>
         <label>AI connection<select id="na-profile"></select></label><p class="storyloom-hint">Which AI Storyloom talks to. “Use current connection” uses whatever is set in SillyTavern’s API Connections; pick another to use a different model just for Storyloom.</p>
@@ -3331,6 +3468,7 @@ function init() {
   document.querySelector('#na-proposal-approve').onclick=async()=>{lastAction='Approve and build';try{await approveProposal();}catch(e){fail(e);}};
   document.querySelector('#na-proposal-revise').onclick=async()=>{lastAction='Revise';const box=document.querySelector('#na-proposal-feedback'),v=box.value.trim();if(!v){status('Say what should change first.');return;}try{await makeProposal(v);box.value='';}catch(e){fail(e);}};
   document.querySelector('#na-update').onclick=()=>updateStoryloom().catch(fail);
+  document.querySelector('#na-write-btn').onclick=()=>{const st=writeState(); if(!st)return; lastAction=document.querySelector('#na-write-btn').textContent; try{if(st.ended)nextChapter().catch(fail); else writeChapter();}catch(e){fail(e);}};
   document.querySelector('#na-tab-story').onclick=()=>{activeTab='story';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
@@ -3387,6 +3525,7 @@ function init() {
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
   if(c.event_types.MESSAGE_SENT)c.eventSource.on(c.event_types.MESSAGE_SENT,()=>{keepRounds=0;});
   // Dials may load before or after Storyloom: try now, when the app is ready, and a few times after.
+  const upgrade=()=>showVersion().then(upgradePresetsOnce).catch(e=>warnLog('Storyloom preset update:',e)); if(c.event_types.APP_READY)c.eventSource.on(c.event_types.APP_READY,()=>setTimeout(upgrade,1500)); setTimeout(upgrade,6000);
   registerWithDials(); if(c.event_types.APP_READY)c.eventSource.on(c.event_types.APP_READY,registerWithDials); for(const ms of [1000,3000,8000])setTimeout(registerWithDials,ms);
   // SillyTavern drops its Reasoning Effort for Custom endpoints (except OpenAI's models); put it in the request body so Venice & co. get it.
   if(c.event_types.CHAT_COMPLETION_SETTINGS_READY)c.eventSource.on(c.event_types.CHAT_COMPLETION_SETTINGS_READY,gd=>{try{
@@ -3396,6 +3535,9 @@ function init() {
     const before=gd.custom_include_body; gd.custom_include_body=withIncludeBody(before,'reasoning_effort',effort);
     if(before!==gd.custom_include_body && !sentEffortLogged){sentEffortLogged=true;logEvent('info','Story chat',`sent Reasoning Effort “${effort}” to the Custom endpoint (SillyTavern leaves it out there)`);}
   }catch(e){warnLog('Storyloom reasoning effort:',e);}});
+  c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{if(!dry && type!=='quiet'){genBusy=true; for(const ms of [300,1200,3000])setTimeout(()=>{try{renderWriteBar();}catch{}},ms);}});
+  for(const ev of ['GENERATION_ENDED','GENERATION_STOPPED'])if(c.event_types[ev])c.eventSource.on(c.event_types[ev],()=>{genBusy=false; setTimeout(()=>{try{renderWriteBar();}catch{}},400);});
+  for(const ev of ['MESSAGE_RECEIVED','MESSAGE_DELETED','MESSAGE_SWIPED','CHAT_CHANGED','ONLINE_STATUS_CHANGED','SETTINGS_UPDATED'])if(c.event_types[ev])c.eventSource.on(c.event_types[ev],()=>setTimeout(()=>{try{renderWriteBar();}catch{}},700));
   c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{applyReplyLength();}catch(e){warnLog('Storyloom reply length:',e);} try{if(type!=='quiet')forceOnStage();}catch(e){warnLog('Storyloom on stage:',e);}});
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
   setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),2500);
