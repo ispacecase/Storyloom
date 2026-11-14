@@ -73,6 +73,14 @@ export async function streamOrWait(run,onProgress,signal) {
  * which make long structured replies degrade into word salad. The main chat's settings are untouched.
  */
 export const PLANNING_SAMPLING=Object.freeze({temperature:0.7,frequency_penalty:0,presence_penalty:0});
+/** Add one field to a custom endpoint's “Include body” (YAML or JSON), unless the writer already set it. */
+export function withIncludeBody(body,key,value) {
+  const t=String(body||'').trim();
+  if(!t)return `${key}: ${value}`;
+  if(t.startsWith('{')){try{const o=JSON.parse(t); if(!(key in o))o[key]=value; return JSON.stringify(o);}catch{return t;}}
+  if(new RegExp(`^\\s*["']?${key}["']?\\s*:`,'m').test(t))return t;
+  return `${t}\n${key}: ${value}`;
+}
 /** Generate without switching the main connection or mutating its response length. */
 export async function generate(c,prompt,profile,signal,maxTokens=6000,systemPrompt='',direct=null,onProgress=null,sampling=null) {
   const SAMPLING={...PLANNING_SAMPLING,...(sampling||{})};
@@ -94,6 +102,8 @@ export async function generate(c,prompt,profile,signal,maxTokens=6000,systemProm
         key, c.substituteParams?.(settings[key] || '') ?? settings[key],
       ]),
     ) : {};
+    // A custom (OpenAI-compatible) endpoint only gets extra fields through “Include body”; add the reasoning effort there.
+    if(SAMPLING.reasoning_effort && settings.chat_completion_source==='custom')custom.custom_include_body=withIncludeBody(custom.custom_include_body,'reasoning_effort',SAMPLING.reasoning_effort);
     const options={presetName:c.getPresetManager('openai')?.getSelectedPresetName()};
     return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom,...SAMPLING},options,true,signal),onProgress,signal);
   }

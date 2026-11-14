@@ -1,8 +1,9 @@
 import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
-import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
+import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { chapterProse, bookText, bookDocx, fileName } from './export.mjs';
+import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction } from './compare.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
 import { synchronize, resolveConflict, planInitialLink } from './sync.mjs';
@@ -500,16 +501,18 @@ function renderAssistant() {
 }
 const PROMPT_IDS={main:'main','post-history':'jailbreak',auxiliary:'nsfw','enhance-definitions':'enhanceDefinitions'};
 /** Change the Storyloom Novel preset (never the writer's own). Backs it up first; returns the old preset. */
-async function changeNovelPreset(mutate,label) {
+async function changeNovelPreset(mutate,label){return changePreset(PRESET_NAME,mutate,label);}
+/** Change a Chat Completion preset by name, backing it up first. Returns the old preset. */
+async function changePreset(name,mutate,label) {
   const c=context(); if(c.mainApi!=='openai')throw Error('Preset changes need a Chat Completion connection.');
   const pm=c.getPresetManager('openai'), list=pm.getPresetList();
-  if(list.preset_names?.[PRESET_NAME]===undefined)throw Error(`There is no “${PRESET_NAME}” preset yet. Use Writing setup… on the Memory tab to make it.`);
-  const selected=pm.getSelectedPresetName()===PRESET_NAME;
-  const before=selected?getChatCompletionPreset():structuredClone(pm.getCompletionPresetByName(PRESET_NAME));
+  if(list.preset_names?.[name]===undefined)throw Error(name===PRESET_NAME?`There is no “${PRESET_NAME}” preset yet. Use Writing setup… on the Memory tab to make it.`:`There is no preset called “${name}”.`);
+  const selected=pm.getSelectedPresetName()===name;
+  const before=selected?structuredClone(getChatCompletionPreset()):structuredClone(pm.getCompletionPresetByName(name));
   const after=structuredClone(before); mutate(after);
-  backup({kind:'preset',label:`Preset “${PRESET_NAME}” (before: ${label})`,target:{name:PRESET_NAME},before});
-  await pm.savePreset(PRESET_NAME,after,{skipUpdate:!selected});
-  if(!selected)list.presets[list.preset_names[PRESET_NAME]]=after;
+  backup({kind:'preset',label:`Preset “${name}” (before: ${label})`,target:{name},before});
+  await pm.savePreset(name,after,{skipUpdate:!selected});
+  if(!selected)list.presets[list.preset_names[name]]=after;
   return before;
 }
 async function applySetupAction(a) {
@@ -816,6 +819,87 @@ async function startChapterChat(narrator=null) {
   status(`This is a fresh chat for ${t.unit} ${n}${title?` — ${title}`:''}. Story so far, Previously, the plan and the narrator are in place.`);
 }
 
+/* ---------- Compare narrators: the writer's narrator next to Storyloom's, place by place ---------- */
+function narratorComparison() {
+  const c=context(), ch=c.characters?.[c.characterId];
+  if(!ch)throw Error('Open a chat with your narrator first.');
+  const chat=c.mainApi==='openai', preset=chat?presetPrompts(getChatCompletionPreset()):{};
+  const yours=yourPlaces(charSnapshot(ch),preset);
+  if(!chat)for(const p of PLACES)if(p.on==='preset')yours[p.key]='';
+  let filled=NARRATOR_CARD; try{filled=c.substituteParams(NARRATOR_CARD);}catch{}
+  return {c,ch,chat,yours,storyloom:storyloomPlaces(filled),presetName:chat?c.getPresetManager('openai').getSelectedPresetName():''};
+}
+async function compareNames() {try{const d=data(); if(!d.book)return []; return (await bookFacts(d)).castNames||[];}catch{return [];}}
+/** Put Storyloom's version into one place (backing up first). */
+async function useStoryloomPlace(key) {
+  const {c,ch,presetName}=narratorComparison(), place=PLACES.find(p=>p.key===key);
+  if(place.on==='card') {
+    backup({kind:'character',label:`${ch.name} (before Compare narrators: ${place.label})`,target:{avatar:ch.avatar},before:charSnapshot(ch)});
+    const f={description:{description:NARRATOR_CARD},cardMain:{system_prompt:''},charNote:{depth_prompt:{prompt:'',depth:4,role:'system'}},cardPost:{post_history_instructions:''}}[key];
+    await writeCharacter(ch.avatar,f);
+    if(key==='description')try{await fillBookValues({quiet:true});}catch(e){warnLog('Storyloom book settings:',e);}
+  } else {
+    const ids={main:'main',postHistory:'jailbreak',auxiliary:'nsfw'};
+    await changePreset(presetName,p=>{
+      const setPrompt=(id,content)=>{p.prompts ??= []; let x=p.prompts.find(q=>q.identifier===id); if(!x){x={identifier:id,name:id,system_prompt:true,role:'system'};p.prompts.push(x);} x.content=content;};
+      const enable=(id,on)=>{for(const o of p.prompt_order||[])for(const i of o.order||[])if(i.identifier===id)i.enabled=on;};
+      if(key==='main'){setPrompt('main',CRAFT_MAIN);enable('main',true);}
+      if(key==='postHistory'){setPrompt('jailbreak',POST_HISTORY);enable('jailbreak',true);}
+      if(key==='auxiliary')setPrompt('nsfw','');
+      if(key==='continueNudge')p.continue_nudge_prompt=CONTINUE_NUDGE;
+      if(key==='newChat')p.new_chat_prompt=NEW_CHAT_PROMPT;
+      if(key==='enhanceDefinitions')enable('enhanceDefinitions',false);
+    },`Compare narrators: ${place.label}`);
+    try{promptManager?.render?.(false);}catch{}
+  }
+  logEvent('info','Compare narrators',`used Storyloom’s ${place.label}${place.on==='card'?` on ${ch.name}`:` in preset “${presetName}”`}`);
+}
+async function compareNarrators() {
+  requireIdle();
+  const {c,ch,chat,presetName}=narratorComparison(), names=await compareNames();
+  const box=el('div',{className:'storyloom-compare'});
+  const render=()=>{
+    const {yours,storyloom}=narratorComparison(), problems=findProblems(yours,{values:readValues(c),names});
+    const count=Object.values(problems).flat().filter(x=>x.level==='problem').length;
+    box.replaceChildren(
+      el('h3',{textContent:`Compare narrators — ${ch.name}`}),
+      el('p',{className:'storyloom-hint',textContent:`Your narrator card (${ch.name})${chat?` and your preset (“${presetName}”)`:''}, next to Storyloom’s, in every place a narrator’s instructions live. ${count?`${count} problem${count===1?'':'s'} found in yours.`:'No problems found in yours.'} Nothing changes unless you press “Use Storyloom’s” — and each one is backed up first (Extensions → Storyloom → Backups).`}));
+    for(const p of PLACES) {
+      const mine=yours[p.key], theirs=storyloom[p.key], probs=problems[p.key]||[], same=String(mine).trim()===String(storyloomPlaces()[p.key]).trim();
+      const det=el('details',{className:'storyloom-compare-row',open:probs.some(x=>x.level==='problem')});
+      det.append(el('summary',{},el('b',{textContent:p.label}),' ',el('span',{className:`storyloom-sev is-${probs.some(x=>x.level==='problem')?'hard':same?'ok':'soft'}`,textContent:probs.length?`${probs.length} to look at`:same?'same as Storyloom’s':'different'})));
+      det.append(el('p',{className:'storyloom-hint',textContent:p.what}));
+      if(probs.length)det.append(el('ul',{className:'storyloom-compare-problems'},...probs.map(x=>el('li',{className:`is-${x.level}`,textContent:x.text}))));
+      const col=(title,text)=>el('div',{},el('small',{textContent:title}),el('pre',{textContent:String(text||'').trim()||'(empty)'}));
+      det.append(el('div',{className:'storyloom-compare-cols'},col('Yours',mine),col('Storyloom’s',theirs)));
+      if(!same && (p.on==='card' || chat)) {
+        const b=el('button',{type:'button',textContent:'Use Storyloom’s'});
+        b.onclick=async()=>{b.disabled=true;try{await useStoryloomPlace(p.key);status(`${p.label}: now Storyloom’s. The old one is in Backups.`);render();}catch(e){b.disabled=false;fail(e);}};
+        det.append(el('div',{className:'storyloom-row'},b));
+      }
+      box.append(det);
+    }
+    const ask=el('button',{type:'button',textContent:'Ask the Assistant what’s wrong with mine'});
+    ask.onclick=()=>askCompare(problems).catch(fail);
+    box.append(el('div',{className:'storyloom-row'},ask));
+  };
+  render();
+  logEvent('info','Compare narrators',`opened for ${ch.name}`);
+  await new c.Popup(box,c.POPUP_TYPE.TEXT,'',{okButton:'Close',wide:true,large:true,allowVerticalScrolling:true}).show();
+}
+async function askCompare(problems) {
+  requireIdle();
+  const {c,yours,storyloom}=narratorComparison(), d=data();
+  const ctl=new AbortController(); renderModelWork(ctl); busy=true;
+  let reply='';
+  try {
+    status('Storyloom is reviewing your narrator…');
+    let base='',direct=null; try{base=d.profile||'';direct=directSnapshot(d,c);}catch{}
+    reply=await llm(c,compareInstruction({yours,storyloom,problems}),base,ctl.signal,Number(d.responseTokens||12000),'You review the prompts a writer uses to make an AI write their novel. You are direct and specific.',direct,{label:'Compare narrators'});
+  } finally {busy=false;renderModelWork(null);}
+  status('');
+  await new c.Popup(el('div',{},el('h3',{textContent:'What the Assistant thinks of your narrator'}),el('pre',{className:'storyloom-compare-review',textContent:String(reply).trim()})),c.POPUP_TYPE.TEXT,'',{okButton:'Close',wide:true,allowVerticalScrolling:true}).show();
+}
 /* ---------- Cut-off replies: marked in the chat (display only, never sent to the model), left out on export ---------- */
 function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatMetadata?.world_info===d.book);}catch{return false;}}
 /** Say why a reply stopped mid-sentence: the response limit (thinking counts against it) or the provider ending it early. */
@@ -901,6 +985,7 @@ async function exportBook() {
 
 /* ---------- Log: what Storyloom did, what failed and why (Extensions → Storyloom → Log) ---------- */
 const LOG_KEY='storyloom-log';
+const shortThinking=()=>{try{return context().extensionSettings.storyloom?.shortThinking!==false;}catch{return true;}};
 const fullLog=()=>{try{return !!context().extensionSettings.storyloom?.logFull;}catch{return false;}};
 function readLog(){try{const v=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');return Array.isArray(v)?v:[];}catch{return [];}}
 function writeLog(list){try{localStorage.setItem(LOG_KEY,JSON.stringify(list));}catch{try{localStorage.setItem(LOG_KEY,JSON.stringify(list.slice(-Math.ceil(list.length/2)).map(e=>({...e,detail:e.detail?.slice(0,500)}))));}catch{}}}
@@ -1780,10 +1865,19 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct,{sampling=
   showLive({text:'',reasoning:''});
   const started=Date.now(), label=document.getElementById('na-status')?.textContent?.replace(/\s*\(\d+s\)$/,'') || 'Waiting for the AI…';
   const ticker=setInterval(()=>{const el=document.getElementById('na-status');if(el && busyLabel(el.textContent,label))el.textContent=`${label} (${Math.round((Date.now()-started)/1000)}s)`;},1000);
+  if(shortThinking())sampling={...(sampling||{}),reasoning_effort:'low'};
   try {
     return await requestModel(async requestSignal=>{
       try {
-        try {const r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling);logEvent('info','Model',`${who}: answered in ${Math.round((Date.now()-t0)/1000)}s (${String(r||'').length.toLocaleString()} characters)`,fullLog()?String(r||''):'');return r;}
+        try {
+          let r;
+          try {r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling);}
+          catch(error) {
+            if(error?.emptyReply || requestSignal.aborted || !sampling?.reasoning_effort || !/reason|effort|unrecognized|unsupported|extra|invalid/i.test(String(error?.message||'')))throw error;
+            logEvent('warn','Model',`${who}: the provider refused a reasoning-effort setting; asking without it`,error.message);
+            const {reasoning_effort,...rest}=sampling; sampling=rest;
+            r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling);
+          }logEvent('info','Model',`${who}: answered in ${Math.round((Date.now()-t0)/1000)}s (${String(r||'').length.toLocaleString()} characters)`,fullLog()?String(r||''):'');return r;}
         catch(error) {
           if(!error?.emptyReply || requestSignal.aborted)throw error;
           // Empty answers are usually a one-off from the provider; ask once more before failing.
@@ -2481,12 +2575,14 @@ function renderExtSettings() {
   renderBackups(); renderTeamSettings(); renderPlacement().catch(e=>warnLog('Storyloom placement:',e)); renderLog();
   try{renderPromptEditor();}catch(e){warnLog('Storyloom prompts:',e);} let d={}; try{d=data();}catch{} try{renderTemplates(d);}catch(e){warnLog('Storyloom templates:',e);}
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
+  const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
 }
 function buildExtSettings(openButton,panel) {
   const host=document.querySelector('#extensions_settings2, #extensions_settings'); if(!host)return;
   const wrap=document.createElement('div'); wrap.id='storyloom-ext'; wrap.className='storyloom-ext';
   wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
+    <label class="checkbox_label" title="Thinking models (deepseek and others) can spend a whole reply thinking and write nothing. This asks them for low reasoning effort on Storyloom’s own work — Lint, Editor, Reader, Seal, planning, the Assistant. Your story chat keeps your preset’s setting."><input id="sl-short-thinking" type="checkbox"> Keep Storyloom’s own thinking short (low reasoning effort; never your story chat)</label>
     <details id="sl-team" open><summary>Chapter team</summary><p class="storyloom-hint">The people who work on each chapter after it’s written: Lint → Editor → Reader → Revise → Seal (Memory tab). Switch a role off to skip its step. Each can use its own model — a fast, cheap one for the Checker, a stronger one for the Editor. If a role’s model fails or answers in a form Storyloom can’t read, Storyloom asks its own connection once and says so in the log. Their jobs are fixed so the steps can’t break; their personalities are yours to change.</p>${teamMarkup()}</details>
     <details id="sl-narrator-template"><summary>Narrator template</summary><p class="storyloom-hint">The headings Storyloom uses as a guide when it drafts a narrator — one “HEADING: what it covers” per line. It’s a guide, not a form: Storyloom skips headings that don’t fit the story and adds its own when the story needs them.</p><textarea id="sl-narrator-template-text" class="text_pole" rows="10" spellcheck="false"></textarea><div class="storyloom-row"><button id="sl-narrator-template-save" type="button" class="menu_button">Save</button><button id="sl-narrator-template-reset" type="button" class="menu_button">Reset to original</button></div></details>
     <details id="sl-placement"><summary>Memory placement</summary><p class="storyloom-hint">Where each piece of memory goes in the main chat’s prompt, who it is sent as, and the instruction wrapped around it. The text itself is on the Memory tab.</p><p class="storyloom-hint sl-placement-book"></p><p class="storyloom-hint sl-placement-empty">Open a novel’s chat (with its outline done) to set placement.</p><div class="sl-placement-items">${placementMarkup()}</div></details>
@@ -2522,6 +2618,7 @@ function buildExtSettings(openButton,panel) {
   wrap.querySelector('#sl-narrator-template-save').onclick=()=>{const rows=parseNarratorTemplate(tplBox.value);if((st().narratorTemplate??null)!==narratorTemplateText(rows))backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate??null});st().narratorTemplate=narratorTemplateText(rows);saveSettings();tplBox.value=st().narratorTemplate;toastr?.success?.(`Narrator template saved (${rows.length} headings).`);logEvent('info','Settings','narrator template saved');};
   wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{if(st().narratorTemplate!=null)backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate});delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
+  wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};
   wrap.querySelector('#sl-log-copy').onclick=async()=>{try{await navigator.clipboard.writeText(logText(readLog()));toastr?.success?.('Storyloom log copied.');}catch(e){toastr?.error?.('Could not copy: '+e.message);}};
   wrap.querySelector('#sl-log-download').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([logText(readLog())],{type:'text/plain'}));a.download=`storyloom-log-${new Date().toISOString().slice(0,10)}.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);};
@@ -2646,7 +2743,7 @@ function init() {
       <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
       <div id="na-team" class="storyloom-team" hidden>
         <p id="na-team-label" class="storyloom-team-label"></p>
-        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button><button id="na-export" type="button" title="Save the story — every chapter’s narration, in order, without your directions — as a Word (.docx) or text (.txt) file.">Export book…</button></div>
+        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button><button id="na-compare" type="button" title="Your narrator card and preset next to Storyloom’s, place by place, with what’s wrong in yours. Nothing changes unless you choose.">Compare narrators…</button><button id="na-export" type="button" title="Save the story — every chapter’s narration, in order, without your directions — as a Word (.docx) or text (.txt) file.">Export book…</button></div>
         <ol id="na-team-steps" class="storyloom-steps"></ol>
         <p id="na-team-hint" class="storyloom-hint"></p>
         <button id="na-team-next" type="button" class="storyloom-team-next">Next →</button>
@@ -2840,6 +2937,7 @@ function init() {
   document.querySelector('#na-start-book').onclick=()=>{lastAction='Start a new book';startNewBook().catch(fail);};
   document.querySelector('#na-writing-setup').onclick=()=>{lastAction='Writing setup';writingSetup().catch(fail);};
   document.querySelector('#na-book-settings').onclick=()=>{lastAction='Book settings';editBookSettings().catch(fail);};
+  document.querySelector('#na-compare').onclick=()=>{lastAction='Compare narrators';compareNarrators().catch(fail);};
   document.querySelector('#na-export').onclick=()=>{lastAction='Export book';exportBook().catch(fail);};
   document.querySelector('#na-narrator-undo').onclick=()=>{lastAction='Undo narrator change';undoNarrator().catch(fail);};
   const sendAssistant=async()=>{const input=document.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};

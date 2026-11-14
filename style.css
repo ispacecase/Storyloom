@@ -270,3 +270,13 @@
 .storyloom-narrator-form .is-warning { color:#e0b252; }
 #na-panel .storyloom-auto { font-weight:700; border-color:var(--sl-accent); color:var(--sl-accent); }
 #chat .mes.storyloom-cutoff .mes_text::after { content:"✂ This reply stopped mid-sentence. Press Continue to finish it — Export leaves the unfinished sentence out."; display:block; margin-top:.5em; padding:.3em .6em; border-left:3px solid #d9822b; background:rgba(217,130,43,.12); font-size:.8em; font-style:normal; opacity:.9; }
+.storyloom-compare { text-align:left; }
+.storyloom-compare-row { border:1px solid var(--SmartThemeBorderColor, #444); border-radius:8px; padding:.4rem .6rem; margin:.4rem 0; }
+.storyloom-compare-row summary { cursor:pointer; }
+.storyloom-compare-cols { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+@media (max-width:700px){ .storyloom-compare-cols { grid-template-columns:1fr; } }
+.storyloom-compare-cols pre { white-space:pre-wrap; max-height:14rem; overflow:auto; font-size:.8em; margin:.2rem 0; padding:.4rem; background:rgba(127,127,127,.1); border-radius:6px; }
+.storyloom-compare-problems li.is-problem { color:#e06c5a; }
+.storyloom-compare-problems li.is-note { opacity:.8; }
+.storyloom-compare .storyloom-sev.is-ok { color:#5aa86c; }
+.storyloom-compare-review { white-space:pre-wrap; text-align:left; }

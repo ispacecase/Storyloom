@@ -142,3 +142,12 @@ test('an unfinished revision draft inside the thinking is not used', async () =>
   assert.equal(answerInThinking('plan…\n=== PART 1\nDone part.\n=== END\nmore thought\n=== PART 1\nHalf a draft that never'), '=== PART 1\nDone part.\n=== END');
   assert.notEqual(answerInThinking('=== PART 1\nHalf a draft that never')?.startsWith('=== PART'), true);
 });
+
+test('the reasoning effort is added to a custom endpoint’s include body without overriding the writer', async () => {
+  const {withIncludeBody} = await import('../generation.mjs');
+  assert.equal(withIncludeBody('', 'reasoning_effort', 'low'), 'reasoning_effort: low');
+  assert.equal(withIncludeBody('top_k: 20', 'reasoning_effort', 'low'), 'top_k: 20\nreasoning_effort: low');
+  assert.equal(withIncludeBody('reasoning_effort: high', 'reasoning_effort', 'low'), 'reasoning_effort: high');
+  assert.equal(withIncludeBody('{"top_k":20}', 'reasoning_effort', 'low'), '{"top_k":20,"reasoning_effort":"low"}');
+  assert.equal(withIncludeBody('- broken', 'reasoning_effort', 'low'), '- broken\nreasoning_effort: low');
+});
