@@ -172,3 +172,11 @@ test('on a connection profile, a request hook adds to the profile’s own Includ
   assert.equal(sent.custom_include_body, undefined);
   assert.equal(sent.dials_tag, undefined);
 });
+
+test('options are merged into an Include Body without overwriting the writer', async () => {
+  const {mergeIncludeBody} = await import('../generation.mjs');
+  assert.equal(mergeIncludeBody('', {venice_parameters: {disable_thinking: true}}), 'venice_parameters: {"disable_thinking":true}');
+  assert.equal(mergeIncludeBody('top_k: 20', {reasoning_effort: 'low'}), 'top_k: 20\nreasoning_effort: low');
+  assert.equal(mergeIncludeBody('reasoning_effort: high', {reasoning_effort: 'low'}), 'reasoning_effort: high');
+  assert.equal(mergeIncludeBody('{"a":1}', {b: {c: 2}}), '{"a":1,"b":{"c":2}}');
+});

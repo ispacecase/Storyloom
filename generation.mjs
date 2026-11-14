@@ -81,6 +81,17 @@ export function withIncludeBody(body,key,value) {
   if(new RegExp(`^\\s*["']?${key}["']?\\s*:`,'m').test(t))return t;
   return `${t}\n${key}: ${value}`;
 }
+/** Add a set of options to an Include Body (YAML or JSON), never over a field already there. Nested values go in as JSON, which YAML reads too. */
+export function mergeIncludeBody(body,options) {
+  let t=String(body||'');
+  for(const [k,v] of Object.entries(options||{})) {
+    if(v===undefined || v===null)continue;
+    const trimmed=t.trim();
+    if(trimmed.startsWith('{')){try{const o=JSON.parse(trimmed); if(!(k in o))o[k]=v; t=JSON.stringify(o); continue;}catch{return t;}}
+    t=withIncludeBody(t,k,typeof v==='string'?v:JSON.stringify(v));
+  }
+  return t;
+}
 /** Generate without switching the main connection or mutating its response length. */
 /**
  * The Include Body a connection profile's request will carry: SillyTavern builds it inside its own code from the

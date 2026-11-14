@@ -11,7 +11,7 @@ import { createNovel, selectNovel } from './state.mjs';
 import { enqueue, nextJob, requiresReview, wasApplied, changedProcessed } from './queue.mjs';
 import { foundationTemplate, initialDirective, normalizeFoundation, foundationTitle } from './template.mjs';
 import { buildChange, undoChange, classifyChange, describeChange } from './history.mjs';
-import { generate, profileOptions, requestModel, withIncludeBody, profileIncludeBody } from './generation.mjs';
+import { generate, profileOptions, requestModel, withIncludeBody, profileIncludeBody, mergeIncludeBody } from './generation.mjs';
 import { queueContinuity, completeContinuity, continuityPrompt } from './continuity.mjs';
 import { selectLore, recentConversation, ensureCompleteUpdates, unsafeUpdates, planningBudget } from './context.mjs';
 import { saveVerified } from './persistence.mjs';
@@ -1314,6 +1314,7 @@ function renderTeam(d=null) {
   try{d ??= data();}catch{return;}
   const t=teamState(d), rs=teamSettings(), steps=activeSteps(rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
   const open=context().characters?.[context().characterId], narr=open?((d.narrators||[]).find(x=>x.avatar===open.avatar)||{name:open.name}):null;
+  const nd=document.getElementById('na-dials'); if(nd)nd.hidden=!dialsOn();
   const und=document.getElementById('na-narrator-undo'); if(und)und.hidden=!d.narratorUndo || d.narratorUndo.avatar!==context().characters?.[context().characterId]?.avatar;
   const written=(()=>{try{return chapterWords(d);}catch{return 0;}})(), per=chapterTarget(d);
   document.getElementById('na-team-label').textContent=`${u} ${n}${total?` of ${total}`:''}${narr?` — narrated by ${shortWho(narr)}`:''}${written?` · ${written.toLocaleString()}${per?` of ~${per.toLocaleString()}`:''} words`:''}`;
@@ -1992,8 +1993,10 @@ function readable(text) {
 /* ---------- Dials (optional extension): provider options and real token usage. Checked at call time; never imported. ---------- */
 const dialsOn=()=>{try{return !!(window.Dials && typeof window.Dials.prepare==='function');}catch{return false;}};
 let lastDialsUsage=null, dialsRegistered=false;
-/** Whether Dials will send a reasoning setting on Storyloom's calls (then Storyloom doesn't add its own). */
-function dialsSetsReasoning(profile=null){if(!dialsOn())return false; try{return /"reasoning/.test(JSON.stringify(window.Dials.getOptions('storyloom',storyloomConnection(profile))||{}));}catch{return false;}}
+/** Storyloom's calls use the Dials options set for SillyTavern's chat (on by default), plus any set for Storyloom itself. */
+const dialsSameAsChat=()=>{try{return context().extensionSettings.storyloom?.dialsSameAsChat!==false;}catch{return true;}};
+/** Open Dials' panel (it lives in SillyTavern's AI Response Configuration drawer, the sliders button). */
+function openDials(){const b=document.querySelector('#ai-config-button .drawer-toggle')||document.getElementById('leftNavDrawerIcon'); if(!document.querySelector('#left-nav-panel.openDrawer'))b?.click(); status('Dials is open on the left. Pick “Storyloom” under “Settings for:” to change Storyloom’s own options.');}
 /** The usage of a Dials-tagged request, if it arrives within a few seconds. */
 async function usageOf(p,ms=4000){if(!p)return null; try{return await Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))]);}catch{return null;}}
 const usageText=u=>{const x=u?.usage||{}; return [x.prompt!=null&&`prompt ${x.prompt.toLocaleString()}`,x.thinking&&`thinking ${x.thinking.toLocaleString()}`,x.reply!=null&&`reply ${x.reply.toLocaleString()}`].filter(Boolean).join(' · ')+(u?.finishReason?` · stopped: ${u.finishReason}`:'')+(u?.limit?.thinkingOnly?' · spent everything thinking':u?.limit?.level==='cut'?' · cut off at the limit':'');};
@@ -2020,9 +2023,12 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct,{sampling=
   showLive({text:'',reasoning:''});
   const started=Date.now(), label=document.getElementById('na-status')?.textContent?.replace(/\s*\(\d+s\)$/,'') || 'Waiting for the AI…';
   const ticker=setInterval(()=>{const el=document.getElementById('na-status');if(el && busyLabel(el.textContent,label))el.textContent=`${label} (${Math.round((Date.now()-started)/1000)}s)`;},1000);
-  if(shortThinking() && !dialsSetsReasoning(profile))sampling={...(sampling||{}),reasoning_effort:'low'}; // unless Dials sends its own reasoning setting for Storyloom
+  if(shortThinking() && !dialsOn())sampling={...(sampling||{}),reasoning_effort:'low'}; // with Dials, Dials decides (it knows what each model supports)
   const dialsUsage=[]; // the real usage of each attempt, when Dials is installed
-  const beforeSend=dialsOn()?(payload,conn)=>{const r=window.Dials.prepare('storyloom',payload,conn); if(r?.usage)dialsUsage.push(r.usage); if(r?.problem)logEvent('warn','Dials',`${who}: ${r.problem}`);}:null;
+  const beforeSend=dialsOn()?(payload,conn)=>{
+    // "Same as SillyTavern's chat": start from the options set for SillyTavern on this connection; Storyloom's own (if any) still win.
+    if(dialsSameAsChat() && payload.chat_completion_source==='custom'){try{const o=window.Dials.getOptions('sillytavern',conn); if(o && Object.keys(o).length)payload.custom_include_body=mergeIncludeBody(payload.custom_include_body,o);}catch(e){warnLog('Storyloom: Dials options:',e);}}
+    const r=window.Dials.prepare('storyloom',payload,conn); if(r?.usage)dialsUsage.push(r.usage); if(r?.problem)logEvent('warn','Dials',`${who}: ${r.problem}`);}:null;
   try {
     return await requestModel(async requestSignal=>{
       try {
@@ -2736,7 +2742,8 @@ function renderExtSettings() {
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
   const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
-  for(const [id,text,off] of [['sl-send-effort',' — Dials is installed and sends SillyTavern’s settings itself.',true],['sl-short-thinking',' — Dials is installed: set thinking for Storyloom in Dials (“Settings for: Storyloom”). Until you do, this still applies.',false]]){const box=document.getElementById(id), lab=box?.closest('label'); if(!lab)continue; box.disabled=off && dialsOn(); let n=lab.querySelector('.sl-dials-note'); if(dialsOn() && !n){n=document.createElement('small');n.className='sl-dials-note storyloom-hint';n.textContent=text;lab.append(n);} if(!dialsOn())n?.remove();}
+  const dr=document.getElementById('sl-dials-row'); if(dr){dr.hidden=!dialsOn(); const ds=document.getElementById('sl-dials-same'); if(ds)ds.checked=dialsSameAsChat();}
+  for(const [id,text,off] of [['sl-send-effort',' — Dials is installed and sends SillyTavern’s settings itself.',true],['sl-short-thinking',' — Dials is installed and decides this (it knows what each model supports).',true]]){const box=document.getElementById(id), lab=box?.closest('label'); if(!lab)continue; box.disabled=off && dialsOn(); let n=lab.querySelector('.sl-dials-note'); if(dialsOn() && !n){n=document.createElement('small');n.className='sl-dials-note storyloom-hint';n.textContent=text;lab.append(n);} if(!dialsOn())n?.remove();}
   const rw=document.getElementById('sl-reply-words'); if(rw && document.activeElement!==rw)rw.value=replyTarget()||''; replyWordsHint();
 }
 function buildExtSettings(openButton,panel) {
@@ -2744,6 +2751,7 @@ function buildExtSettings(openButton,panel) {
   const wrap=document.createElement('div'); wrap.id='storyloom-ext'; wrap.className='storyloom-ext';
   wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
+    <div id="sl-dials-row" class="storyloom-row" hidden><b>Dials</b> <label class="checkbox_label" title="Storyloom’s own AI calls (Lint, Editor, Reader, Seal, planning, the Assistant) use the options you set in Dials for SillyTavern’s chat on the same connection. Anything you set for Storyloom itself in Dials (“Settings for: Storyloom”) wins."><input id="sl-dials-same" type="checkbox"> Use the same Dials settings as SillyTavern’s chat</label><button id="sl-dials-open" type="button" class="menu_button">Dials settings…</button></div>
     <div class="storyloom-row"><label title="How long each of the narrator’s replies should be. Storyloom tells the narrator to aim for this many words per reply. Blank: Storyloom sizes replies to fit your Max Response Length (at most about 1,500 words).">Words per narrator reply <input id="sl-reply-words" class="text_pole" type="number" min="0" step="100" placeholder="auto" style="width:7em"></label><small id="sl-reply-words-hint" class="storyloom-hint"></small></div>
     <label class="checkbox_label" title="SillyTavern ignores its own Reasoning Effort setting on Custom (OpenAI-compatible) endpoints such as Venice, unless the model is one of OpenAI’s. This sends it anyway, through the request’s body — only when it is set to something other than Auto, and never over a reasoning_effort you put in Include Body yourself."><input id="sl-send-effort" type="checkbox"> Send SillyTavern’s Reasoning Effort to Custom endpoints (Venice and others) in the story chat</label>
     <label class="checkbox_label" title="Thinking models (deepseek and others) can spend a whole reply thinking and write nothing. This asks them for low reasoning effort on Storyloom’s own work — Lint, Editor, Reader, Seal, planning, the Assistant. Your story chat keeps your preset’s setting."><input id="sl-short-thinking" type="checkbox"> Keep Storyloom’s own thinking short (low reasoning effort; never your story chat)</label>
@@ -2783,6 +2791,8 @@ function buildExtSettings(openButton,panel) {
   wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{if(st().narratorTemplate!=null)backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate});delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
   wrap.querySelector('#sl-reply-words').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};const v=Math.max(0,Math.round(Number(e.target.value)||0));c.extensionSettings.storyloom.replyWords=v||null;e.target.value=v||'';saveSettings();replyWordsHint();applyReplyLength();logEvent('info','Settings',`words per narrator reply: ${v||'auto'}`);};
+  wrap.querySelector('#sl-dials-same').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.dialsSameAsChat=e.target.checked;saveSettings();logEvent('info','Settings',`Storyloom uses ${e.target.checked?'the same Dials settings as SillyTavern’s chat':'only its own Dials settings'}`);};
+  wrap.querySelector('#sl-dials-open').onclick=()=>openDials();
   wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};
@@ -2910,7 +2920,7 @@ function init() {
       <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
       <div id="na-team" class="storyloom-team" hidden>
         <p id="na-team-label" class="storyloom-team-label"></p>
-        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button><button id="na-compare" type="button" title="Your narrator card and preset next to Storyloom’s, place by place, with what’s wrong in yours. Nothing changes unless you choose.">Compare narrators…</button><button id="na-export" type="button" title="Save the story — every chapter’s narration, in order, without your directions — as a Word (.docx) or text (.txt) file.">Export book…</button></div>
+        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button><button id="na-compare" type="button" title="Your narrator card and preset next to Storyloom’s, place by place, with what’s wrong in yours. Nothing changes unless you choose.">Compare narrators…</button><button id="na-dials" type="button" hidden title="Open Dials: the provider options and token counts for SillyTavern’s chat and for Storyloom.">Dials settings…</button><button id="na-export" type="button" title="Save the story — every chapter’s narration, in order, without your directions — as a Word (.docx) or text (.txt) file.">Export book…</button></div>
         <ol id="na-team-steps" class="storyloom-steps"></ol>
         <p id="na-team-hint" class="storyloom-hint"></p>
         <button id="na-team-next" type="button" class="storyloom-team-next">Next →</button>
@@ -3107,6 +3117,7 @@ function init() {
   document.querySelector('#na-writing-setup').onclick=()=>{lastAction='Writing setup';writingSetup().catch(fail);};
   document.querySelector('#na-book-settings').onclick=()=>{lastAction='Book settings';editBookSettings().catch(fail);};
   document.querySelector('#na-compare').onclick=()=>{lastAction='Compare narrators';compareNarrators().catch(fail);};
+  document.querySelector('#na-dials').onclick=()=>openDials();
   document.querySelector('#na-export').onclick=()=>{lastAction='Export book';exportBook().catch(fail);};
   document.querySelector('#na-narrator-undo').onclick=()=>{lastAction='Undo narrator change';undoNarrator().catch(fail);};
   const sendAssistant=async()=>{const input=document.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
