@@ -53,7 +53,9 @@ export function coreShare(text) {
 /** The budget. Inputs are numbers or text; anything missing leaves those lines out. */
 export function wordBudget({chapters, wordsPerChapter, totalWords, coreText = '', namedCast = []} = {}) {
   const ch = typeof chapters === 'number' ? chapters : parseNumber(chapters);
-  const per = typeof wordsPerChapter === 'number' ? wordsPerChapter : parseNumber(wordsPerChapter);
+  // A chapter under 200 words isn't a real length (e.g. "one evening's worth" read as 1): treat it as not given.
+  const perRaw = typeof wordsPerChapter === 'number' ? wordsPerChapter : parseNumber(wordsPerChapter);
+  const per = perRaw >= 200 ? perRaw : null;
   const total = (typeof totalWords === 'number' ? totalWords : parseNumber(totalWords)) || (ch && per ? ch * per : null);
   const {share, source} = coreShare(coreText);
   if (!total) return {total: null, chapters: ch, share, shareSource: source, namedCast};

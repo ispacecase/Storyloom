@@ -54,3 +54,8 @@ test('numbers with space or dot thousands separators are read whole', async () =
   assert.equal(parseNumber('1,500–2,500'), 1500);
   assert.equal(parseNumber('15'), 15);
 });
+
+test('a length that isn’t a real number of words per chapter is ignored', () => {
+  assert.equal(wordBudget({chapters: 4, wordsPerChapter: "one evening's worth (no fixed count)"}).total, null);
+  assert.equal(wordBudget({chapters: 4, wordsPerChapter: '3,000'}).perChapter, 3000);
+});

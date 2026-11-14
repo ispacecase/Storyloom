@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19 (2026-11-14)
+- Fixed: a chapter length written in words ("one evening's worth") was read as 1 word, so replies were asked for "about 1 word". Lengths under 200 words are now ignored, roleplay replies don't follow the session length, and the line under *Words per narrator reply* says exactly what cap is used and why.
 - **Compare narrators fixes your narrator:** *Fix mine* and *Fix everything* edit your own text to fix only what's flagged, with a change view before anything is saved, and a backup of the old version.
 - The Compare window follows your SillyTavern theme, so its buttons are readable.
 

@@ -27,7 +27,7 @@ import { castNames, characterProfilesInstruction, validateCharacters, characterT
 import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
-import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, lastPage, capsSection, tokensFor } from './memory.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, lastPage, capsSection, tokensFor, replyWords } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
@@ -728,7 +728,7 @@ async function applyMemory() {
 function replyWordsHint() {
   const h=document.getElementById('sl-reply-words-hint'); if(!h)return;
   const c=context(), want=replyTarget(), max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
-  if(!want){let per=0; try{per=chapterTarget();}catch{} const a=autoReplyWords(); h.textContent=!a?'Auto: sized to fit your Max Response Length.':a<per?`Auto: this chapter is planned at ${per.toLocaleString()} words, but your Max Response Length only fits about ${a.toLocaleString()} with thinking — raise it to get the whole chapter in one reply.`:`Auto: ${a.toLocaleString()} words per reply — this chapter’s planned length from the book’s setup (change it per chapter in Book settings…).`; h.classList.toggle('is-warning',!!a && a<per); return;}
+  if(!want){let per=0; try{per=chapterTarget();}catch{} const a=autoReplyWords(); h.textContent=!a?`Auto: no chapter length is set for this book${(()=>{try{return isRP()?' (roleplay)':'';}catch{return '';}})()}, so each reply is capped at about ${replyWords(max).toLocaleString()} words${max?` (your Max Response Length is ${max.toLocaleString()} tokens)`:''}. Type a number here to ask for more.`:a<per?`Auto: this chapter is planned at ${per.toLocaleString()} words, but your Max Response Length only fits about ${a.toLocaleString()} with thinking — raise it to get the whole chapter in one reply.`:`Auto: ${a.toLocaleString()} words per reply — this chapter’s planned length from the book’s setup (change it per chapter in Book settings…).`; h.classList.toggle('is-warning',!!a && a<per); return;}
   const need=tokensFor(want);
   let per=0; try{per=chapterTarget();}catch{}
   if(per && want>per){h.textContent=`This book’s ${(()=>{try{return tpl(data()).unit.toLowerCase();}catch{return 'chapter';}})()}s are planned at about ${per.toLocaleString()} words in total, so the narrator will write less than ${want.toLocaleString()} per reply. Raise WORDS PER in the book’s Story Scale (or ask the Assistant) for longer chapters.`;h.classList.add('is-warning');return;}
@@ -1186,10 +1186,10 @@ async function exportBook() {
 const LOG_KEY='storyloom-log';
 const replyTarget=()=>{try{return Math.max(0,Math.round(Number(context().extensionSettings.storyloom?.replyWords)||0));}catch{return 0;}};
 /** This chapter's planned length: its own word count if one was set (Book settings), else the book's WORDS PER CHAPTER from setup. */
-function chapterTarget(d=data(),n=d.chapter||1){return Number(d.chapterWords?.[n])||Number(d.budget?.perChapter)||0;}
+function chapterTarget(d=data(),n=d.chapter||1){const w=Number(d.chapterWords?.[n])||Number(d.budget?.perChapter)||0; return w>=200?w:0;}
 /** Words per reply when the writer hasn't set one: the chapter's planned length, as far as Max Response Length fits it with thinking. */
 function autoReplyWords() {
-  let per=0; try{per=chapterTarget();}catch{}
+  let per=0; try{per=isRP()?0:chapterTarget();}catch{} // roleplay: sessions aren't word counts; replies stay conversational unless you set a number
   if(!per)return 0;
   const max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
   const fits=max?Math.max(300,Math.floor((max-1500)*100/135/100)*100):Infinity;

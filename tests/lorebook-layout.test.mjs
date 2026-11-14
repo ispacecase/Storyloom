@@ -124,3 +124,8 @@ test('the chapter length reads cleanly even with a stray full stop', async () =>
   const c = currentChapterContent('Chapter 1 — A\nEvents: x\n\nChapter 2 — B\nEvents: y', 1, 'Chapter', {wordsPerChapter: '1,250.'});
   assert.match(c, /about 1,250 words in total/);
 });
+
+test('a chapter length without a number is left out of the plan', async () => {
+  const {currentChapterContent} = await import('../lorebook-layout.mjs');
+  assert.doesNotMatch(currentChapterContent('Session 1 — A\nEvents: x', 1, 'Session', {wordsPerChapter: "one evening's worth"}), /should run about/);
+});
