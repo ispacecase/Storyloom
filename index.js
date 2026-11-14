@@ -1164,6 +1164,17 @@ async function autoChapter() {
   }
   logEvent('info','Auto',`${u} ${n}: finished`);
 }
+/** Start this chapter's checks over: clears findings, notes and an unaccepted revision. The chat is not changed. */
+async function startTeamOver() {
+  requireIdle();
+  const c=context(), d=data(), t=teamState(d), u=tpl(d).unit, n=d.chapter||1;
+  const sealed=t.done.includes('seal'), accepted=t.accepted;
+  const ok=await c.Popup.show.confirm(`Start ${u} ${n} over?`,`<p>This clears the Lint findings, the Editor’s and Reader’s notes${t.revision&&!accepted?' and the revision you haven’t accepted':''}, so you can run the steps again from Lint.</p><p><b>The chapter in the chat is not changed.</b>${accepted?' The revision you accepted stays in the chat — swipe back on a message to get the original.':''}${sealed?` The seal note stays until you seal ${u} ${n} again (sealing again replaces it).`:''}</p>`);
+  if(!ok)return;
+  d.team={chapter:n,done:[]}; await persist();
+  logEvent('info','Start over',`${u} ${n}: chapter checks cleared`);
+  renderTeam(); status(`${u} ${n}: starting over. Run Lint (or Auto) when you’re ready.`);
+}
 async function discardRevision() {const t=teamState(); t.revision=null; await persist(); renderTeam(); status('Revision discarded. The chapter is unchanged.');}
 
 /** A chapter's plan from the outline entry: {number, title, text}. */
@@ -1201,7 +1212,7 @@ function renderTeam(d=null) {
   const run={lint:stepLint,markup:stepMarkup,reader:stepReader,revise:stepRevise,seal:sealChapter};
   const nextKey=steps.find(s=>!t.done.includes(s.key))?.key||'seal';
   for(const s of steps) {
-    const b=el('button',{type:'button',className:`storyloom-step${t.done.includes(s.key)?' is-done':''}${s.key===nextKey?' is-next':''}`,title:s.hint},el('span',{textContent:t.done.includes(s.key)?'✓ ':''}),s.label);
+    const b=el('button',{type:'button',className:`storyloom-step${t.done.includes(s.key)?' is-done':''}${s.key===nextKey?' is-next':''}`,title:t.done.includes(s.key)?`Done — click to run ${s.label} again. ${s.hint}`:s.hint},el('span',{textContent:t.done.includes(s.key)?'✓ ':''}),s.label);
     b.onclick=()=>{lastAction=s.label;run[s.key]().catch(fail);};
     row.append(el('li',{},b));
   }
@@ -1209,6 +1220,11 @@ function renderTeam(d=null) {
     const a=el('button',{type:'button',className:'storyloom-step storyloom-auto',title:'Runs every step that’s left on its own: Lint, Editor, Reader, Revise (keeping every note), accepts the revision and seals. The originals stay as swipes and Backups keep the chapter as it was. You only choose what comes next.'},'Auto ▶');
     a.onclick=()=>{lastAction='Auto';autoChapter().catch(fail);};
     row.append(el('li',{},a));
+  }
+  if(t.done.length || t.lint || t.markup || t.reader || t.revision) {
+    const r=el('button',{type:'button',className:'storyloom-step storyloom-restart',title:'Clear this chapter’s Lint findings, notes and any revision you haven’t accepted, and run the steps again from Lint. The chapter in the chat is not changed.'},'↺ Start over');
+    r.onclick=()=>{lastAction='Start over';startTeamOver().catch(fail);};
+    row.append(el('li',{className:'storyloom-restart-item'},r));
   }
   document.getElementById('na-team-hint').textContent=`Next: ${STEPS.find(s=>s.key===nextKey).label} — ${STEPS.find(s=>s.key===nextKey).hint}`;
   const body=document.getElementById('na-team-body'); body.replaceChildren();

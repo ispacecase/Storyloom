@@ -280,3 +280,6 @@
 .storyloom-compare-problems li.is-note { opacity:.8; }
 .storyloom-compare .storyloom-sev.is-ok { color:#5aa86c; }
 .storyloom-compare-review { white-space:pre-wrap; text-align:left; }
+#na-panel .storyloom-steps li.storyloom-restart-item { margin-left:auto; }
+#na-panel .storyloom-steps li.storyloom-restart-item::before { content:none; }
+#na-panel .storyloom-restart { background:transparent; border-style:dashed; }
