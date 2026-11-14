@@ -702,7 +702,7 @@ function applyReplyLength(on=null, unit='Chapter') {
   const c=context();
   if(on===null){try{const d=data(); on=!!(d.book && c.chatMetadata?.world_info===d.book); unit=tpl(d).unit;}catch{on=false;}}
   const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,replyTarget()):'';
-  c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,0);
+  c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
 }
 let memoryTimer;
 const queueMemory=()=>{clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),400);};
