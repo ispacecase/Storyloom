@@ -44,3 +44,9 @@ test('only rewrites of partly-seen entries are unsafe; the rest still save', asy
   const sel = selectLore([{title: 'Novel Foundation', content: 'x'.repeat(9000)}], '', planningBudget(4095));
   assert.deepEqual(sel.incomplete, []);
 });
+
+test('planning entries are shown right after the summary when the plan exists', async () => {
+  const {selectLore} = await import('../context.mjs');
+  const sel = selectLore([{title: 'Character — Ann', content: 'chapters chapters'}, {title: 'Novel Outline', content: 'x'}, {title: 'Novel Foundation', content: 'y'}], 'more chapters', 1000, 'Novel Foundation', ['Novel Outline']);
+  assert.deepEqual(sel.entries.map(e => e.title), ['Novel Foundation', 'Novel Outline', 'Character — Ann']);
+});

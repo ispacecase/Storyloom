@@ -117,3 +117,22 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarra
 export function directiveForChapter(text,chapter) {
   return String(text||'').replace(/^(Chapter:\s*).*$/m,`$1${chapter}`).replace(/^(Scene:\s*).*$/m,'$11');
 }
+
+/**
+ * Merge an outline edit by chapter: the model may return only the chapters it changes or adds (each with its full
+ * "Chapter N — Title" heading and lines); every other chapter is kept as it was. "REMOVE Chapter N" drops one.
+ * Text before the first chapter is replaced only when the edit has its own.
+ */
+export function mergeOutline(oldText, editText, unit = 'Chapter') {
+  const body = t => String(t || '').replace(/^\(Storyloom:[^\n]*\)\n?/, '');
+  const old = body(oldText), edit = body(editText);
+  const oldCh = chapterList(old, unit), newCh = chapterList(edit, unit);
+  const removed = new Set([...edit.matchAll(new RegExp(`^\\s*REMOVE\\s+${unit}\\s+(\\d+)\\s*$`, 'gmi'))].map(m => Number(m[1])));
+  if (!newCh.length && !removed.size) return edit.trim() ? edit : old;
+  const preface = s => { const first = chapterList(s, unit)[0]; return (first ? s.slice(0, s.indexOf(first.text)) : s).replace(new RegExp(`^\\s*REMOVE\\s+${unit}\\s+\\d+\\s*$`, 'gmi'), '').trim(); };
+  const byNumber = new Map(oldCh.map(c => [c.number, c.text]));
+  for (const c of newCh) byNumber.set(c.number, c.text.replace(new RegExp(`^\\s*REMOVE\\s+${unit}\\s+\\d+\\s*$`, 'gmi'), '').trim());
+  for (const n of removed) byNumber.delete(n);
+  const head = preface(edit) || preface(old);
+  return [head, ...[...byNumber.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t)].filter(Boolean).join('\n\n');
+}

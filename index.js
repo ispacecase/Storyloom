@@ -2,7 +2,7 @@ import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
 import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
-import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor } from '../../../world-info.js';
+import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
 import { synchronize, resolveConflict, planInitialLink } from './sync.mjs';
 import { createNovel, selectNovel } from './state.mjs';
@@ -21,7 +21,7 @@ import { planningSystem } from './prompts.mjs';
 import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
 import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
 import { castNames, characterProfilesInstruction, validateCharacters, characterTitle, splitExtraCast } from './characters.mjs';
-import { layoutBook, chapterList, directiveForChapter } from './lorebook-layout.mjs';
+import { layoutBook, chapterList, directiveForChapter, mergeOutline } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
 import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody } from './memory.mjs';
@@ -99,7 +99,7 @@ async function syncLinks(onlyBook=null) {
       for(const [name,value] of Object.entries(plan.writes)) {
         const entry=findCharacterEntry(books[name],link.title), v=JSON.parse(value);
         entry.content=v.content; entry.key=v.key;
-        await c.saveWorldInfo(name,books[name],true);
+        await c.saveWorldInfo(name,books[name],true); refreshEditor(name);
       }
       link.base=plan.base;
       if(Object.keys(plan.writes).length)notes.push(`Synced “${link.title}” to ${Object.keys(plan.writes).join(', ')}.`);
@@ -137,7 +137,7 @@ async function chooseLinkVersion(id,winner) {
     const plan=resolveLink(contents,winner);
     linkRunning=true;
     try {
-      for(const [name,value] of Object.entries(plan.writes)){const e=findCharacterEntry(books[name],link.title),v=JSON.parse(value);e.content=v.content;e.key=v.key;await c.saveWorldInfo(name,books[name],true);}
+      for(const [name,value] of Object.entries(plan.writes)){const e=findCharacterEntry(books[name],link.title),v=JSON.parse(value);e.content=v.content;e.key=v.key;await c.saveWorldInfo(name,books[name],true); refreshEditor(name);}
     } finally {linkRunning=false;}
     link.base=plan.base; link.conflict=null; c.saveSettingsDebounced(); renderLinks();
     status(`Every copy of “${link.title}” now matches ${winner}.`);
@@ -356,7 +356,7 @@ async function applySuggestion(id) {
     if(!entry)throw Error('Could not create the entry.');
     entry.comment=w.update.title.trim(); entry.content=w.update.content; entry.key=w.update.keys;
     if(JSON.stringify(await freshBook(d.book))!==JSON.stringify(before))throw Error('The lorebook changed; try again.');
-    await c.saveWorldInfo(d.book,fresh,true);
+    await c.saveWorldInfo(d.book,fresh,true); refreshEditor(d.book);
     if(JSON.stringify(await freshBook(d.book))!==JSON.stringify(fresh))throw Error('The save could not be verified.');
     d.history ??= []; d.history.push({id:crypto.randomUUID(),book:d.book,changes:buildChange(before,fresh),source:'approved suggestion',at:new Date().toISOString()}); if(d.history.length>30)d.history.shift();
     d.suggestions=d.suggestions.filter(x=>x.id!==id);
@@ -536,7 +536,7 @@ async function applySetupAction(a) {
       if(!e)throw Error('This book has no “Voice and Boundaries” entry to save it in.');
       const re=new RegExp(`^([\\s*_#-]*${label}\\s*:).*$`,'mi');
       e.content=re.test(e.content)?e.content.replace(re,`$1 ${a.content}`):`${e.content}\n${label}: ${a.content}`;
-      await c.saveWorldInfo(d.book,book,true);
+      await c.saveWorldInfo(d.book,book,true); refreshEditor(d.book);
       d.history ??= []; d.history.push({id:crypto.randomUUID(),book:d.book,changes:buildChange(before,book),source:`assistant: ${a.name}`,at:new Date().toISOString()});
       bookUndo={uid:e.uid,before:before.entries[e.uid],after:book.entries[e.uid]};
       delete d.chapterValues[n][a.name];
@@ -559,7 +559,7 @@ async function undoSetupAction(a) {
   else if(u.kind==='narrator'){await writeCharacter(u.avatar,{description:u.before.description});}
   else if(u.kind==='value') {
     const d=data(); d.chapterValues ??= {}; d.chapterValues[u.chapter]=u.prevChapter;
-    if(u.bookUndo){const book=await freshBook(d.book); if(JSON.stringify(book.entries?.[u.bookUndo.uid])!==JSON.stringify(u.bookUndo.after))throw Error('“Voice and Boundaries” changed since; edit it in the lorebook instead.'); book.entries[u.bookUndo.uid]=u.bookUndo.before; await c.saveWorldInfo(d.book,book,true);}
+    if(u.bookUndo){const book=await freshBook(d.book); if(JSON.stringify(book.entries?.[u.bookUndo.uid])!==JSON.stringify(u.bookUndo.after))throw Error('“Voice and Boundaries” changed since; edit it in the lorebook instead.'); book.entries[u.bookUndo.uid]=u.bookUndo.before; await c.saveWorldInfo(d.book,book,true); refreshEditor(d.book);}
     await persist(); await writeValues(u.prevValues); await applyMemory(); renderTeam();
   }
 }
@@ -578,7 +578,7 @@ async function applyAssistantAction(mi,id) {
     const before=await freshBook(a.book);
     const {managed}=a.book===(()=>{try{return data().book;}catch{return '';}})()?await storyloomManaged():{managed:[]};
     const {book,uid}=applyAction(before,a,b=>createWorldInfoEntry(a.book,b),managed);
-    await c.saveWorldInfo(a.book,book,true);
+    await c.saveWorldInfo(a.book,book,true); refreshEditor(a.book);
     if(JSON.stringify(await freshBook(a.book))!==JSON.stringify(book))throw Error('The save could not be verified; check the lorebook.');
     a.status='applied'; a.error=''; a.undo={uid,before:before.entries?.[uid]??null,after:book.entries[uid]};
     saveAssistant(); renderAssistant(); status(`Applied: ${describeAction(a)}`);
@@ -593,7 +593,7 @@ async function undoAssistantAction(mi,id) {
     const c=context(), book=await freshBook(a.book), {uid,before,after}=a.undo;
     if(JSON.stringify(book.entries?.[uid]??null)!==JSON.stringify(after))throw Error(`“${a.title}” was changed after you applied this, so it can’t be undone safely. Edit it in the World Info editor instead.`);
     if(before===null)delete book.entries[uid]; else book.entries[uid]=before;
-    await c.saveWorldInfo(a.book,book,true);
+    await c.saveWorldInfo(a.book,book,true); refreshEditor(a.book);
     a.status='pending'; delete a.undo; saveAssistant(); renderAssistant(); status(`Undone: ${describeAction(a)}. The card can be applied again.`);
   } finally {syncing=false;queueSync();}
 }
@@ -697,7 +697,7 @@ async function saveMemoryItem(item,content,place) {
     if(content!==undefined && !item.fromOutline)entry.content=content;
     if(place)entry.storyloom_memory=place;
     entry.disable=true; entry.constant=false;
-    await c.saveWorldInfo(d.book,book,true);
+    await c.saveWorldInfo(d.book,book,true); refreshEditor(d.book);
     if(JSON.stringify(await freshBook(d.book))!==JSON.stringify(book))throw Error('The save could not be verified.');
     d.history ??= []; d.history.push({id:crypto.randomUUID(),book:d.book,changes:buildChange(before,book),source:`memory: ${item.label}`,at:new Date().toISOString()}); if(d.history.length>30)d.history.shift();
     await persist();
@@ -1072,6 +1072,8 @@ function renderTeam(d=null) {
   }
 }
 
+/** SillyTavern's World Info editor doesn't redraw when an extension saves; reload it so it never shows (or re-saves) an old copy. */
+const refreshEditor=name=>{try{reloadEditor(name);}catch(e){warnLog('Storyloom editor refresh:',e);}};
 /* ---------- Writing setup: the Storyloom Novel preset, the general narrator, and this chat's book settings ---------- */
 const usesGeneralNarrator=(c=context())=>isGeneralNarrator(c.characters?.[c.characterId]?.description);
 /** This book's settings for the chapter: read from the story lore, then this chapter's own changes on top. */
@@ -1123,6 +1125,20 @@ async function ensureNarrator() {
   const avatar=(await r.text()).trim(); await c.getCharacters();
   logEvent('info','Writing setup',`created the “${NARRATOR_NAME}” character`);
   return avatar;
+}
+/** After the plan changes in the Storyloom chat: rebuild what depends on it — chapter list, current chapter plan, word budget, memory, book settings. */
+async function afterPlanChange(d) {
+  if(d.interview?.phase!=='done' || data()!==d)return;
+  try {
+    await organizeBook(d.chapter||1);
+    const book=await freshBook(d.book), t=tpl(d);
+    const scale=Object.values(book.entries||{}).find(e=>/WORDS PER/i.test(String(e.content||'')));
+    const per=(String(scale?.content||'').match(/WORDS PER [A-Z]+\s*:\s*([^\n]+)/i)||[])[1];
+    const b=wordBudget({chapters:(d.outlineChapters||[]).length||d.budget?.chapters,wordsPerChapter:per||d.budget?.perChapter,coreText:`${d.proposal?.fields?.coreShare||''} ${d.proposal?.fields?.core||''}`,namedCast:d.budget?.namedCast||[]});
+    if(b.total){const was=d.budget?.total; d.budget={...b,unit:t.unit}; await persist(); if(was!==b.total)logEvent('info','Budget',`recalculated: ${(d.outlineChapters||[]).length} ${t.unit.toLowerCase()}s, about ${b.total.toLocaleString()} words`);}
+    await applyMemory(); try{await fillBookValues({quiet:true});}catch{}
+    options();
+  } catch(e){warnLog('Storyloom refresh after a change:',e);}
 }
 /** Start a book from nothing: the general narrator (made if needed), a fresh chat with it, the Novel preset if wanted, then the usual start screen. */
 async function startNewBook() {
@@ -1724,8 +1740,8 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     const history=(interview?.sourceOnly || (interview?.requireOutline && d.interview?.mode==='deep')) ? [] : recentConversation(d.messages,Math.floor(budget*.25));
     const query=history.map(x=>x.content).join(' ')+input;
     const targetEntries=synopsis(before);
-    const loreBudget=interview?.loreBudget || Math.floor(budget*.5);
-    const current=interview?.sourceOnly ? selectLore(targetEntries.filter(x=>x.title.trim().toLocaleLowerCase()===interview.requiredCharacterTitle.toLocaleLowerCase()),query,loreBudget,tpl(d).summary.title) : selectLore(targetEntries,query,loreBudget,tpl(d).summary.title);
+    const loreBudget=interview?.loreBudget || Math.floor(budget*.6);
+    const current=interview?.sourceOnly ? selectLore(targetEntries.filter(x=>x.title.trim().toLocaleLowerCase()===interview.requiredCharacterTitle.toLocaleLowerCase()),query,loreBudget,tpl(d).summary.title) : selectLore(targetEntries,query,loreBudget,tpl(d).summary.title,d.interview?.phase==='done'?[tpl(d).outline.title,...tpl(d).entries.map(e=>e.title)]:[]);
     const reference=interview?.sourceOnly ? selectCharacterSource(ref?synopsis(ref):[],interview.sourceCharacter,Math.floor(budget*.5)) : selectLore(ref?synopsis(ref):[],query,Math.floor(budget*.25));
     const prompt = `Use the available lore for continuity. For an existing fact you can see, carry it forward unless the writer changes it. Blank interview fields in Simple mode are yours to complete.\nCurrent novel entries: ${JSON.stringify(current)}\nReference material from ${referenceName || 'no linked book'} (do not treat as current canon without relevance): ${JSON.stringify(reference)}\nConversation: ${JSON.stringify(history)}\n${fromMain ? 'New main story chat text; record only established developments and do not address the user: ' : 'Writer: '}${input}`;
     if(context().chatId!==chatId || data()!==d || d.profile!==profile || d.reference!==referenceName || !sameDirect(d,direct)) throw Error('Chat or novel changed; request stopped.');
@@ -1843,10 +1859,24 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
         }
       }
     }
+    // Outline edits come back chapter by chapter; merge them so untouched chapters stay exactly as they were.
+    const outlineTitle=tpl(d).outline.title.toLocaleLowerCase(), oldOutline=Object.values(fresh.entries||{}).find(e=>String(e.comment||'').trim().toLocaleLowerCase()===outlineTitle);
+    const merged=new Set();
+    if(oldOutline && d.interview?.phase==='done')for(const u of result.updates||[])if(u.title.trim().toLocaleLowerCase()===outlineTitle){const before=chapterList(outlineBody(oldOutline.content),tpl(d).unit).length; u.content=mergeOutline(oldOutline.content,u.content,tpl(d).unit); merged.add(u); logEvent('info','Save',`outline merged by ${tpl(d).unit.toLowerCase()}: ${before} → ${chapterList(u.content,tpl(d).unit).length}`);}
     let writes = planWrites(fresh, result.updates, {...tpl(d).summary,required:requiredOf(tpl(d).summary,true)});
-    // A rewrite of an entry the model only saw part of would cut it short: skip just those, keep the rest.
-    const unsafe=unsafeUpdates(writes.filter(w=>w.update.storyloomKind!=='interview_notes'),current);
-    if(unsafe.length){writes=writes.filter(w=>!unsafe.includes(w)); logEvent('warn','Save',`kept ${unsafe.map(w=>`“${w.update.title}”`).join(', ')} as they were — the model only saw part of ${unsafe.length===1?'it':'them'}, so its rewrite would have cut ${unsafe.length===1?'it':'them'} short`); skippedPartial=unsafe.map(w=>w.update.title);}
+    // The model rewrote entries it only saw part of. Instead of dropping the change, show it the complete entry and ask for the whole updated text.
+    let unsafe=unsafeUpdates(writes.filter(w=>w.update.storyloomKind!=='interview_notes' && !merged.has(w.update)),current);
+    for(const w of [...unsafe]) {
+      const full=String(fresh.entries[w.uid]?.content||'');
+      try {
+        status(`“${w.update.title}” is long; showing the AI the whole entry so the change keeps everything else…`);
+        const fix=await ask(`The writer asked: ${input}\n\nYou proposed a new version of the entry “${w.update.title}”, but you only saw part of the current entry, so your version would lose the rest. Here is the COMPLETE current entry, then your proposed version. Return the complete updated entry — every part of it, with the writer's change applied and consistently carried through, and everything the change doesn't touch kept as it is. Return only this one entry.\n\nCOMPLETE CURRENT ENTRY “${w.update.title}”:\n${full}\n\nYOUR PROPOSED VERSION:\n${w.update.content}`,system);
+        const got=parseAssistant(fix,{allowProse:false}).updates?.find(u=>u.title.trim().toLocaleLowerCase()===w.update.title.trim().toLocaleLowerCase());
+        if(got && String(got.content||'').trim().length>=full.trim().length*0.6){w.update.content=got.content; if(got.keys?.length)w.update.keys=got.keys; unsafe=unsafe.filter(x=>x!==w); logEvent('info','Save',`“${w.update.title}”: rewrote it with the whole entry in view`);}
+        else logEvent('warn','Save',`“${w.update.title}”: the full-entry rewrite came back ${got?'much shorter than the entry':'unreadable'}`,String(fix).slice(0,1500));
+      } catch(e){if(controller.signal.aborted)throw e; logEvent('warn','Save',`“${w.update.title}”: full-entry rewrite failed (${e.message})`);}
+    }
+    if(unsafe.length){writes=writes.filter(w=>!unsafe.includes(w)); logEvent('warn','Save',`kept ${unsafe.map(w=>`“${w.update.title}”`).join(', ')} as ${unsafe.length===1?'it was':'they were'} — couldn’t get a complete rewrite`); skippedPartial=unsafe.map(w=>w.update.title);}
     for (const w of writes) {
       const entry = w.uid === null ? createWorldInfoEntry(bookName, fresh) : fresh.entries[w.uid];
       if (!entry) throw new Error('Unable to create entry');
@@ -1862,7 +1892,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
       if (JSON.stringify(latest) !== JSON.stringify(before)) throw Error('Lorebook changed before saving; update stopped.');
       if (guard && !guard()) throw Error('The source message changed; nothing was saved.');
       if(context().chatId!==chatId || context().chatMetadata!==c.chatMetadata || context().chatMetadata.world_info!==bookName || data()!==d)throw Error('The chat or its linked lorebook changed; nothing was saved.');
-      await c.saveWorldInfo(bookName, fresh, true);
+      await c.saveWorldInfo(bookName,fresh,true); refreshEditor(bookName);
       const readback = await freshBook(bookName);
       if (JSON.stringify(readback) !== JSON.stringify(fresh)) throw Error('Save could not be verified; inspect the lorebook before retrying.');
       if(context().chatId!==chatId || data()!==d) throw Error('Chat changed after save; recovery will run when you return.');
@@ -1874,7 +1904,7 @@ async function interact(input, fromMain = false, guard = null, jobId = null, sou
     if (!fromMain) { if(!interview?.silentUser)d.messages.push({role:'user',content:input}); d.messages.push({role:'assistant',content:result.reply}); await persist(); showMessages(); }
     if(held.length)renderSuggestions();
     const heldNote=held.length?` ${held.length} suggestion${held.length===1?'':'s'} waiting for your OK under “Suggestions”.`:'';
-    status((result.ignoredUpdates?'Reply received. The proposed lorebook updates could not be read.':skippedFoundation?'Reply received. Storyloom kept the existing foundation because the proposed update could not be read.':writes.length ? `Saved ${writes.length} World Info ${writes.length === 1 ? 'entry' : 'entries'}.` : 'No entry changes.')+(skippedPartial.length?` Kept ${skippedPartial.map(t=>`“${t}”`).join(', ')} as it was — the AI only saw part of it, so its rewrite would have cut it short.`:'')+heldNote);
+    status((result.ignoredUpdates?'Reply received. The proposed lorebook updates could not be read.':skippedFoundation?'Reply received. Storyloom kept the existing foundation because the proposed update could not be read.':writes.length ? `Saved ${writes.length} World Info ${writes.length === 1 ? 'entry' : 'entries'}.` : 'No entry changes.')+(skippedPartial.length?` Kept ${skippedPartial.map(t=>`“${t}”`).join(', ')} unchanged — the AI couldn’t return a complete version of it. Try asking again, or see the Log.`:'')+heldNote);
     return result;
   } finally { renderModelWork(null); busy = false; queueSync(); if(!draining)scheduleDrain(); }
 }
@@ -1896,7 +1926,7 @@ async function setupFoundation() {
   entry.comment=summary.title; entry.content=foundationTemplate(summary.fields); entry.constant=true; entry.key=[];
   if(context().chatId!==chatId || data().book!==name || JSON.stringify(await freshBook(name))!==JSON.stringify(before)) throw Error('Chat or lorebook changed; setup stopped.');
   if(context().chatId!==chatId || context().chatMetadata.world_info!==name || data().book!==name) throw Error('Chat or linked lorebook changed; setup stopped.');
-  await c.saveWorldInfo(name,book,true);
+  await c.saveWorldInfo(name,book,true); refreshEditor(name);
   if(JSON.stringify(await freshBook(name))!==JSON.stringify(book)) throw Error('Foundation save could not be verified.');
 }
 async function setupDirective() {
@@ -1919,7 +1949,7 @@ async function setupDirective() {
     const latest=await freshBook(d.book);
     if(JSON.stringify(latest)!==JSON.stringify(originalBook)) throw Error('The lorebook changed while setup was running; try again.');
     if(context().chatId!==chatId || context().chatMetadata.world_info!==d.book || note.value!==originalNote) throw Error('Chat, lorebook or note changed; setup stopped.');
-    await c.saveWorldInfo(d.book, book, true);
+    await c.saveWorldInfo(d.book,book,true); refreshEditor(d.book);
   }
   if (context().chatId !== chatId || note.value !== originalNote) throw Error('The directive entry was created, but the chat or note changed; the note was not replaced.');
   if (JSON.stringify(await freshBook(d.book)) !== JSON.stringify(book)) throw Error('The directive save could not be verified.');
@@ -1942,7 +1972,7 @@ async function syncDirective() {
     const result=synchronize({base:link.base,book:entry.content,note:originalNote});
     if (result.conflict) throw Error(result.reason + '; sync paused.');
     if (context().chatId !== chatId || data().book !== link.book) throw Error('Chat changed; sync stopped.');
-    if (entry.content !== result.book) { const latest=await freshBook(link.book); if(JSON.stringify(latest)!==JSON.stringify(book)) throw Error('Lorebook changed during sync; please retry.'); if(context().chatId!==chatId || context().chatMetadata.world_info!==link.book || note.value!==originalNote) throw Error('Chat, lorebook or note changed; sync stopped.'); entry.content=result.book; await c.saveWorldInfo(link.book,book,true); if(JSON.stringify(await freshBook(link.book))!==JSON.stringify(book)) throw Error('Lorebook save could not be verified; directive sync paused.'); }
+    if (entry.content !== result.book) { const latest=await freshBook(link.book); if(JSON.stringify(latest)!==JSON.stringify(book)) throw Error('Lorebook changed during sync; please retry.'); if(context().chatId!==chatId || context().chatMetadata.world_info!==link.book || note.value!==originalNote) throw Error('Chat, lorebook or note changed; sync stopped.'); entry.content=result.book; await c.saveWorldInfo(link.book,book,true); refreshEditor(link.book); if(JSON.stringify(await freshBook(link.book))!==JSON.stringify(book)) throw Error('Lorebook save could not be verified; directive sync paused.'); }
     if(context().chatId!==chatId || note.value!==originalNote) throw Error('Chat or note changed during sync; review both versions.');
     if (note.value !== result.note) {note.value=result.note; note.dispatchEvent(new Event('input',{bubbles:true}));}
     if (link.base !== result.base) {link.base=result.base; await persist();}
@@ -1962,7 +1992,7 @@ async function resolveDirective(choice) {
     if(context().chatId!==id || data()!==d || note.value!==original)throw Error('Chat or note changed; resolution stopped.');
     if(JSON.stringify(await freshBook(link.book))!==JSON.stringify(book))throw Error('Lorebook changed; resolution stopped.');
     if(entry.content!==result.book) {
-      entry.content=result.book; await c.saveWorldInfo(link.book,book,true);
+      entry.content=result.book; await c.saveWorldInfo(link.book,book,true); refreshEditor(link.book);
       if(JSON.stringify(await freshBook(link.book))!==JSON.stringify(book))throw Error('Lorebook save could not be verified.');
     }
     if(context().chatId!==id || note.value!==original)throw Error('The note changed during the save; review both versions.');
@@ -2099,7 +2129,7 @@ async function nameFinishedLorebook(novel) {
     const name=availableBookName(title,[...c.getWorldInfoNames(),...Object.keys(state.novels)]);
     if(!matchesChat() || c.chatMetadata.world_info!==original)throw Error('Chat changed.');
     if(!await createNewWorldInfo(name))throw Error('Could not create titled lorebook.');
-    await c.saveWorldInfo(name,book,true);
+    await c.saveWorldInfo(name,book,true); refreshEditor(name);
     if(JSON.stringify(await freshBook(name))!==JSON.stringify(book))throw Error('Could not verify titled lorebook.');
     const editor=document.getElementById('world_editor_select');
     if(editor?.selectedOptions[0]?.textContent===name)await showWorldEditor(name);
@@ -2179,7 +2209,7 @@ async function organizeBook(chapter=null) {
     const changes=buildChange(before,after);
     if(!changes.length){d.chapter=n;await persist();return;}
     if(context().chatId!==chatId || data()!==d || JSON.stringify(await freshBook(name))!==JSON.stringify(before))throw Error('The chat or lorebook changed; try again.');
-    await c.saveWorldInfo(name,after,true);
+    await c.saveWorldInfo(name,after,true); refreshEditor(name);
     if(JSON.stringify(await freshBook(name))!==JSON.stringify(after))throw Error('The lorebook save could not be verified.');
     d.chapter=n;
     d.history ??= []; d.history.push({id:crypto.randomUUID(),book:name,changes,source:'lorebook layout',at:new Date().toISOString()}); if(d.history.length>30)d.history.shift();
@@ -2544,7 +2574,7 @@ function init() {
     const current=await freshBook(history.book), reverted=undoChange(current,history.changes);
     if(context().chatId!==c.chatId || data()!==d) throw Error('Chat changed; undo stopped.');
     if(JSON.stringify(await freshBook(history.book))!==JSON.stringify(current)) throw Error('The lorebook changed; try undo again.');
-    await c.saveWorldInfo(history.book,reverted,true);
+    await c.saveWorldInfo(history.book,reverted,true); refreshEditor(history.book);
     if (JSON.stringify(await freshBook(history.book))!==JSON.stringify(reverted)) throw Error('Undo could not be verified.');
     d.history.pop(); await persist(); options(); status('Last entry changes undone.');
   }catch(e){fail(e)}finally{if(ownsLock){syncing=false;queueSync();scheduleDrain()}}};
@@ -2610,7 +2640,7 @@ function init() {
       for(const [name,book] of Object.entries(books)) {
         const entry=createWorldInfoEntry(name,book); if(!entry)throw Error(`Could not add “${title}” to “${name}”.`);
         const {uid,...props}=structuredClone(original); Object.assign(entry,props);
-        await c.saveWorldInfo(name,book,true);
+        await c.saveWorldInfo(name,book,true); refreshEditor(name);
         if(!findCharacterEntry(await freshBook(name),title))throw Error(`Saving “${title}” to “${name}” could not be verified.`);
       }
       storedLinks().push({id:crypto.randomUUID(),title,books:[source,target,shared],base:linkValue(original),conflict:null,missing:[]});
@@ -2718,7 +2748,7 @@ function init() {
         if(data()!==d)throw Error('Chat changed; return to this novel.');
         d.interview=recordAnswer(d.interview,v); await persist(); input.value='';
         if(interview.mode==='simple') await nextInterview(false);
-      } else {await interact(v,false,null,null,null,false,{collaborative:interview.mode==='deep',holdForAuthor:'extras'});input.value='';}
+      } else {await interact(v,false,null,null,null,false,{collaborative:interview.mode==='deep',holdForAuthor:'extras'});input.value=''; await afterPlanChange(d);}
     } catch(e){fail(e)}
   };
   const c=context();

@@ -150,3 +150,12 @@ test('the proposal is requested in brief, parsed into fields, and becomes the fi
   assert.match(brief, /exactly these people, no others: Ann, Ben, Rita/);
   assert.match(finalizeInstruction('simple', {}, undefined, 'plan', brief), /^APPROVED PROPOSAL/);
 });
+
+test('after the plan exists, edits return only what changes, outline by chapter', async () => {
+  const {planningSystem} = await import('../prompts.mjs');
+  const sys = planningSystem('ongoing');
+  assert.match(sys, /Return only the entries that actually change/);
+  assert.match(sys, /return only the chapters you change or add/);
+  assert.match(sys, /REMOVE Chapter N/);
+  assert.doesNotMatch(planningSystem('simple'), /REMOVE Chapter N/);
+});

@@ -26,7 +26,7 @@ export const PROMPT_DEFAULTS = Object.freeze({
   },
   ongoing: {
     label: 'Chatting after the plan exists',
-    locked: 'Always added: the reply format.',
+    locked: 'Always added: the reply format, that a change is carried through every entry it touches, and that outline edits return only the changed or added chapters.',
     text: 'Continue collaboratively from the established conversation, help develop or revise the story, and create or update entries when appropriate.',
   },
   fill: {

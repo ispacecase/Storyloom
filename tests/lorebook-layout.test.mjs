@@ -97,3 +97,14 @@ test('with the general narrator, the voice entry stays saved but is switched off
   const back = layoutBook(off, {template: NOVEL});
   assert.equal(back.entries[0].content, 'POV: Third person, Mara.\nTENSE: Past.');
 });
+
+test('outline edits merge by chapter: changed and new chapters replace or add, the rest stay', async () => {
+  const {mergeOutline, chapterList} = await import('../lorebook-layout.mjs');
+  const old = '(Storyloom: note)\nChapter 1 — A\n\nEvents: a.\n\nChapter 2 — B\n\nEvents: b.\n\nChapter 3 — C\n\nEvents: c.';
+  const merged = mergeOutline(old, 'Chapter 2 — B2\n\nEvents: b changed.\n\nChapter 4 — D\n\nEvents: d.');
+  assert.deepEqual(chapterList(merged).map(c => [c.number, c.title]), [[1, 'A'], [2, 'B2'], [3, 'C'], [4, 'D']]);
+  assert.match(merged, /Events: a\./);
+  assert.doesNotMatch(merged, /\(Storyloom/);
+  assert.deepEqual(chapterList(mergeOutline(old, 'REMOVE Chapter 3')).map(c => c.number), [1, 2]);
+  assert.equal(mergeOutline(old, 'nothing structured'), 'nothing structured');
+});
