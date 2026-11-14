@@ -858,19 +858,19 @@ async function startChapterChat(narrator=null) {
   await setupNovel();
   try {if(usesGeneralNarrator())await organizeBook(n); await fillBookValues({quiet:true});} catch(e){warnLog('Storyloom book settings:',e);}
   const title=(copy.outlineChapters||[]).find(x=>x.number===n)?.title||'', heading=`${t.unit} ${n}${title?` — ${title}`:''}`;
-  // The greeting arrives a moment after the chat opens (and can be re-rendered once more); set the heading, then check it held.
-  for(let attempt=0;attempt<3;attempt++) {
-    for(let i=0;i<40 && !context().chat.length;i++)await new Promise(r=>setTimeout(r,150));
-    const c2=context(); if(c2.chat.length!==1 || c2.chat[0].is_user || c2.chat[0].mes===heading)break;
-    const m=c2.chat[0]; m.mes=heading; if(Array.isArray(m.swipes)){m.swipes=[heading];m.swipe_id=0;m.swipe_info=[m.swipe_info?.[0]||{}];}
-    await c2.saveChat(); await c2.reloadCurrentChat(); await new Promise(r=>setTimeout(r,600));
-  }
-  if(context().chat[0]?.mes!==heading)logEvent('warn','Next chapter',`couldn’t set the first message to “${heading}”`,String(context().chat[0]?.mes||'').slice(0,100));
   await applyMemory();
   try {
     const name=`${bookName} — ${t.unit} ${n}${title?` — ${title}`:''}`.replace(/[\\/:*?"<>|]/g,'-').slice(0,120);
     if(context().chatId!==name)await context().renameChat(context().chatId,name);
   } catch(e){warnLog('Storyloom: could not rename the chapter chat:',e);}
+  // Set the heading last: while the new chat is being created and renamed SillyTavern saves it again and would overwrite it.
+  for(let attempt=0;attempt<4;attempt++) {
+    await new Promise(r=>setTimeout(r,attempt?900:600));
+    const c2=context(); if(!c2.chat.length || c2.chat.length>1 || c2.chat[0].is_user || c2.chat[0].mes===heading)break;
+    const m=c2.chat[0]; m.mes=heading; if(Array.isArray(m.swipes)){m.swipes=[heading];m.swipe_id=0;m.swipe_info=[m.swipe_info?.[0]||{}];}
+    await c2.saveChat(); await c2.reloadCurrentChat();
+  }
+  if(context().chat.length===1 && context().chat[0]?.mes!==heading)logEvent('warn','Next chapter',`couldn’t set the first message to “${heading}”`,String(context().chat[0]?.mes||'').slice(0,100));
   logEvent('info','Next chapter',`${t.unit} ${n} opened in a fresh chat${narrator?` (narrator ${narrator.avatar})`:''}`);
   options(); renderMemory();
   status(`This is a fresh chat for ${t.unit} ${n}${title?` — ${title}`:''}. Story so far, Previously, the plan and the narrator are in place.`);
@@ -1669,7 +1669,7 @@ async function sealChapter({auto=false}={}) {
   const c=context(), d=data(), t=tpl(d);
   if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
   const n=d.chapter||1, total=d.outlineChapters?.length||0;
-  const {text,messages}=transcriptOf(c.chat);
+  const {text,messages}=transcriptOf(c.chat,60000,{userName:isRP(d)?(c.name1||''):''});
   if(messages<1)throw Error(`This chat has nothing in it yet. Write ${t.unit} ${n} in the main chat first.`);
   const team=teamState(d);
   if(!auto && team.revision && !team.accepted && !await c.Popup.show.confirm('Seal without the revision?','The Editor’s revision hasn’t been accepted. Seal the chapter as it is in the chat now?'))return;
@@ -1920,7 +1920,7 @@ function renderProposal() {
   const f=d.proposal.fields, t=tpl(d), b=proposalBudget(d), fit=castFit(b,f.cast.map(c=>c.name));
   const body=box.querySelector('.storyloom-proposal-body'); body.replaceChildren();
   const add=(label,text,cls='')=>{if(!text)return;const l=document.createElement('div');l.className='storyloom-sugg-label';l.textContent=label;const p=document.createElement('p');p.className='storyloom-proposal-text '+cls;p.textContent=text;body.append(l,p);};
-  add('What it’s about',`${f.core}${f.coreShare?` (about ${Math.round(coreShare(f.coreShare).share*100)}% of the words)`:''}`);
+  add('What it’s about',`${f.core}${f.coreShare && !isRP(d)?` (about ${Math.round(coreShare(f.coreShare).share*100)}% of the words)`:''}`);
   add('Timeline',f.timeline);
   add('What happens',f.happens);
   const perN=parseNumber(f.wordsPerChapter), chN=parseNumber(f.chapters);

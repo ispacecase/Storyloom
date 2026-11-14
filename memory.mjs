@@ -69,9 +69,9 @@ export function injection(item, text, place = item.place, vars = {}) {
  * The chat as text. With prose: true, only the story's own messages, without speaker labels —
  * what a reader would see on the page (used by lint, so line numbers match the prose and labels are not read as names).
  */
-export function transcriptOf(chat, maxChars = 60000, {prose = false} = {}) {
+export function transcriptOf(chat, maxChars = 60000, {prose = false, userName = ''} = {}) {
   const lines = (chat || []).filter(m => m && !m.is_system && String(m.mes || '').trim() && !(prose && m.is_user))
-    .map(m => prose ? String(m.mes).trim() : `${m.is_user ? 'USER' : (m.name || 'STORY')}: ${String(m.mes).trim()}`);
+    .map(m => prose ? String(m.mes).trim() : `${m.is_user ? (userName || 'USER') : (m.name || 'STORY')}: ${String(m.mes).trim()}`);
   let text = lines.join('\n\n');
   if (text.length > maxChars) text = '…(earlier part of this chapter omitted)…\n\n' + text.slice(-maxChars);
   return {text, messages: lines.length};
@@ -102,7 +102,7 @@ WHERE THINGS STAND: the state of the story at the last line, so the next ${u} be
 - knowledge: who knows what, who was told what, who is lying or hiding something
 - places and things left in a state: doors, vehicles, letters, food, weapons, money — anything a later page could pick up
 - promises, plans, appointments and standing instructions
-${roleplay ? `- the player's character${player ? ` (${player})` : ''}: where they are, their condition, what they carry, what they know, what they've promised or decided — the USER lines are what the player made them do and say
+${roleplay ? `- the player's character${player ? ` (${player})` : ''}: where they are, their condition, what they carry, what they know, what they've promised or decided — the ${player ? `${player}:` : 'USER'} lines are what the player made them do and say
 ` : ''}WHAT HAPPENED: every significant moment of the ${u} in order, one line each — what was done, said, decided, discovered, noticed or went wrong${roleplay ? ', by the player\'s character as well as everyone else' : ''}. Anything a later page could refer back to belongs here.
 For WHERE THINGS STAND and WHAT HAPPENED: if in doubt, include it. A missing fact gets contradicted later; an extra line costs nothing. Only what is on the page.
 CONTRADICTION: none — or one line, only if this page conflicts with an earlier sealed note.

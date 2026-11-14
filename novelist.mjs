@@ -67,8 +67,9 @@ export function bookValues({voice = '', summary = '', directive = '', focus = ''
     tense: section(voice, ['TENSE']) || section(directive, ['Tense']),
     voice: section(voice, ['REGISTER', 'VOICE', 'STYLE', 'REGISTER AND VOICE']),
     tone: section(voice, ['TONE']) || section(directive, ['Tone']),
-    genre: section(summary, ['GENRE']),
-    rules: section(voice, ['ALWAYS OR NEVER', 'RULES', 'NEVER']),
+    genre: section(summary, ['GENRE', 'SYSTEM AND GENRE']),
+    // Campaigns keep the table's rules as content limits and player agency.
+    rules: section(voice, ['ALWAYS OR NEVER', 'RULES', 'NEVER']) || [section(voice, ['CONTENT LIMITS']), section(voice, ['PLAYER AGENCY'])].filter(Boolean).join(' '),
   };
 }
 

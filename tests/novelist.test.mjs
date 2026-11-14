@@ -48,3 +48,9 @@ test('narration suggestions are read back per setting', async () => {
   assert.equal(r.checkerNote, 'first person is intended');
   assert.equal(parseNarration('nothing useful'), null);
 });
+
+test('a campaign’s table rules fill the genre and rules blanks', () => {
+  const v = bookValues({voice: 'POV: Second person.\nTENSE: Present.\nTONE: Damp, wry.\nSYSTEM: none\nCONTENT LIMITS: No graphic gore.\nPLAYER AGENCY: The narrator never decides what Kel does.', summary: 'CAMPAIGN TITLE: The Drowned Bell\nSYSTEM AND GENRE: Narrative, low fantasy mystery.'});
+  assert.equal(v.genre, 'Narrative, low fantasy mystery.');
+  assert.equal(v.rules, 'No graphic gore. The narrator never decides what Kel does.');
+});
