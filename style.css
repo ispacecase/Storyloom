@@ -288,16 +288,20 @@
 /* Header buttons never wrap onto several lines */
 #na-panel .storyloom-header-actions button, #na-panel .storyloom-update { white-space:nowrap; }
 #na-panel .storyloom-header { flex-wrap:wrap; row-gap:.5rem; }
-/* Full screen: Story, Memory and Assistant as tiles side by side */
-#na-panel.is-wide { inset:2.75rem 0 0 0; width:100%; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:auto minmax(0,1fr) auto; column-gap:1.25rem; align-content:stretch; }
-#na-panel.is-wide > .storyloom-header, #na-panel.is-wide > #na-settings, #na-panel.is-wide > #na-nochat, #na-panel.is-wide > .storyloom-live, #na-panel.is-wide > .storyloom-feedback { grid-column:1 / -1; }
-#na-panel.is-wide > .storyloom-tabs { display:none; }
-#na-panel.is-wide > #na-workspace, #na-panel.is-wide > #na-memory, #na-panel.is-wide > #na-assistant { min-height:0; overflow:auto; border:1px solid var(--sl-line); border-radius:12px; padding:.8rem; background:#fffdf9; }
-#na-panel.is-wide > #na-settings { overflow:auto; }
-@media (max-width: 1000px) { #na-panel.is-wide { grid-template-columns:repeat(2,minmax(0,1fr)); } #na-panel.is-wide > #na-assistant { grid-column:1 / -1; } }
-@media (max-width: 699px) { #na-panel.is-wide { display:flex; } }
+/* Full screen: the panel covers the page. Story and Memory side by side at full height; the Assistant keeps its own tab. */
+#na-panel.is-wide { inset:2.75rem 0 0 0; width:100%; }
+#na-panel.is-wide.is-tiles { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr) auto auto; column-gap:1.25rem; }
+#na-panel.is-wide.is-tiles > .storyloom-header, #na-panel.is-wide.is-tiles > .storyloom-tabs, #na-panel.is-wide.is-tiles > #na-settings, #na-panel.is-wide.is-tiles > #na-nochat, #na-panel.is-wide.is-tiles > .storyloom-live, #na-panel.is-wide.is-tiles > .storyloom-feedback { grid-column:1 / -1; }
+#na-panel.is-wide.is-tiles > #na-workspace, #na-panel.is-wide.is-tiles > #na-memory { grid-row:3; min-height:0; overflow:auto; border:1px solid var(--sl-line); border-radius:12px; padding:.8rem; background:#fffdf9; }
+#na-panel.is-wide.is-tiles > #na-workspace { grid-column:1; } #na-panel.is-wide.is-tiles > #na-memory { grid-column:2; }
+#na-panel.is-wide #na-tab-memory { display:none; }
+#na-panel.is-wide .storyloom-live-body { max-height:16em; }
+#na-panel .storyloom-live-body { resize:vertical; }
+@media (max-width: 699px) { #na-panel.is-wide.is-tiles { display:flex; } }
 /* Folding sections (side panel only) */
 #na-panel .sl-fold-toggle { display:block; width:100%; text-align:left; padding:.35rem .55rem; margin:.15rem 0; border:1px solid var(--sl-line); border-radius:8px; background:transparent; color:var(--sl-muted); font-size:.8rem; font-weight:600; }
 #na-panel .sl-fold-toggle:hover { color:var(--sl-ink); background:#fffdf9; }
 #na-panel:not(.is-wide) .sl-folded { display:none !important; }
 #na-panel.is-wide .sl-fold-toggle { display:none !important; }
+/* No scroll boxes inside scroll boxes: suggestions, assistant actions and the proposal show at full height; only the panel scrolls. */
+#na-panel .storyloom-suggestions ul, #na-panel .storyloom-suggestions pre, #na-panel .storyloom-sugg-why, #na-panel .storyloom-action pre, #na-panel .storyloom-proposal { max-height:none !important; overflow:visible !important; }

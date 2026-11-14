@@ -11,7 +11,7 @@ import { createNovel, selectNovel } from './state.mjs';
 import { enqueue, nextJob, requiresReview, wasApplied, changedProcessed } from './queue.mjs';
 import { foundationTemplate, initialDirective, normalizeFoundation, foundationTitle } from './template.mjs';
 import { buildChange, undoChange, classifyChange, describeChange } from './history.mjs';
-import { generate, profileOptions, requestModel, withIncludeBody } from './generation.mjs';
+import { generate, profileOptions, requestModel, withIncludeBody, profileIncludeBody } from './generation.mjs';
 import { queueContinuity, completeContinuity, continuityPrompt } from './continuity.mjs';
 import { selectLore, recentConversation, ensureCompleteUpdates, unsafeUpdates, planningBudget } from './context.mjs';
 import { saveVerified } from './persistence.mjs';
@@ -21,7 +21,7 @@ import { normalizePeopleFocus } from './focus.mjs';
 import { characterImportRequest, requiredCharacterUpdate, selectCharacterSource } from './reuse.mjs';
 import { planningSystem } from './prompts.mjs';
 import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
-import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
+import { PROVIDERS, readKeyOptions, readModels, directPayload } from './providers.mjs';
 import { castNames, characterProfilesInstruction, validateCharacters, characterTitle, splitExtraCast } from './characters.mjs';
 import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
@@ -676,11 +676,15 @@ function setWide(on) {
 function renderTabs() {
   const panel=document.getElementById('na-panel'); if(!panel)return;
   panel.classList.toggle('is-wide',wideView);
-  for(const tab of ['story','memory','assistant'])document.querySelector('#na-tab-'+tab).classList.toggle('is-active',activeTab===tab);
-  const tiles=wideView && !settingsOpen && !noChatOpen();
-  document.querySelector('#na-assistant').hidden=settingsOpen || (!tiles && activeTab!=='assistant');
+  for(const tab of ['story','memory','assistant'])document.querySelector('#na-tab-'+tab).classList.toggle('is-active',!settingsOpen && (activeTab===tab || (wideView && tab==='story' && activeTab==='memory')));
+  document.querySelector('#na-tab-story').textContent=wideView?'Book':'Story';
+  // Full screen: Story and Memory side by side; the Assistant keeps its own tab.
+  const tiles=wideView && !settingsOpen && !noChatOpen() && activeTab!=='assistant';
+  panel.classList.toggle('is-tiles',tiles);
+  document.querySelector('#na-assistant').hidden=settingsOpen || activeTab!=='assistant';
   document.querySelector('#na-memory').hidden=settingsOpen || (!tiles && activeTab!=='memory');
-  if(tiles){document.querySelector('#na-workspace').hidden=false; renderMemory().catch(fail); renderAssistant(); renderDocsStatus(); return;}
+  if(tiles){document.querySelector('#na-workspace').hidden=false; renderMemory().catch(fail); return;}
+  if(wideView && activeTab==='assistant')document.querySelector('#na-workspace').hidden=true;
   if(activeTab==='memory' && !noChatOpen())renderMemory().catch(fail);
   if(activeTab==='assistant'){renderAssistant();renderDocsStatus();}
 }
@@ -952,6 +956,18 @@ function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatM
 async function explainCutOff(id,m) {
   const c=context(), limit=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
   const count=async t=>{t=String(t||''); if(!t)return 0; try{return await c.getTokenCountAsync(t);}catch{return Math.ceil(t.length/4);}};
+  // With Dials, the provider's own numbers for this reply (SillyTavern's chat is Dials' "sillytavern" caller).
+  let real=null; if(dialsOn()){try{const u=window.Dials.lastUsage?.(); if(u && u.caller==='sillytavern' && Date.now()-u.at<20000 && u.usage)real=u;}catch{}}
+  if(real){
+    const x=real.usage, lim=real.limit?.limit||limit, out=(x.output??((x.thinking||0)+(x.reply||0)));
+    const how='Press Continue to finish it (☰ menu next to the message box → Continue). If you don’t, Export leaves the unfinished sentence out.';
+    const msg=real.limit?.level==='cut'||real.finishReason==='length'
+      ? `It hit the limit: the provider says ${out.toLocaleString()} tokens were written${x.thinking?` (${x.thinking.toLocaleString()} of them thinking)`:''}${lim?` of ${lim.toLocaleString()}`:''}. ${how}`
+      : `The provider says it finished normally (“${real.finishReason||'stop'}”, ${out.toLocaleString()} tokens${x.thinking?`, ${x.thinking.toLocaleString()} thinking`:''}), so the limit didn’t cut it — the model just stopped there, or a stopping string or Regex script trimmed it. ${how}`;
+    toastr.warning(msg,'Storyloom: reply stopped mid-sentence',{timeOut:15000,extendedTimeOut:10000});
+    logEvent('warn','Narrator',`reply ${id} stopped mid-sentence (Dials: ${usageText(real)})`,String(m.mes).slice(-200));
+    return;
+  }
   const think=await count(m.extra?.reasoning), reply=await count(m.mes), used=think+reply;
   const how='Press Continue to finish it (☰ menu next to the message box → Continue). If you don’t, Export leaves the unfinished sentence out.';
   const msg=limit && used>=limit*0.85
@@ -963,7 +979,7 @@ async function explainCutOff(id,m) {
 const countCache=new Map();
 /** Under each narrator reply (display only, never sent): words, tokens, thinking tokens, and how much of the response limit it used. */
 async function markCounts() {
-  const c=context(); if(!inBookChat())return document.querySelectorAll('#chat .storyloom-count').forEach(e=>e.remove());
+  const c=context(); if(!inBookChat() || dialsOn())return document.querySelectorAll('#chat .storyloom-count').forEach(e=>e.remove()); // Dials puts its own line under each reply
   const max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
   const count=async t=>{t=String(t||''); if(!t)return 0; if(countCache.has(t))return countCache.get(t); let n; try{n=await c.getTokenCountAsync(t);}catch{n=Math.ceil(t.length/4);} countCache.set(t,n); if(countCache.size>500)countCache.delete(countCache.keys().next().value); return n;};
   for(const el of document.querySelectorAll('#chat .mes[mesid]')) {
@@ -1197,7 +1213,7 @@ async function stepRevise() {
     status(`The Editor is revising ${f.unit} ${n} (${notes.length} note${notes.length===1?'':'s'})…`);
     const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>!!parseRevision(r,parts),tokens:16000});
     const revised=parseRevision(raw,parts);
-    if(!revised){logEvent('error','Revise',`revision incomplete or cut off (${parts.length} parts)`,raw.slice(-3000));throw Error(`The Editor’s revision didn’t come back whole — a part was missing, much shorter than before, or stopped mid-sentence (its reply was probably cut off). Nothing was changed; try Revise again.`);}
+    if(!revised){const u=await usageOf(lastDialsUsage,3000), cut=u && (u.limit?.level==='cut'||u.finishReason==='length'); logEvent('error','Revise',`revision incomplete or cut off (${parts.length} parts)${u?` — Dials: ${usageText(u)}`:''}`,raw.slice(-3000));throw Error(`The Editor’s revision didn’t come back whole — a part was missing, much shorter than before, or stopped mid-sentence${cut?` (Dials: it hit the response limit after ${(u.usage?.output??u.usage?.reply??0).toLocaleString()} tokens — give the Editor more room)`:' (its reply was probably cut off)'}. Nothing was changed; try Revise again.`);}
     t.revision={at:new Date().toISOString(),original:parts,parts:revised,notes:notes.map(x=>x.id)}; t.accepted=false;
     status('The revision is ready. Read the changes below, then Accept or Discard.');
   });
@@ -1973,6 +1989,29 @@ function readable(text) {
   return String(text||'').replace(/^\s*```(?:json)?\s*/,'').replace(/^\s*\{\s*"reply"\s*:\s*"/,'')
     .replace(/\\n/g,'\n').replace(/\\"/g,'"').replace(/"\s*,\s*"updates"\s*:\s*\[\s*\{\s*"title"\s*:\s*"/,'\n\n— ').replace(/"\s*,\s*"content"\s*:\s*"/g,'\n').replace(/"\s*,\s*"keys"\s*:\s*\[[^\]]*\]\s*\}\s*,?\s*\{?\s*(?:"title"\s*:\s*")?/g,'\n\n— ');
 }
+/* ---------- Dials (optional extension): provider options and real token usage. Checked at call time; never imported. ---------- */
+const dialsOn=()=>{try{return !!(window.Dials && typeof window.Dials.prepare==='function');}catch{return false;}};
+let lastDialsUsage=null, dialsRegistered=false;
+/** Whether Dials will send a reasoning setting on Storyloom's calls (then Storyloom doesn't add its own). */
+function dialsSetsReasoning(profile=null){if(!dialsOn())return false; try{return /"reasoning/.test(JSON.stringify(window.Dials.getOptions('storyloom',storyloomConnection(profile))||{}));}catch{return false;}}
+/** The usage of a Dials-tagged request, if it arrives within a few seconds. */
+async function usageOf(p,ms=4000){if(!p)return null; try{return await Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))]);}catch{return null;}}
+const usageText=u=>{const x=u?.usage||{}; return [x.prompt!=null&&`prompt ${x.prompt.toLocaleString()}`,x.thinking&&`thinking ${x.thinking.toLocaleString()}`,x.reply!=null&&`reply ${x.reply.toLocaleString()}`].filter(Boolean).join(' · ')+(u?.finishReason?` · stopped: ${u.finishReason}`:'')+(u?.limit?.thinkingOnly?' · spent everything thinking':u?.limit?.level==='cut'?' · cut off at the limit':'');};
+function noteDialsUsage(who,p){if(!p)return; usageOf(p,15000).then(u=>{if(u)logEvent('info','Dials',`${who}: ${usageText(u)}`);});}
+/** The connection Storyloom is using now, in whichever mode is active (for Dials' "Settings for: Storyloom"). */
+function storyloomConnection(profile=null) {
+  const c=context(); let d=null; try{d=data();}catch{}
+  const mode=profile ?? d?.profile ?? '';
+  if(mode==='__direct__' && d?.direct){try{const p=directPayload(d.direct); return {source:p.chat_completion_source,url:p.custom_url,model:p.model};}catch{}}
+  if(mode && mode!=='__direct__'){const {profile:p,source}=profileIncludeBody(c,mode); if(p)return {profileId:mode,source,url:p['api-url'],model:p.model};}
+  const st=c.chatCompletionSettings||{}; let model=''; try{model=c.getChatCompletionModel?.()||'';}catch{}
+  return {source:st.chat_completion_source,url:st.custom_url,model};
+}
+function registerWithDials() {
+  if(dialsRegistered || !dialsOn() || typeof window.Dials.registerCaller!=='function')return;
+  try{window.Dials.registerCaller('storyloom',{label:'Storyloom',getConnection:()=>storyloomConnection()}); dialsRegistered=true; logEvent('info','Dials',`found Dials ${window.Dials.version||''}; Storyloom’s own calls use its settings`); markCutOffs();}
+  catch(e){warnLog('Storyloom: could not register with Dials:',e);}
+}
 const ANSWER_NOW='Your last reply was only reasoning, with no answer. Keep your thinking brief this time and write the answer itself, in the format asked for above.';
 async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct,{sampling=null,label:roleLabel=''}={}) {
   const t0=Date.now(), who=roleLabel||'Storyloom';
@@ -1981,27 +2020,31 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct,{sampling=
   showLive({text:'',reasoning:''});
   const started=Date.now(), label=document.getElementById('na-status')?.textContent?.replace(/\s*\(\d+s\)$/,'') || 'Waiting for the AI…';
   const ticker=setInterval(()=>{const el=document.getElementById('na-status');if(el && busyLabel(el.textContent,label))el.textContent=`${label} (${Math.round((Date.now()-started)/1000)}s)`;},1000);
-  if(shortThinking())sampling={...(sampling||{}),reasoning_effort:'low'};
+  if(shortThinking() && !dialsSetsReasoning(profile))sampling={...(sampling||{}),reasoning_effort:'low'}; // unless Dials sends its own reasoning setting for Storyloom
+  const dialsUsage=[]; // the real usage of each attempt, when Dials is installed
+  const beforeSend=dialsOn()?(payload,conn)=>{const r=window.Dials.prepare('storyloom',payload,conn); if(r?.usage)dialsUsage.push(r.usage); if(r?.problem)logEvent('warn','Dials',`${who}: ${r.problem}`);}:null;
   try {
     return await requestModel(async requestSignal=>{
       try {
         try {
           let r;
-          try {r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling);}
+          try {r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling,beforeSend);}
           catch(error) {
             if(error?.emptyReply || requestSignal.aborted || !sampling?.reasoning_effort || !/reason|effort|unrecognized|unsupported|extra|invalid/i.test(String(error?.message||'')))throw error;
             logEvent('warn','Model',`${who}: the provider refused a reasoning-effort setting; asking without it`,error.message);
             const {reasoning_effort,...rest}=sampling; sampling=rest;
-            r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling);
-          }logEvent('info','Model',`${who}: answered in ${Math.round((Date.now()-t0)/1000)}s (${String(r||'').length.toLocaleString()} characters)`,fullLog()?String(r||''):'');return r;}
+            r=await generate(c,prompt,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling,beforeSend);
+          }logEvent('info','Model',`${who}: answered in ${Math.round((Date.now()-t0)/1000)}s (${String(r||'').length.toLocaleString()} characters)`,fullLog()?String(r||''):''); noteDialsUsage(who,dialsUsage.at(-1)); lastDialsUsage=dialsUsage.at(-1)||null; return r;}
         catch(error) {
           if(!error?.emptyReply || requestSignal.aborted)throw error;
           // Empty answers are usually a one-off from the provider; ask once more before failing.
+          const u=await usageOf(dialsUsage.at(-1)); if(u)error.message+=` — Dials: ${usageText(u)}`;
           logEvent('warn','Model',`${who}: empty reply, asking once more`,error.message);
           const el=document.getElementById('na-status'); if(el)el.textContent=`The model answered with nothing (${error.message.replace(/^the model /,'')}); asking once more…`;
           showLive({text:'',reasoning:''});
           // The second try asks for the answer directly, so a model that only reasoned last time writes it out.
-          return await generate(c,`${prompt}\n\n${ANSWER_NOW}`,profile,requestSignal,Math.min(16000,Math.max(tokens,Math.round(tokens*1.5))),systemPrompt,direct,progress,sampling); // more room: the first try ran out while thinking
+          const again=await generate(c,`${prompt}\n\n${ANSWER_NOW}`,profile,requestSignal,Math.min(16000,Math.max(tokens,Math.round(tokens*1.5))),systemPrompt,direct,progress,sampling,beforeSend); // more room: the first try ran out while thinking
+          noteDialsUsage(who,dialsUsage.at(-1)); lastDialsUsage=dialsUsage.at(-1)||null; return again;
         }
       } catch(error) {
         logEvent(requestSignal.aborted?'info':'error','Model',`${who}: ${requestSignal.aborted?'stopped':'failed'} after ${Math.round((Date.now()-t0)/1000)}s`,String(error?.stack||error?.message||error));
@@ -2693,6 +2736,7 @@ function renderExtSettings() {
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
   const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
+  for(const [id,text,off] of [['sl-send-effort',' — Dials is installed and sends SillyTavern’s settings itself.',true],['sl-short-thinking',' — Dials is installed: set thinking for Storyloom in Dials (“Settings for: Storyloom”). Until you do, this still applies.',false]]){const box=document.getElementById(id), lab=box?.closest('label'); if(!lab)continue; box.disabled=off && dialsOn(); let n=lab.querySelector('.sl-dials-note'); if(dialsOn() && !n){n=document.createElement('small');n.className='sl-dials-note storyloom-hint';n.textContent=text;lab.append(n);} if(!dialsOn())n?.remove();}
   const rw=document.getElementById('sl-reply-words'); if(rw && document.activeElement!==rw)rw.value=replyTarget()||''; replyWordsHint();
 }
 function buildExtSettings(openButton,panel) {
@@ -3108,9 +3152,11 @@ function init() {
   const c=context();
   setPromptOverrides(c.extensionSettings.storyloom?.prompts);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
+  // Dials may load before or after Storyloom: try now, when the app is ready, and a few times after.
+  registerWithDials(); if(c.event_types.APP_READY)c.eventSource.on(c.event_types.APP_READY,registerWithDials); for(const ms of [1000,3000,8000])setTimeout(registerWithDials,ms);
   // SillyTavern drops its Reasoning Effort for Custom endpoints (except OpenAI's models); put it in the request body so Venice & co. get it.
   if(c.event_types.CHAT_COMPLETION_SETTINGS_READY)c.eventSource.on(c.event_types.CHAT_COMPLETION_SETTINGS_READY,gd=>{try{
-    if(!sendEffort() || gd?.chat_completion_source!=='custom')return;
+    if(dialsOn() || !sendEffort() || gd?.chat_completion_source!=='custom')return; // Dials sends it itself
     const effort={min:'minimal',low:'low',medium:'medium',high:'high',max:'max'}[context().chatCompletionSettings?.reasoning_effort];
     if(!effort)return;
     const before=gd.custom_include_body; gd.custom_include_body=withIncludeBody(before,'reasoning_effort',effort);

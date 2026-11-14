@@ -151,3 +151,24 @@ test('the reasoning effort is added to a custom endpoint’s include body withou
   assert.equal(withIncludeBody('{"top_k":20}', 'reasoning_effort', 'low'), '{"top_k":20,"reasoning_effort":"low"}');
   assert.equal(withIncludeBody('- broken', 'reasoning_effort', 'low'), '- broken\nreasoning_effort: low');
 });
+
+test('on a connection profile, a request hook adds to the profile’s own Include Body instead of replacing it', async () => {
+  const {generate} = await import('../generation.mjs');
+  let sent = null;
+  const c = {
+    extensionSettings: {connectionManager: {profiles: [{id: 'p1', model: 'deepseek', 'api-url': 'https://api.venice.ai/api/v1', preset: 'Novel'}]}},
+    ConnectionManagerRequestService: {validateProfile: () => ({source: 'custom'}), sendRequest: async (id, m, t, opts, override) => { sent = override; return {content: 'ok'}; }},
+    getPresetManager: () => ({getCompletionPresetByName: () => ({custom_include_body: 'top_k: 20'})}),
+    chatCompletionSettings: {custom_include_body: 'ignored: true'},
+    substituteParams: x => x,
+  };
+  const hook = (payload, conn) => { payload.custom_include_body += '\nreasoning_effort: low'; payload.dials_tag = 't1'; assert.equal(conn.profileId, 'p1'); assert.equal(payload.chat_completion_source, 'custom'); assert.equal(payload.custom_url, 'https://api.venice.ai/api/v1'); };
+  const r = await generate(c, 'hi', 'p1', null, 1000, '', null, null, null, hook);
+  assert.equal(r, 'ok');
+  assert.equal(sent.custom_include_body, 'top_k: 20\nreasoning_effort: low');
+  assert.equal(sent.dials_tag, 't1');
+  // Without a hook nothing extra is sent.
+  await generate(c, 'hi', 'p1', null, 1000);
+  assert.equal(sent.custom_include_body, undefined);
+  assert.equal(sent.dials_tag, undefined);
+});

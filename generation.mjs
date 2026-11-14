@@ -82,16 +82,47 @@ export function withIncludeBody(body,key,value) {
   return `${t}\n${key}: ${value}`;
 }
 /** Generate without switching the main connection or mutating its response length. */
-export async function generate(c,prompt,profile,signal,maxTokens=6000,systemPrompt='',direct=null,onProgress=null,sampling=null) {
+/**
+ * The Include Body a connection profile's request will carry: SillyTavern builds it inside its own code from the
+ * profile's preset (else the current settings), so a caller that adds to it has to start from the same text.
+ */
+export function profileIncludeBody(c,profileId) {
+  const profile=(c.extensionSettings?.connectionManager?.profiles||[]).find(p=>p.id===profileId);
+  if(!profile)return {profile:null,source:'',body:''};
+  let source=''; try{source=c.ConnectionManagerRequestService.validateProfile(profile)?.source||'';}catch{}
+  let preset=null; try{preset=profile.preset?c.getPresetManager('openai')?.getCompletionPresetByName(profile.preset):null;}catch{}
+  const raw=preset?.custom_include_body ?? c.chatCompletionSettings?.custom_include_body ?? '';
+  return {profile,source,body:c.substituteParams?.(raw||'') ?? (raw||'')};
+}
+/**
+ * `beforeSend(payload, conn)` (optional) sees each request's finished payload just before it is sent and may add to it
+ * (Storyloom uses it for Dials). It must leave the rest of the payload alone.
+ */
+export async function generate(c,prompt,profile,signal,maxTokens=6000,systemPrompt='',direct=null,onProgress=null,sampling=null,beforeSend=null) {
   const SAMPLING={...PLANNING_SAMPLING,...(sampling||{})};
+  const hook=(payload,conn)=>{if(beforeSend)try{beforeSend(payload,conn);}catch(e){console.warn('Storyloom: request hook failed; sending unchanged',e);} return payload;};
   if(!Number.isInteger(maxTokens) || maxTokens<256 || maxTokens>16000) throw Error('Response budget must be between 256 and 16000 tokens.');
   const messages=systemPrompt ? [{role:'system',content:systemPrompt},{role:'user',content:prompt}] : [{role:'user',content:prompt}];
   if(profile==='__direct__') {
     const payload=directPayload(direct);
-    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,max_tokens:maxTokens,...payload,...SAMPLING},{},true,signal),onProgress,signal);
+    return streamOrWait(stream=>{const body={stream,messages,max_tokens:maxTokens,...payload,...SAMPLING}; if(body.chat_completion_source==='custom')body.custom_include_body ??= ''; hook(body,{source:body.chat_completion_source,url:body.custom_url,model:body.model}); return c.ChatCompletionService.processRequest(body,{},true,signal);},onProgress,signal);
   }
   if(profile) {
-    return streamOrWait(stream=>c.ConnectionManagerRequestService.sendRequest(profile,messages,maxTokens,{stream,extractData:true,includePreset:true,signal},{...SAMPLING}),onProgress,signal);
+    return streamOrWait(stream=>{
+      const override={...SAMPLING};
+      if(beforeSend) {
+        // SillyTavern fills the profile's Include Body itself, and anything passed here replaces it: so start from the
+        // same text, let the hook add to it, and pass the result (plus anything else the hook added) through.
+        const {profile:p,source,body}=profileIncludeBody(c,profile);
+        if(p) {
+          const stub={stream,max_tokens:maxTokens,model:p.model,chat_completion_source:source,custom_url:p['api-url'],...(source==='custom'?{custom_include_body:body}:{})};
+          const before=new Set(Object.keys(stub)); hook(stub,{profileId:profile,source,url:p['api-url'],model:p.model});
+          if(source==='custom' && stub.custom_include_body!==body)override.custom_include_body=stub.custom_include_body;
+          for(const k of Object.keys(stub))if(!before.has(k))override[k]=stub[k];
+        }
+      }
+      return c.ConnectionManagerRequestService.sendRequest(profile,messages,maxTokens,{stream,extractData:true,includePreset:true,signal},override);
+    },onProgress,signal);
   }
   if(c.mainApi==='openai' && c.ChatCompletionService && c.getChatCompletionModel) {
     const settings=c.chatCompletionSettings || {};
@@ -105,7 +136,7 @@ export async function generate(c,prompt,profile,signal,maxTokens=6000,systemProm
     // A custom (OpenAI-compatible) endpoint only gets extra fields through “Include body”; add the reasoning effort there.
     if(SAMPLING.reasoning_effort && settings.chat_completion_source==='custom')custom.custom_include_body=withIncludeBody(custom.custom_include_body,'reasoning_effort',SAMPLING.reasoning_effort);
     const options={presetName:c.getPresetManager('openai')?.getSelectedPresetName()};
-    return streamOrWait(stream=>c.ChatCompletionService.processRequest({stream,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom,...SAMPLING},options,true,signal),onProgress,signal);
+    return streamOrWait(stream=>{const body={stream,messages,model,chat_completion_source:settings.chat_completion_source,custom_url:settings.custom_url,reverse_proxy:settings.reverse_proxy,proxy_password:settings.proxy_password,custom_prompt_post_processing:settings.custom_prompt_post_processing,max_tokens:maxTokens,...custom,...SAMPLING}; hook(body,{source:body.chat_completion_source,url:body.custom_url,model}); return c.ChatCompletionService.processRequest(body,options,true,signal);},onProgress,signal);
   }
   // Legacy APIs do not expose an equivalent isolated request service.
   // Respect their configured response length instead of changing shared settings.
