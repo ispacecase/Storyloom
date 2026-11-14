@@ -106,13 +106,13 @@ export function reviseInstruction({unit = 'Chapter', number = 1, parts = [], fac
 THE APPROVED NOTES
 ${notes.map(n => `- ${n.where}: "${n.quote}" — ${n.note}`).join('\n')}
 
-Return the whole ${unit.toLowerCase()}, part by part, without line numbers, in exactly this form:
+Return the ${unit.toLowerCase()} part by part, without line numbers, in exactly this form:
 === PART 1
-(the full text of part 1)
+(the full revised text of part 1, or the single word UNCHANGED if no note touches it)
 === PART 2
-(the full text of part 2)
+(…)
 === END
-There are ${parts.length} part${parts.length === 1 ? '' : 's'}; return all of them, in order, even ones you did not change.
+There are ${parts.length} part${parts.length === 1 ? '' : 's'}; list all of them, in order. Write UNCHANGED for a part you do not change instead of copying it. A part you change must come back complete, from its first word to its last — never stop part-way. Finish with === END.
 
 THE BOOK'S FACTS (for reference)
 ${facts}
@@ -120,15 +120,37 @@ ${facts}
 ${unit.toUpperCase()} ${number} AS WRITTEN
 ${numberedParts(parts)}`;
 }
-/** Read the revision back. Returns null unless every part came back. */
-export function parseRevision(text, count) {
+/**
+ * Read the revision back. `originals` is the chapter's parts (or just their count). Returns null unless every part
+ * came back whole: UNCHANGED means the original; a changed part that is much shorter than the original, or that
+ * stops mid-sentence, means the reply was cut off. Without === END the last part must look finished and full-length.
+ */
+export function parseRevision(text, originals) {
+  const orig = Array.isArray(originals) ? originals : null, count = orig ? orig.length : Number(originals);
   const body = String(text || '').replace(/\r\n?/g, '\n');
   const got = [];
-  const re = /^===\s*PART\s*(\d+)\s*$\n([\s\S]*?)(?=^===\s*(?:PART\s*\d+|END)\s*$|(?![\s\S]))/gmi;
+  const re = /^[\s*_#>]*===\s*PART\s*(\d+)[\s*_]*$\n([\s\S]*?)(?=^[\s*_#>]*===\s*(?:PART\s*\d+|END)[\s*_]*$|(?![\s\S]))/gmi;
   for (const m of body.matchAll(re)) got[Number(m[1]) - 1] = m[2].replace(/^\s*\d+\|\s?/gm, '').trim();
   if (got.length !== count) return null;
-  for (let i = 0; i < count; i++) if (!got[i]) return null;
+  const ended = /^[\s*_#>]*===\s*END[\s*_]*$/mi.test(body);
+  for (let i = 0; i < count; i++) {
+    if (!got[i]) return null;
+    if (/^\(?unchanged\)?\.?$/i.test(got[i])) { if (!orig) return null; got[i] = orig[i]; continue; }
+    if (!orig) continue;
+    const before = String(orig[i] || ''), ratio = got[i].length / Math.max(1, before.length);
+    if (ratio < 0.6) return null;
+    if (cutOff(got[i]) && !cutOff(before)) return null;
+    if (i === count - 1 && !ended && ratio < 0.9) return null;
+  }
   return got;
+}
+/** Stops mid-sentence: an open quote or no closing punctuation. */
+function cutOff(t) {
+  t = String(t || '').trim().replace(/[*_~`]+$/, '');
+  if (!t) return false;
+  const last = t.split(/\n\s*\n/).pop();
+  if ((last.match(/“/g) || []).length > (last.match(/”/g) || []).length || (last.match(/"/g) || []).length % 2) return true;
+  return !/[.!?…”"’')\]—–-]$/.test(t);
 }
 
 /** Word-level difference for showing what the revision changed. */

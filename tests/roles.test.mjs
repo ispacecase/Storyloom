@@ -92,3 +92,13 @@ test('missing planned events reach the Editor as “still to write”, not as no
   assert.doesNotMatch(m, /- line 1 PLAN/);
   assert.match(m, /VOICE: "x"/);
 });
+
+test('a revision that was cut off, shortened or never finished is refused', () => {
+  const orig = ['She went to the door.', 'He said, "There is ice cream in the freezer, if she asks. Not before tea." Then he left the room quietly.'];
+  assert.deepEqual(parseRevision('=== PART 1\nUNCHANGED\n=== PART 2\nHe said, "There is ice cream in the freezer, if she asks. Not before tea." Then he left quietly.\n=== END', orig),
+    [orig[0], 'He said, "There is ice cream in the freezer, if she asks. Not before tea." Then he left quietly.']);
+  assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== PART 2\nHe said, "There is ice cream in the freezer, if she asks. Not before tea', orig), null, 'cut off mid-quote, no END');
+  assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== PART 2\nHe said, "There is ice cream."\n=== END', orig), null, 'much shorter');
+  assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== PART 2\nHe said, "There is ice cream in the freezer, if she asks." Then he went out.', orig), null, 'no END and the last part is short');
+  assert.equal(parseRevision('=== PART 1\nUNCHANGED\n=== END', 1), null, 'UNCHANGED needs the originals');
+});

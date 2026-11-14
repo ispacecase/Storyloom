@@ -136,3 +136,9 @@ test('answers written inside the thinking are recovered for the chapter team and
   assert.match(answerInThinking('NARRATOR: Danny\nPOINT OF VIEW: First\nTENSE: Past'), /^NARRATOR: Danny/);
   assert.equal(answerInThinking('just rambling about the chapter'), '');
 });
+
+test('an unfinished revision draft inside the thinking is not used', async () => {
+  const {answerInThinking} = await import('../generation.mjs');
+  assert.equal(answerInThinking('plan…\n=== PART 1\nDone part.\n=== END\nmore thought\n=== PART 1\nHalf a draft that never'), '=== PART 1\nDone part.\n=== END');
+  assert.notEqual(answerInThinking('=== PART 1\nHalf a draft that never')?.startsWith('=== PART'), true);
+});

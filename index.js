@@ -826,7 +826,7 @@ async function explainCutOff(id,m) {
   const how='Press Continue to finish it (☰ menu next to the message box → Continue). If you don’t, Export leaves the unfinished sentence out.';
   const msg=limit && used>=limit*0.85
     ? `It ran out of room: about ${used.toLocaleString()} of your ${limit.toLocaleString()}-token Max Response Length${think?` — ${think.toLocaleString()} went on the model’s thinking, which counts against the same limit`:''}. ${how}`
-    : `It stopped well short of your ${limit?`${limit.toLocaleString()}-token `:''}limit (about ${used.toLocaleString()} tokens${think?`, ${think.toLocaleString()} of them thinking`:''}), so your setting didn’t cut it — the provider ended the reply early (its own output cap, a timeout or a dropped stream). ${how}`;
+    : `It stopped well short of your ${limit?`${limit.toLocaleString()}-token `:''}limit (about ${used.toLocaleString()} tokens${think?`, ${think.toLocaleString()} of them thinking`:''}), so your limit didn’t cut it. Something else did: the provider ending it early, or a stopping string or Regex script in SillyTavern — if SillyTavern’s terminal shows the full reply, it was trimmed in SillyTavern. ${how}`;
   toastr.warning(msg,'Storyloom: reply stopped mid-sentence',{timeOut:15000,extendedTimeOut:10000});
   logEvent('warn','Narrator',`reply ${id} stopped mid-sentence: ~${used} tokens (${think} thinking) of ${limit||'?'}`,String(m.mes).slice(-200));
 }
@@ -1028,11 +1028,9 @@ async function stepRevise() {
   if(!notes.length)throw Error('Tick at least one note for the Editor to fix — or go straight to Seal.');
   await teamRun('Revise',async signal=>{
     status(`The Editor is revising ${f.unit} ${n} (${notes.length} note${notes.length===1?'':'s'})…`);
-    const whole=v=>!!v && !v.some((p,k)=>endsCutOff(p)&&!endsCutOff(parts[k]));
-    const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>whole(parseRevision(r,parts.length)),tokens:16000});
-    let revised=parseRevision(raw,parts.length);
-    if(revised && !whole(revised)){logEvent('error','Revise','revision stops mid-sentence',raw.slice(-1500));throw Error('The Editor’s revision stopped mid-sentence (its reply was probably cut off). Nothing was changed; try again, or give the Editor a model with a longer reply.');}
-    if(!revised){logEvent('error','Revise',`revision incomplete (needed ${parts.length} parts)`,raw.slice(0,3000));throw Error(`The Editor’s revision didn’t come back whole (all ${parts.length} part${parts.length===1?'':'s'} are needed). Nothing was changed; try again.`);}
+    const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>!!parseRevision(r,parts),tokens:16000});
+    const revised=parseRevision(raw,parts);
+    if(!revised){logEvent('error','Revise',`revision incomplete or cut off (${parts.length} parts)`,raw.slice(-3000));throw Error(`The Editor’s revision didn’t come back whole — a part was missing, much shorter than before, or stopped mid-sentence (its reply was probably cut off). Nothing was changed; try Revise again.`);}
     t.revision={at:new Date().toISOString(),original:parts,parts:revised,notes:notes.map(x=>x.id)}; t.accepted=false;
     status('The revision is ready. Read the changes below, then Accept or Discard.');
   });

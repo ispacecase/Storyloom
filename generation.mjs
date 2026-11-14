@@ -7,8 +7,9 @@ import {directPayload} from './providers.mjs';
 export function answerInThinking(thought) {
   const text=String(thought||'');
   // A chapter revision (=== PART 1 … === END): take the last full attempt.
-  const parts=[...text.matchAll(/^[\s*_#>]*===\s*PART\s*1\s*$/gim)];
-  if(parts.length)return text.slice(parts.at(-1).index).trim();
+  // Only an attempt that reached === END counts; an unfinished draft in the thinking would cut the chapter off.
+  const parts=[...text.matchAll(/^[\s*_#>]*===\s*PART\s*1\s*$/gim)].filter(m=>/^[\s*_#>]*===\s*END\b/im.test(text.slice(m.index)));
+  if(parts.length){const from=text.slice(parts.at(-1).index), end=from.search(/^[\s*_#>]*===\s*END\b.*$/im); return from.slice(0,end).trim()+'\n=== END';}
   // A narrator draft (=== DESCRIPTION / === NARRATOR …).
   const desc=[...text.matchAll(/^[\s*_#>]*===\s*(DESCRIPTION|NARRATOR)\s*$/gim)];
   if(desc.length)return text.slice(desc.at(-1).index).trim();
