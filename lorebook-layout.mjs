@@ -61,7 +61,7 @@ export function cleanCharacterKeys(entries) {
   }
 }
 
-export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarrator=false}={}) {
+export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarrator=false,chapterWords=0}={}) {
   const t=template;
   const book=structuredClone(source);
   const entries=Object.values(book.entries||{});
@@ -98,7 +98,7 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarra
   const outline=find(t.outline.title)?.content;
   const scaleEntry=t.entries.map(e=>find(e.title)).find(e=>/WORDS PER/i.test(String(e?.content||'')));
   const wordsPerChapter=(String(scaleEntry?.content||'').match(/^[\s*_-]*WORDS PER [A-Z]+\s*:\s*(.+)$/mi)||[])[1]||'';
-  const content=currentChapterContent(outline,chapter,t.unit,{wordsPerChapter});
+  const content=currentChapterContent(outline,chapter,t.unit,{wordsPerChapter:Number(chapterWords)>0?Number(chapterWords).toLocaleString('en-US'):wordsPerChapter});
   if(content) {
     let entry=find(CURRENT_CHAPTER);
     if(!entry) {

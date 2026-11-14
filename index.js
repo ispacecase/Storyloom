@@ -722,9 +722,9 @@ async function applyMemory() {
 function replyWordsHint() {
   const h=document.getElementById('sl-reply-words-hint'); if(!h)return;
   const c=context(), want=replyTarget(), max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
-  if(!want){const a=autoReplyWords(); h.textContent=a?`Auto for this book: about ${a.toLocaleString()} words per reply (a third of a ${(()=>{try{return (Number(data().budget?.perChapter)||0).toLocaleString();}catch{return '';}})()}-word chapter, within what your Max Response Length fits).`:'Auto: sized to fit your Max Response Length.';h.classList.remove('is-warning');return;}
+  if(!want){let per=0; try{per=chapterTarget();}catch{} const a=autoReplyWords(); h.textContent=!a?'Auto: sized to fit your Max Response Length.':a<per?`Auto: this chapter is planned at ${per.toLocaleString()} words, but your Max Response Length only fits about ${a.toLocaleString()} with thinking — raise it to get the whole chapter in one reply.`:`Auto: ${a.toLocaleString()} words per reply — this chapter’s planned length from the book’s setup (change it per chapter in Book settings…).`; h.classList.toggle('is-warning',!!a && a<per); return;}
   const need=tokensFor(want);
-  let per=0; try{per=Number(data().budget?.perChapter)||0;}catch{}
+  let per=0; try{per=chapterTarget();}catch{}
   if(per && want>per){h.textContent=`This book’s ${(()=>{try{return tpl(data()).unit.toLowerCase();}catch{return 'chapter';}})()}s are planned at about ${per.toLocaleString()} words in total, so the narrator will write less than ${want.toLocaleString()} per reply. Raise WORDS PER in the book’s Story Scale (or ask the Assistant) for longer chapters.`;h.classList.add('is-warning');return;}
   h.textContent=max && need>max?`Your Max Response Length is ${max.toLocaleString()} tokens; ${want.toLocaleString()} words plus thinking needs about ${need.toLocaleString()}. Raise it, or replies will be cut off.`:`Needs about ${need.toLocaleString()} tokens with thinking${max?` — your limit (${max.toLocaleString()}) is enough`:''}.`;
   h.classList.toggle('is-warning',!!max && need>max);
@@ -1054,13 +1054,15 @@ async function exportBook() {
 /* ---------- Log: what Storyloom did, what failed and why (Extensions → Storyloom → Log) ---------- */
 const LOG_KEY='storyloom-log';
 const replyTarget=()=>{try{return Math.max(0,Math.round(Number(context().extensionSettings.storyloom?.replyWords)||0));}catch{return 0;}};
-/** Words per reply when the writer hasn't set one: about a third of this book's chapter, 1,000–3,000, and no more than Max Response Length fits with thinking. */
+/** This chapter's planned length: its own word count if one was set (Book settings), else the book's WORDS PER CHAPTER from setup. */
+function chapterTarget(d=data(),n=d.chapter||1){return Number(d.chapterWords?.[n])||Number(d.budget?.perChapter)||0;}
+/** Words per reply when the writer hasn't set one: the chapter's planned length, as far as Max Response Length fits it with thinking. */
 function autoReplyWords() {
-  let per=0; try{per=Number(data().budget?.perChapter)||0;}catch{}
+  let per=0; try{per=chapterTarget();}catch{}
   if(!per)return 0;
   const max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
   const fits=max?Math.max(300,Math.floor((max-1500)*100/135/100)*100):Infinity;
-  return Math.min(fits,Math.max(1000,Math.min(3000,Math.round(per/3/100)*100)));
+  return Math.min(fits,per);
 }
 const effectiveReplyWords=()=>replyTarget()||autoReplyWords();
 let sentEffortLogged=false;
@@ -1297,7 +1299,7 @@ function renderTeam(d=null) {
   const t=teamState(d), rs=teamSettings(), steps=activeSteps(rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
   const open=context().characters?.[context().characterId], narr=open?((d.narrators||[]).find(x=>x.avatar===open.avatar)||{name:open.name}):null;
   const und=document.getElementById('na-narrator-undo'); if(und)und.hidden=!d.narratorUndo || d.narratorUndo.avatar!==context().characters?.[context().characterId]?.avatar;
-  const written=(()=>{try{return chapterWords(d);}catch{return 0;}})(), per=Number(d.budget?.perChapter)||0;
+  const written=(()=>{try{return chapterWords(d);}catch{return 0;}})(), per=chapterTarget(d);
   document.getElementById('na-team-label').textContent=`${u} ${n}${total?` of ${total}`:''}${narr?` — narrated by ${shortWho(narr)}`:''}${written?` · ${written.toLocaleString()}${per?` of ~${per.toLocaleString()}`:''} words`:''}`;
   const row=document.getElementById('na-team-steps'); row.replaceChildren();
   const run={lint:stepLint,markup:stepMarkup,reader:stepReader,revise:stepRevise,seal:sealChapter};
@@ -1510,15 +1512,18 @@ async function editBookSettings() {
   if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
   const fromBook=await bookValuesFor({...d,chapterValues:{},chapterNotes:{}},n), now={...fromBook,...Object.fromEntries(Object.entries(readValues(c)).filter(([,x])=>x))};
   const form=document.createElement('div'); form.className='storyloom-narrator-form';
-  form.innerHTML=`<h3>Book settings — ${escHtml(u)} ${n}</h3><p class="storyloom-hint">${usesGeneralNarrator(c)?'These fill the narrator’s blanks in this chat.':'This chat’s character isn’t the general narrator, so these are kept for when it is (Writing setup…).'} Changes here apply to ${u.toLowerCase()} ${n}; the book’s own record stays in “Voice and Boundaries”.</p>${VALUES.map(v=>`<label>${v.label} <small>— ${escHtml(v.hint)}</small><textarea class="text_pole" rows="2" data-k="${v.key}"></textarea></label>`).join('')}`;
+  form.innerHTML=`<h3>Book settings — ${escHtml(u)} ${n}</h3><p class="storyloom-hint">${usesGeneralNarrator(c)?'These fill the narrator’s blanks in this chat.':'This chat’s character isn’t the general narrator, so these are kept for when it is (Writing setup…).'} Changes here apply to ${u.toLowerCase()} ${n}; the book’s own record stays in “Voice and Boundaries”.</p>${VALUES.map(v=>`<label>${v.label} <small>— ${escHtml(v.hint)}</small><textarea class="text_pole" rows="2" data-k="${v.key}"></textarea></label>`).join('')}<label>Words for this ${escHtml(u.toLowerCase())} <small>— the book’s setup says ${(Number(d.budget?.perChapter)||0).toLocaleString()||'nothing'}; change it for just this ${escHtml(u.toLowerCase())}</small><input class="text_pole" type="number" min="0" step="100" data-words></label>`;
   for(const ta of form.querySelectorAll('textarea'))ta.value=now[ta.dataset.k]||'';
+  form.querySelector('[data-words]').value=chapterTarget(d,n)||'';
   const pick=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Save',cancelButton:'Cancel',wide:true,customButtons:[{text:'Back to the book’s settings',result:2}]}).show();
-  if(pick===2){d.chapterValues ??= {}; delete d.chapterValues[n]; await persist(); await writeValues(fromBook); renderTeam(); return status(`${u} ${n} uses the book’s own settings again.`);}
+  if(pick===2){d.chapterValues ??= {}; delete d.chapterValues[n]; if(d.chapterWords)delete d.chapterWords[n]; await persist(); await writeValues(fromBook); try{await organizeBook(n);}catch{} renderTeam(); return status(`${u} ${n} uses the book’s own settings again.`);}
   if(pick!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return;
   const vals=Object.fromEntries(VALUES.map(v=>[v.key,form.querySelector(`[data-k="${v.key}"]`).value.trim()]));
   d.chapterValues ??= {}; d.chapterValues[n]=Object.fromEntries(Object.entries(vals).filter(([k,x])=>x!==(fromBook[k]||'')));
   d.chapterNotes ??= {}; d.chapterNotes[n]={...(d.chapterNotes[n]||{}),pov:vals.pov!==(fromBook.pov||'')?vals.pov:'',tense:vals.tense!==(fromBook.tense||'')?vals.tense:''};
-  await persist(); await writeValues(vals); await applyMemory(); renderTeam();
+  const words=Math.round(Number(form.querySelector('[data-words]').value)||0); d.chapterWords ??= {};
+  if(words && words!==Number(d.budget?.perChapter||0))d.chapterWords[n]=words; else delete d.chapterWords[n];
+  await persist(); await writeValues(vals); try{await organizeBook(n);}catch(e){warnLog('Storyloom chapter length:',e);} await applyMemory(); renderTeam();
   logEvent('info','Book settings',`${u} ${n}: ${Object.keys(d.chapterValues[n]).join(', ')||'no'} changes from the book`);
   status(`Book settings saved for ${u} ${n}.`);
 }
@@ -1855,7 +1860,7 @@ async function bookFacts(d) {
   const n=d.chapter||1;
   const focusLine=String(find(t.cast)?.content||'').split('\n').find(l=>/^\s*\*\*/.test(l));
   const focus=focusLine?focusLine.replace(/\*\*/g,'').split('|')[0].trim():'';
-  const target=d.budget?.perChapter || (Number(String(sectionOf(entries.find(e=>/WORDS PER/i.test(String(e.content||'')))?.content,`WORDS PER ${t.unit.toUpperCase()}`)).replace(/[^\d]/g,''))||null);
+  const target=Number(d.chapterWords?.[d.chapter||1])||d.budget?.perChapter || (Number(String(sectionOf(entries.find(e=>/WORDS PER/i.test(String(e.content||'')))?.content,`WORDS PER ${t.unit.toUpperCase()}`)).replace(/[^\d]/g,''))||null);
   const answers=Object.entries(d.interview?.answers||{}).filter(([,v])=>v).map(([k,v])=>`${k}: ${[].concat(v).join(' ')}`).join('\n');
   const facts=[
     `SETTING AND PERIOD (${t.summary.title}): ${sectionOf(find(t.summary.title)?.content,'SETTING')||'(not stated)'}`,
@@ -2538,7 +2543,7 @@ async function organizeBook(chapter=null) {
     const n=chapter ?? d.chapter ?? 1;
     const t=tpl(d), outlineEntry=findEntry(before,t.outline.title);
     if(outlineEntry)d.outlineChapters=chapterList(outlineEntry.content,t.unit).map(({number,title})=>({number,title}));
-    const after=layoutBook(before,{chapter:n,create:book=>createWorldInfoEntry(name,book),template:t,voiceViaNarrator:usesGeneralNarrator(c)});
+    const after=layoutBook(before,{chapter:n,create:book=>createWorldInfoEntry(name,book),template:t,voiceViaNarrator:usesGeneralNarrator(c),chapterWords:chapterTarget(d,n)!==Number(d.budget?.perChapter||0)?chapterTarget(d,n):0});
     const directive=Object.values(after.entries).find(e=>e.comment==='Current Writing Directive');
     if(directive)directive.content=directiveForChapter(directive.content,n);
     const changes=buildChange(before,after);
