@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MEMORY_ITEMS, injection, transcriptOf, chapterEndInstruction, summaryTitle, CHAT_START_DEPTH} from '../memory.mjs';
-const [sofar, previously, chapter, outline] = MEMORY_ITEMS;
+const [sofar, previously, chapter, outline] = ['sofar', 'previously', 'chapter', 'outline'].map(k => MEMORY_ITEMS.find(x => x.key === k));
 
 test('placements map to SillyTavern injection positions', () => {
   assert.deepEqual(injection(sofar, 'Ruth found the folio.'), {value: `${sofar.header}\nRuth found the folio.`, position: 1, depth: CHAT_START_DEPTH, role: 0});

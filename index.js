@@ -3,6 +3,7 @@ import { promptManager, getChatCompletionPreset } from '../../../openai.js';
 import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { chapterProse, bookText, bookDocx, fileName, cleanReply } from './export.mjs';
+import { sceneInstruction, parseScene, sceneNames, foldRange, sessionInstruction, parseSession } from './live.mjs';
 import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction } from './compare.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
@@ -716,6 +717,7 @@ async function applyMemory() {
     const inj=injection(item,book?memoryText(item,e):'',e?.storyloom_memory||item.place,vars);
     c.setExtensionPrompt(memoryKey(item),inj.value,inj.position,inj.depth,false,inj.role);
   }
+  if(book&&d)stageCache={...stageCache,book:d.book,scene:findEntry(book,MEM('scene').title)?.content||'',chars:Object.values(book.entries||{}).filter(e=>!e.disable && /^character\s*[—–-]/i.test(String(e.comment||'')))};
   const note=book&&d?chapterNote(d):{}, u=vars.unit;
   const narration=(note.pov||note.tense)?`NARRATION FOR THIS ${u.toUpperCase()} (this overrides the writing directive's point of view and tense): ${[note.pov&&`POV: ${note.pov}`,note.tense&&`Tense: ${note.tense}`].filter(Boolean).join('; ')}`:'';
   c.setExtensionPrompt('storyloom_narration',narration,1,2,false,0);
@@ -950,6 +952,67 @@ async function askCompare(problems) {
   status('');
   await new c.Popup(el('div',{},el('h3',{textContent:'What the Assistant thinks of your narrator'}),el('pre',{className:'storyloom-compare-review',textContent:String(reply).trim()})),c.POPUP_TYPE.TEXT,'',{okButton:'Close',wide:true,allowVerticalScrolling:true}).show();
 }
+/* ---------- Live memory: Scene now, Earlier this session, on-stage characters (kept up while writing, not only at Seal) ---------- */
+const MEM=key=>MEMORY_ITEMS.find(x=>x.key===key);
+const liveOpts=()=>{const s=context().extensionSettings.storyloom?.live||{}; return {scene:s.scene!==false, session:s.session!==false, stage:s.stage!==false, sceneEvery:Number(s.sceneEvery)||3, sessionEvery:Number(s.sessionEvery)||20, keep:16};};
+let liveRunning=false, livePending=false, stageCache={book:'',scene:'',chars:[]};
+/** Save a memory entry from the background (no idle check, no undo history; the next reply picks it up). */
+async function saveMemoryQuiet(item,content) {
+  const c=context(), d=data(); if(!d.book || c.chatMetadata.world_info!==d.book)return false;
+  if(syncing)return false; syncing=true;
+  try {
+    const book=structuredClone(await freshBook(d.book)), title=memoryTitle(item,d);
+    let entry=findEntry(book,title);
+    if(!entry){entry=createWorldInfoEntry(d.book,book); if(!entry)return false; entry.comment=title; entry.key=[];}
+    entry.content=content; entry.disable=true; entry.constant=false;
+    await c.saveWorldInfo(d.book,book,true); refreshEditor(d.book);
+  } finally {syncing=false;}
+  await applyMemory(); return true;
+}
+const chapterStartIndex=(d,c=context())=>d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===(d.chapter||1)?d.chapterStart.index:0;
+const transcriptSlice=(c,from,to)=>(c.chat||[]).slice(from,to).filter(m=>m && !m.is_system && String(m.mes||'').trim() && !isHeading(m.mes)).map(m=>`${m.is_user?(c.name1||'User'):(m.name||'Narrator')}: ${cleanReply(m.mes).trim()}`).join('\n\n');
+/** After each narrator reply: refresh the scene card every few replies, and fold older messages into the session record. */
+function queueLive(){ if(liveRunning){livePending=true;return;} runLive().catch(e=>warnLog('Storyloom live memory:',e)); }
+async function runLive() {
+  const o=liveOpts(); if(!o.scene && !o.session)return;
+  let d; try{d=data();}catch{return;}
+  if(!inBookChat() || d.interview?.phase!=='done')return;
+  liveRunning=true;
+  try {
+    const c=context(), n=d.chapter||1, start=chapterStartIndex(d,c);
+    if(!d.live || d.live.chatId!==c.chatId || d.live.chapter!==n)d.live={chatId:c.chatId,chapter:n,upto:start,sinceScene:o.sceneEvery-1};
+    d.live.sinceScene=(d.live.sinceScene||0)+1;
+    const book=await freshBook(d.book), rp=isRP(d);
+    if(o.scene && d.live.sinceScene>=o.sceneEvery && !busy) {
+      const scene=findEntry(book,MEM('scene').title)?.content||'';
+      const raw=await llm(c,sceneInstruction({scene,recent:transcriptSlice(c,Math.max(start,c.chat.length-6)).slice(-9000),roleplay:rp,player:c.name1||''}),d.profile||'',null,1500,'You keep a short, exact record of a scene in a story. You never write the story.',(()=>{try{return directSnapshot(d,c);}catch{return null;}})(),{label:'Scene tracker'});
+      const card=parseScene(raw);
+      if(card && card!==scene.trim() && await saveMemoryQuiet(MEM('scene'),card))logEvent('info','Live memory',`scene updated: ${card.split('\n').find(l=>/^WHERE/.test(l))||''}`);
+      else if(!card)logEvent('warn','Live memory','scene card came back unreadable; kept the old one',String(raw).slice(0,500));
+      d.live.sinceScene=0;
+    }
+    const range=o.session?foldRange(c.chat.length,{start,upto:d.live.upto||start,keep:o.keep,every:o.sessionEvery}):null;
+    if(range && !busy) {
+      const summary=findEntry(book,MEM('session').title)?.content||'';
+      const raw=await llm(c,sessionInstruction({summary,messages:transcriptSlice(c,range.from,range.to),unit:tpl(d).unit,roleplay:rp}),d.profile||'',null,4000,'You keep an exact running record of a story as it is written. You never write the story.',(()=>{try{return directSnapshot(d,c);}catch{return null;}})(),{label:'Session memory'});
+      const text=parseSession(raw);
+      if(text && await saveMemoryQuiet(MEM('session'),text)){d.live.upto=range.to; logEvent('info','Live memory',`folded messages ${range.from+1}–${range.to} into “${MEM('session').label}”`);}
+    }
+    await persist();
+  } finally {liveRunning=false; if(livePending){livePending=false; setTimeout(queueLive,500);}}
+}
+/** Before each story reply: make sure the lorebook entries of everyone in the scene are sent, named recently or not. */
+function forceOnStage() {
+  if(!liveOpts().stage || !inBookChat())return;
+  let d; try{d=data();}catch{return;}
+  if(stageCache.book!==d.book || !stageCache.scene)return;
+  const names=sceneNames(stageCache.scene).map(x=>x.toLocaleLowerCase());
+  const hits=stageCache.chars.filter(e=>{const who=String(e.comment||'').replace(/^character\s*[—–-]\s*/i,'').toLocaleLowerCase(); return names.some(n=>who===n || who.split(/\s+/)[0]===n || n.split(/\s+/)[0]===who.split(/\s+/)[0]);});
+  if(!hits.length)return;
+  const c=context(); c.eventSource.emit(c.event_types.WORLDINFO_FORCE_ACTIVATE,hits.map(e=>({...e,world:d.book})));
+  const key=hits.map(e=>e.uid).join(','); if(key!==stageCache.logged){stageCache.logged=key; logEvent('info','Live memory',`on stage, sent with every reply: ${hits.map(e=>String(e.comment).replace(/^character\s*[—–-]\s*/i,'')).join(', ')}`);}
+}
+
 /* ---------- Cut-off replies: marked in the chat (display only, never sent to the model), left out on export ---------- */
 const isHeading=t=>{t=String(t||'').trim(); return !t.includes('\n') && (t.match(/\S+/g)||[]).length<=12;};
 function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatMetadata?.world_info===d.book);}catch{return false;}}
@@ -1617,7 +1680,8 @@ async function sealChapter({auto=false}={}) {
   if(!summary){logEvent('error','Seal','no seal note came back');throw Error(`Seal didn’t return the ${t.unit.toLowerCase()} seal note. Nothing was moved on; try again.`);}
   const tail=lastPage(chapterParts(c.chat).slice(-6).join('\n\n'));
   await saveMemoryItem(MEMORY_ITEMS[1],`${summary.content.trim()}${tail?`\n\nLAST PAGE (the ${t.unit.toLowerCase()}’s final words, exactly):\n${tail}`:''}`);
-  markDone(teamState(d),'seal'); recordChapterChat(d,n,c); await persist();
+  markDone(teamState(d),'seal'); recordChapterChat(d,n,c); d.live={chatId:c.chatId,chapter:n,upto:c.chat.length,sinceScene:0}; await persist();
+  try{await saveMemoryQuiet(MEM('session'),'');}catch(e){warnLog('Storyloom: clearing the session record:',e);}
   logEvent('info','Seal',`${t.unit} ${n} sealed`);
   status(`${t.unit} ${n} is sealed.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
   renderMemory();
@@ -2759,6 +2823,7 @@ function renderExtSettings() {
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
   const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
+  {const o=liveOpts(), set=(id,v)=>{const e=document.getElementById(id); if(e && document.activeElement!==e){if(e.type==='checkbox')e.checked=v; else e.value=v;}}; set('sl-live-scene',o.scene); set('sl-live-session',o.session); set('sl-live-stage',o.stage); set('sl-live-scene-every',o.sceneEvery); set('sl-live-session-every',o.sessionEvery);}
   const dr=document.getElementById('sl-dials-row'); if(dr){dr.hidden=!dialsOn(); const ds=document.getElementById('sl-dials-same'); if(ds)ds.checked=dialsSameAsChat();}
   for(const [id,text,off] of [['sl-send-effort',' — Dials is installed and sends SillyTavern’s settings itself.',true],['sl-short-thinking',' — Dials is installed and decides this (it knows what each model supports).',true]]){const box=document.getElementById(id), lab=box?.closest('label'); if(!lab)continue; box.disabled=off && dialsOn(); let n=lab.querySelector('.sl-dials-note'); if(dialsOn() && !n){n=document.createElement('small');n.className='sl-dials-note storyloom-hint';n.textContent=text;lab.append(n);} if(!dialsOn())n?.remove();}
   const rw=document.getElementById('sl-reply-words'); if(rw && document.activeElement!==rw)rw.value=replyTarget()||''; replyWordsHint();
@@ -2768,6 +2833,7 @@ function buildExtSettings(openButton,panel) {
   const wrap=document.createElement('div'); wrap.id='storyloom-ext'; wrap.className='storyloom-ext';
   wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
+    <div class="storyloom-row" title="Kept up while you write, not only when you Seal. Each one is a small, quick call to your model every few replies (with Dials, set Storyloom’s thinking to none to keep them fast)."><b>Live memory</b> <label class="checkbox_label"><input id="sl-live-scene" type="checkbox"> Scene now (every <input id="sl-live-scene-every" class="text_pole" type="number" min="1" max="20" style="width:3.5em"> replies)</label> <label class="checkbox_label"><input id="sl-live-session" type="checkbox"> Earlier this chapter (every <input id="sl-live-session-every" class="text_pole" type="number" min="6" max="100" style="width:3.5em"> messages)</label> <label class="checkbox_label"><input id="sl-live-stage" type="checkbox"> Always send the lorebook entries of whoever is in the scene</label></div>
     <div id="sl-dials-row" class="storyloom-row" hidden><b>Dials</b> <label class="checkbox_label" title="Storyloom’s own AI calls (Lint, Editor, Reader, Seal, planning, the Assistant) use the options you set in Dials for SillyTavern’s chat on the same connection. Anything you set for Storyloom itself in Dials (“Settings for: Storyloom”) wins."><input id="sl-dials-same" type="checkbox"> Use the same Dials settings as SillyTavern’s chat</label><button id="sl-dials-open" type="button" class="menu_button">Dials settings…</button></div>
     <div class="storyloom-row"><label title="How long each of the narrator’s replies should be. Storyloom tells the narrator to aim for this many words per reply. Blank: Storyloom sizes replies to fit your Max Response Length (at most about 1,500 words).">Words per narrator reply <input id="sl-reply-words" class="text_pole" type="number" min="0" step="100" placeholder="auto" style="width:7em"></label><small id="sl-reply-words-hint" class="storyloom-hint"></small></div>
     <label class="checkbox_label" title="SillyTavern ignores its own Reasoning Effort setting on Custom (OpenAI-compatible) endpoints such as Venice, unless the model is one of OpenAI’s. This sends it anyway, through the request’s body — only when it is set to something other than Auto, and never over a reasoning_effort you put in Include Body yourself."><input id="sl-send-effort" type="checkbox"> Send SillyTavern’s Reasoning Effort to Custom endpoints (Venice and others) in the story chat</label>
@@ -2808,6 +2874,7 @@ function buildExtSettings(openButton,panel) {
   wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{if(st().narratorTemplate!=null)backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate});delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
   wrap.querySelector('#sl-reply-words').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};const v=Math.max(0,Math.round(Number(e.target.value)||0));c.extensionSettings.storyloom.replyWords=v||null;e.target.value=v||'';saveSettings();replyWordsHint();applyReplyLength();logEvent('info','Settings',`words per narrator reply: ${v||'auto'}`);};
+  for(const [id,key,num] of [['sl-live-scene','scene'],['sl-live-session','session'],['sl-live-stage','stage'],['sl-live-scene-every','sceneEvery',true],['sl-live-session-every','sessionEvery',true]])wrap.querySelector('#'+id).onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};const l=c.extensionSettings.storyloom.live ??= {};l[key]=num?Math.max(1,Math.round(Number(e.target.value)||0)):e.target.checked;saveSettings();logEvent('info','Settings',`live memory ${key}: ${l[key]}`);};
   wrap.querySelector('#sl-dials-same').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.dialsSameAsChat=e.target.checked;saveSettings();logEvent('info','Settings',`Storyloom uses ${e.target.checked?'the same Dials settings as SillyTavern’s chat':'only its own Dials settings'}`);};
   wrap.querySelector('#sl-dials-open').onclick=()=>openDials();
   wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
@@ -3190,7 +3257,7 @@ function init() {
     const before=gd.custom_include_body; gd.custom_include_body=withIncludeBody(before,'reasoning_effort',effort);
     if(before!==gd.custom_include_body && !sentEffortLogged){sentEffortLogged=true;logEvent('info','Story chat',`sent Reasoning Effort “${effort}” to the Custom endpoint (SillyTavern leaves it out there)`);}
   }catch(e){warnLog('Storyloom reasoning effort:',e);}});
-  c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{applyReplyLength();}catch(e){warnLog('Storyloom reply length:',e);}});
+  c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{applyReplyLength();}catch(e){warnLog('Storyloom reply length:',e);} try{if(type!=='quiet')forceOnStage();}catch(e){warnLog('Storyloom on stage:',e);}});
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
   setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),2500);
   showVersion();
@@ -3212,6 +3279,7 @@ function init() {
     const m=context().chat[id]; if(!m||m.is_user||m.is_system||!inBookChat())return;
     const clean=cleanReply(m.mes);
     if(clean!==m.mes){m.mes=clean.trim(); if(Array.isArray(m.swipes))m.swipes[m.swipe_id??0]=m.mes; const cx=context(); try{cx.updateMessageBlock(id,m);}catch{} cx.saveChat().catch(()=>{}); logEvent('info','Narrator',`removed provider junk (<ds_safety>) from reply ${id}`);}
+    if(!isHeading(m.mes))setTimeout(queueLive,1500);
     if(!isHeading(m.mes) && endsCutOff(m.mes))explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
   }catch(e){warnLog('Storyloom cut-off check:',e);}});
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED, (id,type)=>{try {
