@@ -43,7 +43,7 @@ test('word diff marks what changed', () => {
 });
 
 test('narrator instructions and chapter notes are read back', () => {
-  assert.match(narratorInstruction({number: 5, wish: 'Danny, first person'}), /add your own headings[\s\S]*REGISTER AND VOICE/);
+  assert.match(narratorInstruction({number: 5, wish: 'Danny, first person'}), /add your own where this story needs it[\s\S]*REGISTER AND VOICE/);
   const p = parseNarrator('=== NARRATOR\nWHO NARRATES: Danny\nPOV: first\n=== NOTES\nCHECKER NOTE: first person is intended\nEDITOR NOTE: none\n=== END');
   assert.equal(p.instructions, 'WHO NARRATES: Danny\nPOV: first');
   assert.equal(p.checkerNote, 'first person is intended');
@@ -75,4 +75,13 @@ test('narrator draft includes a main prompt; the template is editable text', asy
   assert.deepEqual(custom.map(x => x[0]), ['WHO NARRATES', 'SMELLS']);
   assert.match(narratorInstruction({template: custom}), /- SMELLS: what they notice by smell/);
   assert.deepEqual(parseNarratorTemplate(''), NARRATOR_TEMPLATE);
+});
+
+test('the narrator draft comes back in five parts, each for its place', () => {
+  const ask = narratorInstruction({number: 2, wish: 'Danny, first person'});
+  for (const part of ['=== DESCRIPTION', '=== MAIN PROMPT', '=== CHARACTER NOTE', '=== POST-HISTORY', 'SAMPLE OF THE VOICE']) assert.ok(ask.includes(part), part);
+  assert.match(ask, /This is a novel: the narrator writes every character/);
+  assert.match(narratorInstruction({roleplay: true}), /never writes that character/);
+  const p = parseNarrator('=== DESCRIPTION\nWHO NARRATES: Danny\n=== MAIN PROMPT\nYou narrate.\n=== CHARACTER NOTE\nFirst person, past.\n=== POST-HISTORY\nStop at a beat.\n=== NOTES\nCHECKER NOTE: none\nEDITOR NOTE: keep it rough\n=== END');
+  assert.deepEqual([p.instructions, p.mainPrompt, p.charNote, p.postHistory, p.checkerNote, p.editorNote], ['WHO NARRATES: Danny', 'You narrate.', 'First person, past.', 'Stop at a beat.', '', 'keep it rough']);
 });

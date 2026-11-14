@@ -180,35 +180,55 @@ export const NARRATOR_TEMPLATE = Object.freeze([
   ['NEVER', 'The writer’s never/don’ts for this narrator.'],
 ]);
 /** Ask for narrator instructions: the template guides, the story decides. */
-export function narratorInstruction({unit = 'Chapter', number = 1, wish = '', facts = '', previous = '', template = NARRATOR_TEMPLATE}) {
-  return `Write the instructions for the AI that will narrate ${unit} ${number} in the writer's main chat. They go into the narrator character's description. You are not writing the story — you are briefing the writer who will.
-The writer wants: ${wish || '(no specific wish — work it out from the outline for this chapter)'}
-Use these headings as a guide. Use the ones that matter for this narrator, skip any that don't apply, and add your own headings for anything this story needs that they don't cover:
-${template.map(([h, d]) => `- ${h}: ${d}`).join('\n')}
-Be specific to this book: names, places, what this narrator would and wouldn't notice. Under 450 words.
-Then write a MAIN PROMPT: two to four sentences that tell the model it is this book's narrator — write only the story, in prose, follow the character description, the lorebook and the chapter plan, stop at a natural beat. Only if the writer's answers say they play a character in the chat (a roleplay), add that the narrator never writes that character's words or actions; for a novel, the narrator writes every character — do not assume the writer plays anyone. It replaces SillyTavern's Main Prompt in this narrator's chats only.
-Then write two lines the chapter team needs for this ${unit.toLowerCase()} only, or "none" if nothing changes:
-CHECKER NOTE: what the Checker should accept as intended in this ${unit.toLowerCase()} (e.g. "first person, Danny, rough register is deliberate").
-EDITOR NOTE: what the Editor must preserve (e.g. "keep Danny's roughness; don't polish it into Ruth's voice").
+export function narratorInstruction({unit = 'Chapter', number = 1, wish = '', facts = '', previous = '', template = NARRATOR_TEMPLATE, roleplay = false}) {
+  const u = unit.toLowerCase();
+  return `Set up the AI that will narrate ${unit} ${number} of this book in the writer's SillyTavern chat. You are not writing the story; you are writing the narrator's instructions. They go into five different places, and each place has one job. Write each part for its place, and never say the same rule twice in different words: when two places disagree, the model follows the one nearer the end.
+
+The writer wants: ${wish || `(no specific wish — work it out from the outline for this ${u})`}
+
+How to write good instructions:
+- Plain prose, no markdown, no bullet lists of "never" rules. Say what to do and, in a few words, why: the model follows reasons better than bans.
+- Be specific to this book: names, places, what this narrator would and would not notice.
+- ${roleplay ? 'The writer plays a character in this chat: the narrator never writes that character\'s words, thoughts or actions.' : 'This is a novel: the narrator writes every character. The writer\'s messages are the author\'s directions, not dialogue in the story.'}
+
+THE FIVE PARTS
+1. DESCRIPTION — the narrator's always-present reference card, under 450 words. Use these headings as a guide: use the ones that matter, skip what doesn't apply, add your own where this story needs it:
+${template.map(([h, d]) => `   - ${h}: ${d}`).join('\n')}
+   End it with SAMPLE OF THE VOICE: a passage of 60 to 100 words in exactly the narrator's voice, point of view and tense, about something ordinary in this world (not an event from the outline). Label it as a style sample only, not text to reuse.
+2. MAIN PROMPT — three to five sentences, the narrator's standing role: who it is (one sentence), what the writer's messages are, point of view, tense and voice (with the reason), how long a reply should be and where to stop (a natural beat, not the end of the ${u}), and to follow the description, the lorebook and the ${u} plan it is given.
+3. CHARACTER NOTE — one to three short lines that restate point of view, tense and voice. It is repeated near the newest text so the narrator does not drift.
+4. POST-HISTORY — two to four short lines read last, just before the narrator writes: the rules most likely to slip (reply length, tense, the one or two habits to avoid in this voice). Positive wording, and nothing that contradicts the main prompt.
+5. TEAM NOTES — for this ${u} only, or "none":
+   CHECKER NOTE: what the Checker should accept as intended (e.g. "first person, Danny, the rough register is deliberate").
+   EDITOR NOTE: what the Editor must preserve (e.g. "keep Danny's roughness; don't polish it into Ruth's voice").
+
 Reply in exactly this form:
-=== NARRATOR
-(the instructions)
+=== DESCRIPTION
+(part 1)
 === MAIN PROMPT
-(two to four sentences)
+(part 2)
+=== CHARACTER NOTE
+(part 3)
+=== POST-HISTORY
+(part 4)
 === NOTES
 CHECKER NOTE: …
 EDITOR NOTE: …
 === END
-${previous ? `\nTHE PREVIOUS NARRATOR'S INSTRUCTIONS (for contrast; do not copy what doesn't fit)\n${previous}\n` : ''}
+${previous ? `\nTHE CURRENT NARRATOR'S DESCRIPTION (for contrast; keep what fits, drop what doesn't)\n${previous}\n` : ''}
 THE BOOK'S FACTS
 ${facts}`;
 }
+const section = (s, name, next) => (s.match(new RegExp(`^===\\s*(?:${name})\\s*$\\n([\\s\\S]*?)(?=^===\\s*(?:${next})\\s*$|(?![\\s\\S]))`, 'mi')) || [])[1]?.trim() || '';
 export function parseNarrator(text) {
   const s = String(text || '').replace(/\r\n?/g, '\n');
-  const body = (s.match(/^===\s*NARRATOR\s*$\n([\s\S]*?)(?=^===\s*(?:MAIN PROMPT|NOTES|END)\s*$|(?![\s\S]))/mi) || [])[1]?.trim() || '';
-  const mainPrompt = (s.match(/^===\s*MAIN PROMPT\s*$\n([\s\S]*?)(?=^===\s*(?:NOTES|END)\s*$|(?![\s\S]))/mi) || [])[1]?.trim() || '';
+  const after = 'MAIN PROMPT|CHARACTER NOTE|POST-HISTORY|NOTES|END';
+  const body = section(s, 'DESCRIPTION|NARRATOR', after);
+  const mainPrompt = section(s, 'MAIN PROMPT', 'CHARACTER NOTE|POST-HISTORY|NOTES|END');
+  const charNote = section(s, 'CHARACTER NOTE', 'POST-HISTORY|NOTES|END');
+  const postHistory = section(s, 'POST-HISTORY', 'NOTES|END');
   const note = label => { const v = (s.match(new RegExp(`^\\s*${label}\\s*NOTE\\s*:\\s*(.+)$`, 'mi')) || [])[1]?.trim() || ''; return /^none\.?$/i.test(v) ? '' : v; };
-  return body ? {instructions: body, mainPrompt, checkerNote: note('CHECKER'), editorNote: note('EDITOR')} : null;
+  return body ? {instructions: body, mainPrompt, charNote, postHistory, checkerNote: note('CHECKER'), editorNote: note('EDITOR')} : null;
 }
 /** Who narrates, read from instructions text ("WHO NARRATES: Danny…"). */
 export function narratorLabel(instructions) {

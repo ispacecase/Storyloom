@@ -1,4 +1,6 @@
 import { doNewChat } from '../../../../script.js';
+import { promptManager } from '../../../openai.js';
+import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
 import { synchronize, resolveConflict, planInitialLink } from './sync.mjs';
@@ -304,6 +306,7 @@ function saveTemplate(asNew) {
   else {
     const i=list.findIndex(x=>{try{return parseTemplate(x).name===selected}catch{return false}});
     if(i<0)throw Error('Built-in templates can’t be changed. Use “Save as new”.');
+    if(list[i]!==templateToText(parsed))backup({kind:'template',label:`Template “${selected}”`,target:{name:selected},before:{name:selected,text:list[i]}});
     list[i]=templateToText(parsed);
   }
   context().saveSettingsDebounced();
@@ -851,6 +854,7 @@ async function acceptRevision() {
   const c=context(), d=data(), t=teamState(d), r=t.revision; if(!r)return;
   const idx=storyIndexes(c.chat);
   if(idx.length!==r.parts.length || idx.some((i,k)=>String(c.chat[i].mes).trim()!==r.original[k]))throw Error('The chapter changed in the chat since the Editor read it. Run Revise again.');
+  backup({kind:'chapter',label:`${tpl(d).unit} ${d.chapter||1} before the revision`,target:{chat:c.chatId},before:r.original});
   let changed=0;
   idx.forEach((i,k)=>{
     const m=c.chat[i], next=r.parts[k]; if(next===String(m.mes).trim())return;
@@ -1052,24 +1056,32 @@ async function draftNarrator({number,wish,title,okLabel,mode}) {
   const c=context(), d=data(), u=tpl(d).unit, ch=c.characters?.[c.characterId];
   const plan=await chapterPlan(d,number), prevText=ch?.description||'', prevMain=ch?.data?.system_prompt||'';
   const help=await new c.Popup(`<h3>Want help writing the narrator?</h3><p>Storyloom drafts the narrator’s instructions from the book — the outline for this ${u.toLowerCase()}, the cast, ${mode==='current'?'what the narrator says now':'the previous narrator'}, your rules — using the narrator template as a guide (Extensions → Storyloom → Narrator template). You read and edit the draft before anything is saved.</p>`,c.POPUP_TYPE.TEXT,'',{okButton:'Yes, draft it',cancelButton:'I’ll write it myself'}).show();
-  let draft={instructions:prevText,mainPrompt:prevMain||defaultMainPrompt(d.book),checkerNote:'',editorNote:''};
+  const prevNote=ch?.data?.extensions?.depth_prompt?.prompt||'', prevPost=ch?.data?.post_history_instructions||'';
+  let draft={instructions:prevText,mainPrompt:String(prevMain).replace(/^\{\{original\}\}\s*/,'')||defaultMainPrompt(d.book),charNote:prevNote,postHistory:prevPost,checkerNote:'',editorNote:''};
   if(help===(c.POPUP_RESULT?.AFFIRMATIVE??1)) {
     const f=await bookFacts(d);
     const ctl=new AbortController(); renderModelWork(ctl); busy=true;
     try {
       status('Storyloom is drafting the narrator…');
       let base='',direct=null; try{base=d.profile||'';direct=directSnapshot(d,c);}catch{}
-      const raw=await llm(c,narratorInstruction({unit:u,number,wish:String(wish||''),facts:`${plan?`THIS ${u.toUpperCase()}'S PLAN\n${plan.text}\n\n`:''}${f.facts}`,previous:prevText,template:narratorTemplate()}),base,ctl.signal,Number(d.responseTokens||12000),'You help a writer set up the AI that narrates their book. You brief the narrator; you never write the story.',direct,{label:'Narrator builder'});
+      const raw=await llm(c,narratorInstruction({unit:u,number,wish:String(wish||''),facts:`${plan?`THIS ${u.toUpperCase()}'S PLAN\n${plan.text}\n\n`:''}${f.facts}`,previous:prevText,template:narratorTemplate(),roleplay:tpl(d).name!==NOVEL.name}),base,ctl.signal,Number(d.responseTokens||12000),'You help a writer set up the AI that narrates their book. You brief the narrator; you never write the story.',direct,{label:'Narrator builder'});
       const p=parseNarrator(raw); if(!p){logEvent('error','Narrator','draft unreadable',raw.slice(0,2000));throw Error('The narrator draft came back in a form Storyloom couldn’t read. Try again, or choose “I’ll write it myself”.');}
-      draft={...p,mainPrompt:p.mainPrompt||draft.mainPrompt};
+      draft={...p,mainPrompt:p.mainPrompt||draft.mainPrompt,charNote:p.charNote||draft.charNote,postHistory:p.postHistory||draft.postHistory};
     } finally {busy=false;renderModelWork(null);}
   }
   const form=document.createElement('div'); form.className='storyloom-narrator-form';
+  const preset=(()=>{try{return c.mainApi==='openai'?(c.getPresetManager?.('openai')?.getSelectedPresetName?.()||'your current preset'):'your System Prompt (Advanced Formatting)';}catch{return 'your current preset';}})();
   form.innerHTML=`<h3>${escHtml(title)}</h3>
-    <label class="checkbox_label"><input type="checkbox" data-c="toDesc" checked> Put this in the narrator’s <b>Description</b> ${mode==='current'&&prevText?'<small>(replaces what’s there now; the old text is kept so you can undo)</small>':''}</label>
-    <textarea class="text_pole" rows="13" data-k="instructions"></textarea>
-    <label class="checkbox_label"><input type="checkbox" data-c="toMain" checked> Put this in the narrator’s <b>Main Prompt override</b> <small>(replaces SillyTavern’s Main Prompt in this character’s chats only; needs “Prefer Char. Prompt”, which is on by default)</small></label>
-    <textarea class="text_pole" rows="3" data-k="mainPrompt"></textarea>
+    <p class="storyloom-hint">Each part goes in its own place. Untick any place you want left alone. Whatever is there now is kept under Extensions → Storyloom → Backups first. Why each place gets what it gets: docs/prompt-slots.md in Storyloom.</p>
+    <label class="checkbox_label"><input type="checkbox" data-c="toDesc" checked> <b>Description</b> <small>— the narrator’s always-present reference: who tells it, how, what they know, a short sample of the voice</small></label>
+    <textarea class="text_pole" rows="12" data-k="instructions"></textarea>
+    <label class="checkbox_label"><input type="checkbox" data-c="toMain" checked> <b>Character’s Main Prompt</b> <small>— the narrator’s standing role; replaces the preset’s Main Prompt in this character’s chats (“Prefer Char. Prompt”, on by default). Saved after {{original}} so your preset’s Main Prompt stays in front of it.</small></label>
+    <textarea class="text_pole" rows="4" data-k="mainPrompt"></textarea>
+    <label class="checkbox_label"><input type="checkbox" data-c="toGlobal"> Also put the Main Prompt above into the <b>global Main Prompt of ${escHtml(preset)}</b> <small>— used in chats on that preset whose character has no Main Prompt of its own. SillyTavern keeps the change in your settings; save the preset to make it permanent there.</small></label>
+    <label class="checkbox_label"><input type="checkbox" data-c="toNote" checked> <b>Character’s Note</b> <small>— a short reminder of point of view, tense and voice, sent 4 messages from the end so the narrator doesn’t drift</small></label>
+    <textarea class="text_pole" rows="2" data-k="charNote"></textarea>
+    <label class="checkbox_label"><input type="checkbox" data-c="toPost" checked> <b>Post-History Instructions</b> <small>— read last, just before each reply: the few rules most likely to slip (needs “Prefer Char. Instructions”, on by default)</small></label>
+    <textarea class="text_pole" rows="3" data-k="postHistory"></textarea>
     <label>Checker note for this ${u.toLowerCase()} <small>(what to accept as intended)</small><textarea class="text_pole" rows="2" data-k="checkerNote"></textarea></label>
     <label>Editor note for this ${u.toLowerCase()} <small>(what to preserve)</small><textarea class="text_pole" rows="2" data-k="editorNote"></textarea></label>`;
   for(const ta of form.querySelectorAll('textarea'))ta.value=draft[ta.dataset.k]||'';
@@ -1077,7 +1089,7 @@ async function draftNarrator({number,wish,title,okLabel,mode}) {
   if(ok!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return null;
   const val=k=>form.querySelector(`[data-k="${k}"]`).value.trim(), on=k=>form.querySelector(`[data-c="${k}"]`).checked;
   const instructions=val('instructions');
-  return {instructions,mainPrompt:val('mainPrompt'),toDesc:on('toDesc'),toMain:on('toMain'),plan,
+  return {instructions,mainPrompt:val('mainPrompt'),charNote:val('charNote'),postHistory:val('postHistory'),toDesc:on('toDesc'),toMain:on('toMain'),toGlobal:on('toGlobal'),toNote:on('toNote'),toPost:on('toPost'),plan,
     notes:{checker:val('checkerNote'),editor:val('editorNote'),pov:sectionOf(instructions,'POINT OF VIEW')||sectionOf(instructions,'POV'),tense:sectionOf(instructions,'TENSE')}};
 }
 async function newNarrator(next,cur) {
@@ -1092,10 +1104,12 @@ async function newNarrator(next,cur) {
   const who=narratorLabel(r.instructions)||String(wish).split(/[,.;]/)[0].trim()||`${u} ${next} narrator`;
   const name=`${d.book} — ${who.split(/\s[—–-]\s|[,(;]/)[0].trim().slice(0,40)}`;
   const prev=c.characters?.[c.characterId];
-  const avatar=await cloneNarrator(cur?.avatar,{name,description:r.toDesc?r.instructions:(prev?.description||''),mainPrompt:r.toMain?r.mainPrompt:null,greeting:`${u} ${next}${r.plan?.title?` — ${r.plan.title}`:''}`});
+  const avatar=await cloneNarrator(cur?.avatar,{name,description:r.toDesc?r.instructions:(prev?.description||''),mainPrompt:null,greeting:`${u} ${next}${r.plan?.title?` — ${r.plan.title}`:''}`});
+  const extra=narratorFields(r); delete extra.description; if(Object.keys(extra).length)await writeCharacter(avatar,extra);
+  if(r.toGlobal){const g=readGlobalMain(); backup({kind:'globalMain',label:`Global Main Prompt (${presetName()})`,target:{api:g.api},before:g.text}); writeGlobalMain(r.mainPrompt,g.api);}
   narratorRegistry(d).push({avatar,name,who,chapters:[],notes:r.notes});
   await persist();
-  logEvent('info','Narrator',`created “${name}” for ${u} ${next}`);
+  logEvent('info','Narrator',`created “${name}” for ${u} ${next}${r.toGlobal?' (and set the global Main Prompt)':''}`);
   return {avatar,notes:r.notes};
 }
 /** Write or rewrite the narrator of the chat you are in (any chapter, including the first). The old text is kept for Undo. */
@@ -1108,30 +1122,31 @@ async function setupNarrator() {
   if(wish===null || wish===undefined || wish===false)return;
   const r=await draftNarrator({number:n,wish,title:`Narrator: ${ch.name}`,okLabel:'Save narrator',mode:'current'});
   if(!r)return;
-  if(!r.toDesc && !r.toMain && !r.notes.checker && !r.notes.editor)return status('Nothing was ticked, so nothing was changed.');
-  d.narratorUndo={avatar:ch.avatar,name:ch.name,description:ch.description||'',mainPrompt:ch.data?.system_prompt||'',at:new Date().toISOString()};
-  const patch={avatar:ch.avatar,data:{}};
-  if(r.toDesc){patch.description=r.instructions;patch.data.description=r.instructions;}
-  if(r.toMain)patch.data.system_prompt=r.mainPrompt;
-  if(r.toDesc||r.toMain) {
-    const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify(patch)});
-    if(!m.ok)throw Error(`SillyTavern couldn’t save the narrator (${(await m.text()).slice(0,200)}).`);
-    await c.getCharacters();
+  if(!r.toDesc && !r.toMain && !r.toGlobal && !r.toNote && !r.toPost && !r.notes.checker && !r.notes.editor)return status('Nothing was ticked, so nothing was changed.');
+  const group=crypto.randomUUID();
+  const fields=narratorFields(r);
+  if(Object.keys(fields).length) {
+    backup({kind:'character',label:ch.name,target:{avatar:ch.avatar},before:charSnapshot(ch),group});
+    await writeCharacter(ch.avatar,fields);
   }
+
+  if(r.toGlobal){const g=readGlobalMain(); backup({kind:'globalMain',label:`Global Main Prompt (${presetName()})`,target:{api:g.api},before:g.text,group}); writeGlobalMain(r.mainPrompt,g.api);}
+  d.narratorUndo={group,avatar:ch.avatar,name:ch.name,at:new Date().toISOString()};
   d.chapterNotes ??= {}; d.chapterNotes[n]={...(d.chapterNotes[n]||{}),...r.notes};
   const reg=currentNarrator(d,c); reg.who=narratorLabel(r.instructions)||reg.who; reg.notes={...r.notes};
   await persist(); await applyMemory(); renderTeam();
-  logEvent('info','Narrator',`updated “${ch.name}”${r.toDesc?' description':''}${r.toMain?' + Main Prompt override':''}`);
-  status(`Narrator saved to “${ch.name}”. The old text is kept — “Undo narrator change” on the Memory tab puts it back.`);
+  logEvent('info','Narrator',`updated “${ch.name}”: ${['description','Main Prompt','Character’s Note','Post-History Instructions'].filter((x,k)=>[r.toDesc,r.toMain,r.toNote,r.toPost][k]).join(', ')||'notes only'}${r.toGlobal?' + global Main Prompt':''}`);
+  status(`Narrator saved${r.toGlobal?' (and the global Main Prompt)':''}. The old versions are in Extensions → Storyloom → Backups; “Undo narrator change” puts them back.`);
 }
 async function undoNarrator() {
   requireIdle();
   const c=context(), d=data(), u=d.narratorUndo; if(!u)return;
-  if(!await c.Popup.show.confirm('Undo the narrator change?',`Put back “${escHtml(u.name)}”’s description and Main Prompt override as they were on ${new Date(u.at).toLocaleString()}?`))return;
-  const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify({avatar:u.avatar,description:u.description,data:{description:u.description,system_prompt:u.mainPrompt}})});
-  if(!m.ok)throw Error('SillyTavern couldn’t restore the narrator.');
-  await c.getCharacters(); delete d.narratorUndo; await persist(); renderTeam();
-  logEvent('info','Narrator',`restored “${u.name}”`); status(`“${u.name}” is back to how it was.`);
+  const group=storedBackups().filter(b=>b.group===u.group);
+  if(!group.length)throw Error('The backup for that change is gone (only the newest 200 are kept).');
+  if(!await c.Popup.show.confirm('Undo the narrator change?',`Put back ${group.map(b=>`“${escHtml(b.label)}”`).join(' and ')} as they were on ${new Date(u.at).toLocaleString()}?`))return;
+  for(const b of group)await restoreBackup(b);
+  delete d.narratorUndo; await persist(); renderTeam();
+  status('The narrator change is undone.');
 }
 /** Copy a character card and give it new instructions, name and greeting. Returns the new avatar file name. */
 async function cloneNarrator(fromAvatar,{name,description,greeting,mainPrompt=null}) {
@@ -1956,6 +1971,73 @@ async function writeProfiles(prefix='',{onlyMissing=false}={}) {
     fail(e,'Write character profiles');
   }
 }
+/* ---------- Backups: the old version of anything Storyloom changes outside the lorebook ---------- */
+function storedBackups(){const s=(context().extensionSettings.storyloom ??= {}); return s.backups ??= [];}
+function backup(item) {
+  const s=(context().extensionSettings.storyloom ??= {});
+  const {list,entry}=addBackup(s.backups||[],item); s.backups=list; context().saveSettingsDebounced();
+  logEvent('info','Backup',`kept the old version: ${entry.label}`); renderBackups(); return entry;
+}
+const presetName=()=>{try{const c=context();return c.mainApi==='openai'?(c.getPresetManager?.('openai')?.getSelectedPresetName?.()||'current preset'):'System Prompt';}catch{return 'current preset';}};
+/** The global Main Prompt: Chat Completion's “Main Prompt”, or the System Prompt for text-completion APIs. */
+function readGlobalMain() {
+  const c=context();
+  if(c.mainApi==='openai'){const p=(c.chatCompletionSettings?.prompts||[]).find(x=>x.identifier==='main'); return {api:'chat',text:p?.content??''};}
+  return {api:'text',text:c.powerUserSettings?.sysprompt?.content??''};
+}
+function writeGlobalMain(text,api=readGlobalMain().api) {
+  const c=context();
+  if(api==='chat'){const p=(c.chatCompletionSettings?.prompts||[]).find(x=>x.identifier==='main'); if(!p)throw Error('This preset has no Main Prompt entry.'); p.content=text; try{promptManager?.render?.(false);}catch{}}
+  else {if(!c.powerUserSettings?.sysprompt)throw Error('SillyTavern’s System Prompt isn’t available.'); c.powerUserSettings.sysprompt.content=text; const ta=document.getElementById('sysprompt_content'); if(ta)ta.value=text;}
+  c.saveSettingsDebounced();
+}
+/** The narrator fields of a character card, as they are now (for backups). */
+const charSnapshot=ch=>({description:ch?.description||'',system_prompt:ch?.data?.system_prompt||'',post_history_instructions:ch?.data?.post_history_instructions||'',depth_prompt:{prompt:ch?.data?.extensions?.depth_prompt?.prompt||'',depth:ch?.data?.extensions?.depth_prompt?.depth??4,role:ch?.data?.extensions?.depth_prompt?.role||'system'}});
+/** Change only the given narrator fields of a character card. */
+async function writeCharacter(avatar,{description,system_prompt,post_history_instructions,depth_prompt}) {
+  const c=context(), patch={avatar,data:{}};
+  if(description!==undefined){patch.description=description;patch.data.description=description;}
+  if(system_prompt!==undefined)patch.data.system_prompt=system_prompt;
+  if(post_history_instructions!==undefined)patch.data.post_history_instructions=post_history_instructions;
+  if(depth_prompt!==undefined)patch.data.extensions={depth_prompt:{prompt:depth_prompt.prompt??'',depth:Number(depth_prompt.depth??4),role:depth_prompt.role||'system'}};
+  const m=await fetch('/api/characters/merge-attributes',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify(patch)});
+  if(!m.ok)throw Error(`SillyTavern couldn’t save the character (${(await m.text()).slice(0,200)}).`);
+  await c.getCharacters();
+}
+/** The fields a reviewed narrator writes to its card (only the ticked places). */
+function narratorFields(r) {
+  const f={};
+  if(r.toDesc)f.description=r.instructions;
+  if(r.toMain)f.system_prompt=r.toGlobal?r.mainPrompt:`{{original}}\n\n${r.mainPrompt}`;
+  if(r.toNote)f.depth_prompt={prompt:r.charNote,depth:4,role:'system'};
+  if(r.toPost)f.post_history_instructions=r.postHistory;
+  return f;
+}
+/** Put a backup back. The current version is backed up first, so a restore can itself be undone. */
+async function restoreBackup(b) {
+  const c=context();
+  if(b.kind==='globalMain'){const cur=readGlobalMain(); backup({kind:'globalMain',label:'Global Main Prompt (before a restore)',target:{api:cur.api},before:cur.text}); writeGlobalMain(b.before??'',b.target?.api||cur.api);}
+  else if(b.kind==='character'){const ch=c.characters.find(x=>x.avatar===b.target?.avatar); if(!ch)throw Error('That character no longer exists.'); backup({kind:'character',label:`${ch.name} (before a restore)`,target:{avatar:ch.avatar},before:charSnapshot(ch)}); await writeCharacter(ch.avatar,b.before||{});}
+  else if(b.kind==='prompt'){const all=storedPrompts(), key=b.target?.key; backup({kind:'prompt',label:`${b.label} (before a restore)`,target:{key},before:all[key]??null}); if(b.before==null)delete all[key]; else all[key]=b.before; setPromptOverrides(all); c.saveSettingsDebounced(); renderPromptEditor();}
+  else if(b.kind==='persona'){const roles=storedRoles(), k=b.target?.role; backup({kind:'persona',label:`${b.label} (before a restore)`,target:{role:k},before:roles[k]?.persona||null}); roles[k]={...roles[k],persona:b.before||''}; c.saveSettingsDebounced(); renderTeamSettings();}
+  else if(b.kind==='narratorTemplate'){const st=(c.extensionSettings.storyloom ??= {}); backup({kind:'narratorTemplate',label:'Narrator template (before a restore)',before:st.narratorTemplate??null}); if(b.before==null)delete st.narratorTemplate; else st.narratorTemplate=b.before; c.saveSettingsDebounced(); const t=document.getElementById('sl-narrator-template-text'); if(t)t.value=narratorTemplateText(narratorTemplate());}
+  else if(b.kind==='template'){const list=storedTemplates(), name=b.before?.name, i=list.findIndex(x=>{try{return parseTemplate(x).name===name}catch{return false}}); if(i>=0){backup({kind:'template',label:`Template “${name}” (before a restore)`,target:{name},before:{name,text:list[i]}}); list[i]=b.before.text;} else list.push(b.before.text); c.saveSettingsDebounced(); try{renderTemplates(data());}catch{}}
+  else throw Error('Chapter text comes back from the message’s swipes (the arrows on the message). Use Copy to take this backup’s text.');
+  logEvent('info','Backup',`restored: ${b.label}`);
+}
+function renderBackups() {
+  const box=document.getElementById('sl-backup-list'); if(!box)return;
+  const list=[...storedBackups()].reverse();
+  box.replaceChildren(...(list.length?list.map(b=>{
+    const pre=el('pre',{hidden:true,textContent:backupText(b)});
+    const view=el('button',{type:'button',className:'menu_button',textContent:'View'}); view.onclick=()=>{pre.hidden=!pre.hidden;view.textContent=pre.hidden?'View':'Hide';};
+    const copy=el('button',{type:'button',className:'menu_button',textContent:'Copy'}); copy.onclick=async()=>{try{await navigator.clipboard.writeText(backupText(b));toastr?.success?.('Backup copied.');}catch(e){toastr?.error?.(e.message);}};
+    const row=el('div',{className:'storyloom-row'},view,copy);
+    if(b.kind!=='chapter'){const r=el('button',{type:'button',className:'menu_button',textContent:'Restore'}); r.onclick=async()=>{if(!await context().Popup.show.confirm('Restore this backup?',`Put back “${escHtml(b.label)}” as it was on ${new Date(b.at).toLocaleString()}? What’s there now is backed up first.`))return; try{await restoreBackup(b);toastr?.success?.(`Restored: ${b.label}`);renderTeam();}catch(e){fail(e);toastr?.error?.(e.message);}}; row.append(r);}
+    return el('li',{},el('div',{textContent:`${new Date(b.at).toLocaleString()} · ${BACKUP_KINDS[b.kind]||b.kind} · ${b.label}`}),row,pre);
+  }):[el('li',{textContent:'No backups yet. Storyloom keeps one here every time it changes something of yours outside the lorebook.'})]));
+}
+
 /* ---------- SillyTavern Extensions menu → Storyloom: chapter team, memory placement, prompts, templates, repair, log ---------- */
 function teamMarkup() {
   return ROLE_KEYS.map(k=>{const r=ROLES[k];return `<div class="storyloom-role" data-role="${k}">
@@ -1977,7 +2059,8 @@ function renderTeamSettings() {
   }
 }
 function renderExtSettings() {
-  renderTeamSettings(); renderPlacement().catch(e=>warnLog('Storyloom placement:',e)); renderLog();
+  renderBackups(); renderTeamSettings(); renderPlacement().catch(e=>warnLog('Storyloom placement:',e)); renderLog();
+  try{renderPromptEditor();}catch(e){warnLog('Storyloom prompts:',e);} let d={}; try{d=data();}catch{} try{renderTemplates(d);}catch(e){warnLog('Storyloom templates:',e);}
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
 }
 function buildExtSettings(openButton,panel) {
@@ -1989,6 +2072,7 @@ function buildExtSettings(openButton,panel) {
     <details id="sl-narrator-template"><summary>Narrator template</summary><p class="storyloom-hint">The headings Storyloom uses as a guide when it drafts a narrator — one “HEADING: what it covers” per line. It’s a guide, not a form: Storyloom skips headings that don’t fit the story and adds its own when the story needs them.</p><textarea id="sl-narrator-template-text" class="text_pole" rows="10" spellcheck="false"></textarea><div class="storyloom-row"><button id="sl-narrator-template-save" type="button" class="menu_button">Save</button><button id="sl-narrator-template-reset" type="button" class="menu_button">Reset to original</button></div></details>
     <details id="sl-placement"><summary>Memory placement</summary><p class="storyloom-hint">Where each piece of memory goes in the main chat’s prompt, who it is sent as, and the instruction wrapped around it. The text itself is on the Memory tab.</p><p class="storyloom-hint sl-placement-book"></p><p class="storyloom-hint sl-placement-empty">Open a novel’s chat (with its outline done) to set placement.</p><div class="sl-placement-items">${placementMarkup()}</div></details>
     <div id="sl-moved"></div>
+    <details id="sl-backups"><summary>Backups</summary><p class="storyloom-hint">Before Storyloom changes anything of yours outside the lorebook — the global Main Prompt, a character’s description or Main Prompt, a Storyloom prompt, a role’s personality, the narrator template, chapter text before a revision — it keeps the old version here (newest 200). Restore puts it back; what’s there now is backed up first. Lorebook changes have their own undo under Repair and more.</p><ul id="sl-backup-list" class="storyloom-log"></ul></details>
     <details id="sl-log"><summary>Log</summary><p class="storyloom-hint">What Storyloom did, what failed and why. Kept in this browser (newest 500 entries). API keys are never recorded.</p>
       <div class="storyloom-row"><label>Show <select id="sl-log-filter" class="text_pole"><option value="all">Everything</option><option value="warn">Errors and warnings</option><option value="error">Errors only</option></select></label><button id="sl-log-copy" type="button" class="menu_button">Copy</button><button id="sl-log-download" type="button" class="menu_button">Download</button><button id="sl-log-clear" type="button" class="menu_button">Clear</button></div>
       <label class="checkbox_label"><input id="sl-log-full" type="checkbox"> Keep full prompts and replies (for debugging; makes the log much bigger)</label>
@@ -2005,8 +2089,8 @@ function buildExtSettings(openButton,panel) {
     const box=wrap.querySelector(`[data-role="${k}"]`), roles=()=>storedRoles();
     box.querySelector('.sl-role-on').onchange=e=>{roles()[k]={...roles()[k],enabled:e.target.checked};saveSettings();renderTeam();logEvent('info','Settings',`${ROLES[k].label} ${e.target.checked?'on':'off'}`);};
     box.querySelector('.sl-role-profile').onchange=e=>{roles()[k]={...roles()[k],profile:e.target.value};saveSettings();logEvent('info','Settings',`${ROLES[k].label} model: ${e.target.selectedOptions[0]?.textContent||'Same as Storyloom'}`);};
-    box.querySelector('.sl-role-save').onclick=()=>{const v=box.querySelector('.sl-role-persona').value.trim();roles()[k]={...roles()[k],persona:v===ROLES[k].persona?'':v};saveSettings();renderTeamSettings();toastr?.success?.(`${ROLES[k].label}’s personality saved.`);};
-    box.querySelector('.sl-role-reset').onclick=()=>{roles()[k]={...roles()[k],persona:''};saveSettings();box.querySelector('.sl-role-persona').value=ROLES[k].persona;renderTeamSettings();};
+    box.querySelector('.sl-role-save').onclick=()=>{const v=box.querySelector('.sl-role-persona').value.trim();if((roles()[k]?.persona||'')!==(v===ROLES[k].persona?'':v))backup({kind:'persona',label:`${ROLES[k].label}’s personality`,target:{role:k},before:roles()[k]?.persona||null});roles()[k]={...roles()[k],persona:v===ROLES[k].persona?'':v};saveSettings();renderTeamSettings();toastr?.success?.(`${ROLES[k].label}’s personality saved.`);};
+    box.querySelector('.sl-role-reset').onclick=()=>{if(roles()[k]?.persona)backup({kind:'persona',label:`${ROLES[k].label}’s personality`,target:{role:k},before:roles()[k].persona});roles()[k]={...roles()[k],persona:''};saveSettings();box.querySelector('.sl-role-persona').value=ROLES[k].persona;renderTeamSettings();};
   }
   for(const item of MEMORY_ITEMS) {
     const box=wrap.querySelector(`[data-memory="${item.key}"]`);
@@ -2016,8 +2100,8 @@ function buildExtSettings(openButton,panel) {
   }
   const tplBox=wrap.querySelector('#sl-narrator-template-text'), st=()=>(context().extensionSettings.storyloom ??= {});
   tplBox.value=narratorTemplateText(narratorTemplate());
-  wrap.querySelector('#sl-narrator-template-save').onclick=()=>{const rows=parseNarratorTemplate(tplBox.value);st().narratorTemplate=narratorTemplateText(rows);saveSettings();tplBox.value=st().narratorTemplate;toastr?.success?.(`Narrator template saved (${rows.length} headings).`);logEvent('info','Settings','narrator template saved');};
-  wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
+  wrap.querySelector('#sl-narrator-template-save').onclick=()=>{const rows=parseNarratorTemplate(tplBox.value);if((st().narratorTemplate??null)!==narratorTemplateText(rows))backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate??null});st().narratorTemplate=narratorTemplateText(rows);saveSettings();tplBox.value=st().narratorTemplate;toastr?.success?.(`Narrator template saved (${rows.length} headings).`);logEvent('info','Settings','narrator template saved');};
+  wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{if(st().narratorTemplate!=null)backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate});delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};
   wrap.querySelector('#sl-log-copy').onclick=async()=>{try{await navigator.clipboard.writeText(logText(readLog()));toastr?.success?.('Storyloom log copied.');}catch(e){toastr?.error?.('Could not copy: '+e.message);}};
@@ -2343,8 +2427,8 @@ function init() {
   document.querySelector('#na-review').onclick=async()=>{try{await reviewStory();options();}catch(e){fail(e);}};
   document.querySelector('#na-template-edit').onchange=()=>showTemplateText();
   document.querySelector('#na-prompt-key').onchange=()=>renderPromptEditor();
-  document.querySelector('#na-prompt-save').onclick=()=>{try{const key=document.querySelector('#na-prompt-key').value,text=document.querySelector('#na-prompt-text').value.trim();if(!text)throw Error('The prompt is empty. Use “Reset to default” to go back to the original.');const all=storedPrompts();if(text===PROMPT_DEFAULTS[key].text)delete all[key];else all[key]=text;setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” saved. It applies from the next request.`);}catch(e){fail(e);}};
-  document.querySelector('#na-prompt-reset').onclick=async()=>{try{const key=document.querySelector('#na-prompt-key').value;if(!await context().Popup.show.confirm('Reset this prompt?',`Put “${PROMPT_DEFAULTS[key].label}” back to Storyloom’s original wording?`))return;const all=storedPrompts();delete all[key];setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” is back to the default.`);}catch(e){fail(e);}};
+  document.querySelector('#na-prompt-save').onclick=()=>{try{const key=document.querySelector('#na-prompt-key').value,text=document.querySelector('#na-prompt-text').value.trim();if(!text)throw Error('The prompt is empty. Use “Reset to default” to go back to the original.');const all=storedPrompts();if((all[key]??null)!==(text===PROMPT_DEFAULTS[key].text?null:text))backup({kind:'prompt',label:`Prompt: ${PROMPT_DEFAULTS[key].label}`,target:{key},before:all[key]??null});if(text===PROMPT_DEFAULTS[key].text)delete all[key];else all[key]=text;setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” saved. It applies from the next request.`);}catch(e){fail(e);}};
+  document.querySelector('#na-prompt-reset').onclick=async()=>{try{const key=document.querySelector('#na-prompt-key').value;if(!await context().Popup.show.confirm('Reset this prompt?',`Put “${PROMPT_DEFAULTS[key].label}” back to Storyloom’s original wording?`))return;const all=storedPrompts();if(all[key]!=null)backup({kind:'prompt',label:`Prompt: ${PROMPT_DEFAULTS[key].label}`,target:{key},before:all[key]});delete all[key];setPromptOverrides(all);context().saveSettingsDebounced();renderPromptEditor();status(`“${PROMPT_DEFAULTS[key].label}” is back to the default.`);}catch(e){fail(e);}};
   document.querySelector('#na-template-save').onclick=()=>{try{saveTemplate(false);}catch(e){fail(e);}};
   document.querySelector('#na-template-copy').onclick=()=>{try{saveTemplate(true);}catch(e){fail(e);}};
   document.querySelector('#na-template-delete').onclick=async()=>{try{
@@ -2352,6 +2436,7 @@ function init() {
     const i=list.findIndex(x=>{try{return parseTemplate(x).name===name}catch{return false}});
     if(i<0)throw Error('Built-in templates can’t be deleted.');
     if(!await context().Popup.show.confirm('Delete template?',`Delete the template “${name}”? Novels already started with it keep working.`))return;
+    backup({kind:'template',label:`Template “${name}” (deleted)`,target:{name},before:{name,text:list[i]}});
     list.splice(i,1);context().saveSettingsDebounced();document.querySelector('#na-template-edit').value=NOVEL.name;renderTemplates(data());status(`Template “${name}” deleted.`);
   }catch(e){fail(e);}};
   document.querySelector('#na-chapter').onchange=async e=>{try{const n=Number(e.target.value);status('Moving to chapter '+n+'…');await organizeBook(n);options();status(`Now on Chapter ${n}. The main chat gets this chapter’s plan, and the writing directive says Chapter ${n}.`);}catch(err){options();fail(err,'Now on chapter');}};
