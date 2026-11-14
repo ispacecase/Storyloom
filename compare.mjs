@@ -2,7 +2,7 @@
  * Compare narrators: the writer's narrator (character card + preset prompts) next to Storyloom's, place by place,
  * with problems found in the writer's version. Pure helpers — no SillyTavern calls.
  */
-import {NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, isGeneralNarrator} from './novelist.mjs';
+import {NARRATOR_CARD, isGeneralNarrator, writingKit} from './novelist.mjs';
 
 /** Every place a narrator's instructions live. `on: 'card' | 'preset'` says what "Use Storyloom's" changes. */
 export const PLACES = Object.freeze([
@@ -34,8 +34,9 @@ export function yourPlaces(card = {}, preset = {}) {
   };
 }
 /** Storyloom's version of each place. `filledCard` is the general narrator with this book's blanks filled in, for display. */
-export function storyloomPlaces(filledCard = NARRATOR_CARD) {
-  return {description: filledCard, cardMain: '', charNote: '', cardPost: '', main: CRAFT_MAIN, postHistory: POST_HISTORY, continueNudge: CONTINUE_NUDGE, newChat: NEW_CHAT_PROMPT, auxiliary: '', enhanceDefinitions: 'off'};
+export function storyloomPlaces(filledCard = null, {roleplay = false} = {}) {
+  const k = writingKit(roleplay);
+  return {description: filledCard ?? k.card, cardMain: '', charNote: '', cardPost: '', main: k.main, postHistory: k.postHistory, continueNudge: k.continueNudge, newChat: k.newChat, auxiliary: '', enhanceDefinitions: 'off'};
 }
 
 const ROLEPLAY = /\{\{user\}\}|\brole-?play(?:ing)?\b|\bRP\b|\bin character\b|\breply as\b|\{\{char\}\}'s next reply\b|\byour next reply\b|\bfictional chat\b|\byou (?:are|play|will play|portray)\b(?! a novelist| the narrator| writing)|\bnever (?:speak|act|write) for (?:the user|\{\{user\}\})/i;
@@ -57,14 +58,14 @@ const tenseOf = t => {
  * Problems in the writer's places. `values` are this book's settings (pov, tense…); `names` are cast names,
  * which belong in the lorebook, not in the craft layers. Returns {placeKey: [{level:'problem'|'note', text}]}.
  */
-export function findProblems(yours, {values = {}, names = []} = {}) {
+export function findProblems(yours, {values = {}, names = [], roleplay = false} = {}) {
   const out = Object.fromEntries(PLACES.map(p => [p.key, []]));
   const add = (k, text, level = 'problem') => out[k].push({level, text});
   const textKeys = PLACES.map(p => p.key).filter(k => k !== 'enhanceDefinitions');
   for (const k of textKeys) {
     const t = String(yours[k] || '');
     if (!t.trim()) continue;
-    const m = t.match(ROLEPLAY);
+    const m = roleplay ? null : t.match(ROLEPLAY);
     if (m) add(k, `Roleplay wording (“${m[0]}”): it tells the model it is in a chat with you, so it answers you instead of writing the book.`);
     const l = t.match(LONG), negated = l && /\b(?:not|never|don'?t|no)\b[^.]{0,25}$/i.test(t.slice(Math.max(0, l.index - 30), l.index));
     if (l && !negated) add(k, `Asks for very long replies (“${l[0]}”). A chapter is written over many replies; asking for it all at once is what gets replies cut off part-way.`);
@@ -94,7 +95,11 @@ export function findProblems(yours, {values = {}, names = []} = {}) {
     if (a.p && b.p && a.p !== b.p) { add(textKeys[i], `Says ${a.p} person; ${B} says ${b.p} person.`); add(textKeys[j], `Says ${b.p} person; ${A} says ${a.p} person.`); }
     if (a.t && b.t && a.t !== b.t) { add(textKeys[i], `Says ${a.t} tense; ${B} says ${b.t} tense.`); add(textKeys[j], `Says ${b.t} tense; ${A} says ${a.t} tense.`); }
   }
-  if (!String(yours.main || '').trim() && !String(yours.cardMain || '').trim()) add('main', 'No Main Prompt: nothing tells the model it is writing a book rather than chatting.');
+  if (!String(yours.main || '').trim() && !String(yours.cardMain || '').trim()) add('main', roleplay ? 'No Main Prompt: nothing tells the model how to run the story — play everyone but you, keep the world consistent, leave your character to you.' : 'No Main Prompt: nothing tells the model it is writing a book rather than chatting.');
+  if (roleplay) {
+    const all = ['main', 'cardMain', 'postHistory', 'cardPost', 'description', 'charNote'].map(k => yours[k] || '').join('\n');
+    if (!/never\s+(?:speak|act|write|decide|play|control|narrate)\b[^.]{0,60}(?:\{\{user\}\}|the user|the player|player'?s)/i.test(all)) add('main', 'Nothing says to leave your character alone: without “never speak or act for {{user}}”, the model will start playing your character for you.');
+  }
   if (!String(yours.postHistory || '').trim() && !String(yours.cardPost || '').trim()) add('postHistory', 'Nothing is read last. A short reminder here (continue the book, keep POV and tense) is the strongest place for it.', 'note');
   if (yours.enhanceDefinitions === 'on') add('enhanceDefinitions', 'On: it tells the model to add what it “knows” about your characters, which invents facts your book doesn’t have.');
   return out;

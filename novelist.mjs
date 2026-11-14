@@ -76,7 +76,8 @@ export function bookValues({voice = '', summary = '', directive = '', focus = ''
  * The "Storyloom Novel" preset: a copy of the writer's preset with the prompts rewritten for writing a book.
  * Sampling and everything else stay as the writer's. Returns a new object; the input is untouched.
  */
-export function novelPreset(presetBody) {
+export function novelPreset(presetBody, {roleplay = false} = {}) {
+  const kit = writingKit(roleplay);
   const p = structuredClone(presetBody || {});
   p.prompts = Array.isArray(p.prompts) ? p.prompts : [];
   const set = (identifier, name, content) => {
@@ -84,10 +85,10 @@ export function novelPreset(presetBody) {
     if (!x) { x = {identifier, name, system_prompt: true, role: 'system', marker: false}; p.prompts.push(x); }
     x.content = content;
   };
-  set('main', 'Main Prompt', CRAFT_MAIN);
-  set('jailbreak', 'Post-History Instructions', POST_HISTORY);
-  p.continue_nudge_prompt = CONTINUE_NUDGE;
-  p.new_chat_prompt = NEW_CHAT_PROMPT;
+  set('main', 'Main Prompt', kit.main);
+  set('jailbreak', 'Post-History Instructions', kit.postHistory);
+  p.continue_nudge_prompt = kit.continueNudge;
+  p.new_chat_prompt = kit.newChat;
   // Enhance Definitions tells the model to add lore of its own — wrong for a book whose facts are fixed.
   for (const order of Array.isArray(p.prompt_order) ? p.prompt_order : []) {
     for (const item of order.order || []) {
@@ -127,4 +128,40 @@ export function parseNarration(text) {
   const line = label => { const m = s.match(new RegExp(`^\\s*${label.replace(/[’']/g, "['’]")}\\s*:\\s*(.+)$`, 'mi')); const v = m?.[1]?.trim() || ''; return /^(none\.?|\(empty\))$/i.test(v) ? '' : v; };
   const values = Object.fromEntries(VALUES.map(v => [v.key, line(v.label.toUpperCase())]));
   return Object.values(values).some(Boolean) ? {values, checkerNote: line('CHECKER NOTE'), editorNote: line('EDITOR NOTE')} : null;
+}
+
+
+/* ---------- Roleplay / campaign: the same three layers, for a game master instead of a novelist ---------- */
+export const RP_PRESET_NAME = 'Storyloom Roleplay';
+export const RP_NARRATOR_NAME = 'Storyloom Game Master';
+
+/** Main Prompt for roleplay: how to run a story with a player in it (craft, not facts). */
+export const RP_MAIN = `You are the narrator and game master of an ongoing roleplay. You play the world and every character in it except {{user}}, who belongs to the player. The player's messages are what {{user}} says and does: take them as happening, show how the world and the people in it respond, and never answer them as a chat partner or comment on them. The facts of the story — its people, places, factions, history, rules and plan — are given to you in the narrator's description and the lorebook entries; follow them over anything you would invent.
+
+Never write {{user}}'s words, actions, thoughts or feelings, and never decide what {{user}} does next. Describe what {{user}} can see, hear and feel from the outside, what others say and do, and the results of what {{user}} attempted, then stop. When {{user}} tries something uncertain, decide the outcome fairly from the situation and any rules the table uses, and let it fail as well as succeed.
+
+Make the world push back. Every other character has their own wants, knowledge and temper: they can refuse, lie, bargain, get angry and stay angry, and they only know what they have seen or been told. What was established stays true — injuries, promises, debts, the weather, where people and things are — until the story changes it. Consequences carry forward, and new trouble grows out of what is already in the story, not out of nowhere.
+
+Write the moment as live scene, with action and dialogue, in the point of view and tense the table uses. Give each character their own way of speaking. Choose one or two exact details over a list, and use sound, smell, touch and temperature as well as sight. Say things plainly and skip stock phrases.
+
+Play one beat per reply: answer what {{user}} just did, move the scene a step, and end on a finished sentence at a point where {{user}} can act — a question asked, a door opening, a blade drawn. Never stop part-way through a sentence. No headings, notes, lists or out-of-character remarks unless the player asks.`;
+
+/** Post-History for roleplay: read last, before every reply. */
+export const RP_POST_HISTORY = `Answer what {{user}} just did, as the world and everyone in it except {{user}}. Never write {{user}}'s words, actions or thoughts. Keep what is established true. End when it is {{user}}'s turn to act.`;
+export const RP_NEW_CHAT_PROMPT = `[A new session of the roleplay begins here.]`;
+
+/** The general game master card: the same blanks as the narrator, filled per chat from the campaign. */
+export const RP_NARRATOR_CARD = `{{char}} is the narrator and game master of this roleplay: the voice of the world and of every character in it except {{user}}, who is the player's.
+
+HOW THIS STORY IS TOLD
+${VALUES.map(v => `${v.label}: {{getvar::${varName(v.key)}}}`).join('\n')}
+
+HOW THE GAME MASTER WORKS
+Hold this point of view, tense and voice in every reply. Play everyone except {{user}}; never speak, act, think or decide for {{user}}. The people, places, factions and plan of the campaign come from the lorebook: use them exactly and add nothing that contradicts them. What has happened stays true; carry its consequences forward.`;
+
+/** Everything Storyloom writes for one kind of book: novel or roleplay. */
+export function writingKit(roleplay = false) {
+  return roleplay
+    ? {roleplay: true, presetName: RP_PRESET_NAME, narratorName: RP_NARRATOR_NAME, card: RP_NARRATOR_CARD, main: RP_MAIN, postHistory: RP_POST_HISTORY, continueNudge: CONTINUE_NUDGE, newChat: RP_NEW_CHAT_PROMPT}
+    : {roleplay: false, presetName: PRESET_NAME, narratorName: NARRATOR_NAME, card: NARRATOR_CARD, main: CRAFT_MAIN, postHistory: POST_HISTORY, continueNudge: CONTINUE_NUDGE, newChat: NEW_CHAT_PROMPT};
 }

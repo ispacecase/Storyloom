@@ -74,7 +74,7 @@ export const summaryTitle = (unit, n) => `Storyloom Memory — ${unit} ${n} Seal
 export const SEAL_SECTIONS = Object.freeze(['SUMMARY', 'WHAT CHANGED', 'WHAT THE NARRATOR NOW KNOWS', 'MUST NOT DRIFT', 'OPEN THREADS', 'CONTRADICTION']);
 
 /** What the model is asked when a chapter ends: a seal note (writer's format), the ledger, and character states. */
-export function chapterEndInstruction({unit = 'Chapter', number, transcript, storySoFar = '', castTitles = [], sealedNotes = '', focus = 'the focus character', narrator = 'the narrator', title = ''}) {
+export function chapterEndInstruction({unit = 'Chapter', number, transcript, storySoFar = '', castTitles = [], sealedNotes = '', focus = 'the focus character', narrator = 'the narrator', title = '', roleplay = false, player = ''}) {
   const u = unit.toLowerCase();
   return `${unit} ${number}${title ? ` — ${title}` : ''} is finished. Below is everything written in its chat. Seal it.
 ${P('chapterEnd')}
@@ -94,7 +94,8 @@ WHERE THINGS STAND: the state of the story at the last line, so the next ${u} be
 - knowledge: who knows what, who was told what, who is lying or hiding something
 - places and things left in a state: doors, vehicles, letters, food, weapons, money — anything a later page could pick up
 - promises, plans, appointments and standing instructions
-WHAT HAPPENED: every significant moment of the ${u} in order, one line each — what was done, said, decided, discovered, noticed or went wrong. Anything a later page could refer back to belongs here.
+${roleplay ? `- the player's character${player ? ` (${player})` : ''}: where they are, their condition, what they carry, what they know, what they've promised or decided — the USER lines are what the player made them do and say
+` : ''}WHAT HAPPENED: every significant moment of the ${u} in order, one line each — what was done, said, decided, discovered, noticed or went wrong${roleplay ? ', by the player\'s character as well as everyone else' : ''}. Anything a later page could refer back to belongs here.
 For WHERE THINGS STAND and WHAT HAPPENED: if in doubt, include it. A missing fact gets contradicted later; an extra line costs nothing. Only what is on the page.
 CONTRADICTION: none — or one line, only if this page conflicts with an earlier sealed note.
 Do not include: the sequence of events in SUMMARY (it goes under WHAT HAPPENED); traits or places the character and place entries already fix, unless this ${u} changed them; dialogue beyond a six-word handle, and only for lines a later scene turns on (a standing instruction, a promise, a lie); a body inventory; anything interpreted rather than read; anything already in an earlier seal unless this ${u} moved it.

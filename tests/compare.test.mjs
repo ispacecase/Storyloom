@@ -40,3 +40,15 @@ test('story names in the craft layer are flagged, Storyloom’s own setup is cle
   assert.deepEqual(Object.values(sl).flat(), []);
   assert.match(compareInstruction({yours: yourPlaces({}, rpPreset), storyloom: storyloomPlaces(), problems: p}), /Names story people/);
 });
+
+test('roleplay: chat wording is fine, but the setup must leave the player’s character alone', async () => {
+  const {RP_MAIN} = await import('../novelist.mjs');
+  const rp = findProblems(storyloomPlaces(null, {roleplay: true}), {roleplay: true, values: {pov: 'Second person', tense: 'Present'}});
+  assert.deepEqual(Object.values(rp).flat(), [], 'Storyloom’s own game master setup is clean');
+  const y = yourPlaces({description: 'You are Mara, talking with {{user}}.'}, {...rpPreset, main: 'Write the next reply in a roleplay with {{user}}.', enhanceDefinitions: false});
+  const p = findProblems(y, {roleplay: true});
+  assert.ok(!p.main.some(x => /Roleplay wording/.test(x.text)));
+  assert.ok(p.main.some(x => /leave your character alone/.test(x.text)));
+  assert.match(storyloomPlaces(null, {roleplay: true}).main, /game master/);
+  assert.ok(RP_MAIN.includes('Never write {{user}}'));
+});

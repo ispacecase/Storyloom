@@ -1,6 +1,6 @@
 import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
-import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
+import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, writingKit, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { chapterProse, bookText, bookDocx, fileName, cleanReply } from './export.mjs';
 import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction } from './compare.mjs';
@@ -462,7 +462,7 @@ async function gatherSnapshot(question) {
   try {
     const pm=c.mainApi==='openai'?c.getPresetManager('openai'):null, presetName=pm?.getSelectedPresetName()||'';
     let n=1; try{n=data().chapter||1;}catch{}
-    writing={preset:presetName,isNovel:presetName===PRESET_NAME,hasNovel:pm?.getPresetList().preset_names?.[PRESET_NAME]!==undefined,prompts:c.mainApi==='openai'?presetPrompts(getChatCompletionPreset()):null,general:usesGeneralNarrator(c),values:readValues(c),chapter:n};
+    writing={preset:presetName,isNovel:presetName===kit().presetName,hasNovel:pm?.getPresetList().preset_names?.[kit().presetName]!==undefined,prompts:c.mainApi==='openai'?presetPrompts(getChatCompletionPreset()):null,general:usesGeneralNarrator(c),values:readValues(c),chapter:n};
   } catch(e){warnLog('Storyloom snapshot (writing setup):',e);}
   return formatSnapshot({managed,memory,writing,
     character:card?{name:card.name,description:String(card.description||card.data?.description||''),lorebook:card.data?.extensions?.world||''}:null,
@@ -501,7 +501,7 @@ function renderAssistant() {
 }
 const PROMPT_IDS={main:'main','post-history':'jailbreak',auxiliary:'nsfw','enhance-definitions':'enhanceDefinitions'};
 /** Change the Storyloom Novel preset (never the writer's own). Backs it up first; returns the old preset. */
-async function changeNovelPreset(mutate,label){return changePreset(PRESET_NAME,mutate,label);}
+async function changeNovelPreset(mutate,label){return changePreset(kit().presetName,mutate,label);}
 /** Change a Chat Completion preset by name, backing it up first. Returns the old preset. */
 async function changePreset(name,mutate,label) {
   const c=context(); if(c.mainApi!=='openai')throw Error('Preset changes need a Chat Completion connection.');
@@ -875,8 +875,8 @@ function narratorComparison() {
   const chat=c.mainApi==='openai', preset=chat?presetPrompts(getChatCompletionPreset()):{};
   const yours=yourPlaces(charSnapshot(ch),preset);
   if(!chat)for(const p of PLACES)if(p.on==='preset')yours[p.key]='';
-  let filled=NARRATOR_CARD; try{filled=c.substituteParams(NARRATOR_CARD);}catch{}
-  return {c,ch,chat,yours,storyloom:storyloomPlaces(filled),presetName:chat?c.getPresetManager('openai').getSelectedPresetName():''};
+  const k=kit(); let filled=k.card; try{filled=c.substituteParams(k.card);}catch{}
+  return {c,ch,chat,yours,roleplay:k.roleplay,storyloom:storyloomPlaces(filled,{roleplay:k.roleplay}),presetName:chat?c.getPresetManager('openai').getSelectedPresetName():''};
 }
 async function compareNames() {try{const d=data(); if(!d.book)return []; return (await bookFacts(d)).castNames||[];}catch{return [];}}
 /** Put Storyloom's version into one place (backing up first). */
@@ -884,7 +884,7 @@ async function useStoryloomPlace(key) {
   const {c,ch,presetName}=narratorComparison(), place=PLACES.find(p=>p.key===key);
   if(place.on==='card') {
     backup({kind:'character',label:`${ch.name} (before Compare narrators: ${place.label})`,target:{avatar:ch.avatar},before:charSnapshot(ch)});
-    const f={description:{description:NARRATOR_CARD},cardMain:{system_prompt:''},charNote:{depth_prompt:{prompt:'',depth:4,role:'system'}},cardPost:{post_history_instructions:''}}[key];
+    const f={description:{description:kit().card},cardMain:{system_prompt:''},charNote:{depth_prompt:{prompt:'',depth:4,role:'system'}},cardPost:{post_history_instructions:''}}[key];
     await writeCharacter(ch.avatar,f);
     if(key==='description')try{await fillBookValues({quiet:true});}catch(e){warnLog('Storyloom book settings:',e);}
   } else {
@@ -892,11 +892,12 @@ async function useStoryloomPlace(key) {
     await changePreset(presetName,p=>{
       const setPrompt=(id,content)=>{p.prompts ??= []; let x=p.prompts.find(q=>q.identifier===id); if(!x){x={identifier:id,name:id,system_prompt:true,role:'system'};p.prompts.push(x);} x.content=content;};
       const enable=(id,on)=>{for(const o of p.prompt_order||[])for(const i of o.order||[])if(i.identifier===id)i.enabled=on;};
-      if(key==='main'){setPrompt('main',CRAFT_MAIN);enable('main',true);}
-      if(key==='postHistory'){setPrompt('jailbreak',POST_HISTORY);enable('jailbreak',true);}
+      const k=kit();
+      if(key==='main'){setPrompt('main',k.main);enable('main',true);}
+      if(key==='postHistory'){setPrompt('jailbreak',k.postHistory);enable('jailbreak',true);}
       if(key==='auxiliary')setPrompt('nsfw','');
       if(key==='continueNudge')p.continue_nudge_prompt=CONTINUE_NUDGE;
-      if(key==='newChat')p.new_chat_prompt=NEW_CHAT_PROMPT;
+      if(key==='newChat')p.new_chat_prompt=kit().newChat;
       if(key==='enhanceDefinitions')enable('enhanceDefinitions',false);
     },`Compare narrators: ${place.label}`);
     try{promptManager?.render?.(false);}catch{}
@@ -908,13 +909,13 @@ async function compareNarrators() {
   const {c,ch,chat,presetName}=narratorComparison(), names=await compareNames();
   const box=el('div',{className:'storyloom-compare'});
   const render=()=>{
-    const {yours,storyloom}=narratorComparison(), problems=findProblems(yours,{values:readValues(c),names});
+    const {yours,storyloom,roleplay}=narratorComparison(), problems=findProblems(yours,{values:readValues(c),names,roleplay});
     const count=Object.values(problems).flat().filter(x=>x.level==='problem').length;
     box.replaceChildren(
       el('h3',{textContent:`Compare narrators — ${ch.name}`}),
       el('p',{className:'storyloom-hint',textContent:`Your narrator card (${ch.name})${chat?` and your preset (“${presetName}”)`:''}, next to Storyloom’s, in every place a narrator’s instructions live. ${count?`${count} problem${count===1?'':'s'} found in yours.`:'No problems found in yours.'} Nothing changes unless you press “Use Storyloom’s” — and each one is backed up first (Extensions → Storyloom → Backups).`}));
     for(const p of PLACES) {
-      const mine=yours[p.key], theirs=storyloom[p.key], probs=problems[p.key]||[], same=String(mine).trim()===String(storyloomPlaces()[p.key]).trim();
+      const mine=yours[p.key], theirs=storyloom[p.key], probs=problems[p.key]||[], same=String(mine).trim()===String(storyloomPlaces(null,{roleplay})[p.key]).trim();
       const det=el('details',{className:'storyloom-compare-row',open:probs.some(x=>x.level==='problem')});
       det.append(el('summary',{},el('b',{textContent:p.label}),' ',el('span',{className:`storyloom-sev is-${probs.some(x=>x.level==='problem')?'hard':same?'ok':'soft'}`,textContent:probs.length?`${probs.length} to look at`:same?'same as Storyloom’s':'different'})));
       det.append(el('p',{className:'storyloom-hint',textContent:p.what}));
@@ -1017,7 +1018,7 @@ async function chatNames(avatar) {
 }
 /** Find each chapter's prose: the chat recorded at seal, else a chat named “Book — Chapter N…”, else this chat for the current chapter. */
 async function collectChapters(d,c) {
-  const u=tpl(d).unit, outline=d.outlineChapters||[], cur=d.chapter||1, rec=d.chapterChats||{};
+  const u=tpl(d).unit, outline=d.outlineChapters||[], cur=d.chapter||1, rec=d.chapterChats||{}, po={unit:u,includeUser:isRP(d),userName:c.name1||''};
   const avatars=[...new Set([c.characters?.[c.characterId]?.avatar,...narratorRegistry(d).map(x=>x.avatar),...Object.values(rec).map(x=>x.avatar)].filter(Boolean))];
   const prefix=`${d.book} — ${u} `.replace(/[\\/:*?"<>|]/g,'-');
   let named=null;
@@ -1033,13 +1034,13 @@ async function collectChapters(d,c) {
       const r=rec[n];
       if(r) {
         const msgs=r.chatId===c.chatId?c.chat:await chatFile(r.avatar,r.chatId);
-        if(msgs){text=chapterProse(msgs,{start:r.start||0,end:r.chatId===c.chatId&&n===cur?null:r.end,unit:u});where=r.chatId;}
+        if(msgs){text=chapterProse(msgs,{start:r.start||0,end:r.chatId===c.chatId&&n===cur?null:r.end,...po});where=r.chatId;}
       }
       if(!text && n===cur) {
         const start=d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===n ? d.chapterStart.index : (rec[n-1]?.chatId===c.chatId?rec[n-1].end:0);
-        text=chapterProse(c.chat,{start,unit:u}); where=c.chatId;
+        text=chapterProse(c.chat,{start,...po}); where=c.chatId;
       }
-      if(!text) {const f=await byName(n); if(f){const msgs=await chatFile(f.avatar,f.file); if(msgs){text=chapterProse(msgs,{unit:u});where=f.file;}}}
+      if(!text) {const f=await byName(n); if(f){const msgs=await chatFile(f.avatar,f.file); if(msgs){text=chapterProse(msgs,po);where=f.file;}}}
     } catch(e){warnLog(`Storyloom export: ${u} ${n}:`,e);}
     chapters.push({number:n,heading,text,where});
   }
@@ -1058,7 +1059,7 @@ async function exportBook() {
   if(!chapters.some(x=>x.text))throw Error(`No ${u.toLowerCase()} text was found yet. Write ${u} 1 in the main chat first.`);
   const missing=chapters.filter(x=>!x.text).map(x=>x.number), words=chapters.reduce((n,x)=>n+(x.text.match(/\S+/g)||[]).length,0);
   const R=c.POPUP_RESULT||{};
-  const pick=await new c.Popup(`<h3>Export ${escHtml(d.book)}</h3><p>${chapters.length} ${u.toLowerCase()}${chapters.length===1?'':'s'}, about ${words.toLocaleString()} words — the narrator’s text only (the showing swipe), without your directions or the chapter-heading greetings.</p>${missing.length?`<p><b>Not found:</b> ${u} ${missing.join(', ')}. Their chats may have been renamed or deleted; those ${u.toLowerCase()}s get a placeholder line.</p>`:''}<p><b>Word (.docx)</b> opens in Word, Google Docs and LibreOffice, with each ${u.toLowerCase()} on a new page. <b>Text (.txt)</b> is plain text.</p>`,c.POPUP_TYPE.TEXT,'',{okButton:'Word (.docx)',cancelButton:'Cancel',customButtons:[{text:'Text (.txt)',result:2}]}).show();
+  const pick=await new c.Popup(`<h3>Export ${escHtml(d.book)}</h3><p>${chapters.length} ${u.toLowerCase()}${chapters.length===1?'':'s'}, about ${words.toLocaleString()} words — ${isRP(d)?'the whole story, your turns included (marked with your character’s name)':'the narrator’s text only (the showing swipe), without your directions or the chapter-heading greetings'}.</p>${missing.length?`<p><b>Not found:</b> ${u} ${missing.join(', ')}. Their chats may have been renamed or deleted; those ${u.toLowerCase()}s get a placeholder line.</p>`:''}<p><b>Word (.docx)</b> opens in Word, Google Docs and LibreOffice, with each ${u.toLowerCase()} on a new page. <b>Text (.txt)</b> is plain text.</p>`,c.POPUP_TYPE.TEXT,'',{okButton:'Word (.docx)',cancelButton:'Cancel',customButtons:[{text:'Text (.txt)',result:2}]}).show();
   const book={title:d.book,chapters};
   if(pick===2)saveFile(fileName(d.book,'txt'),bookText(book),'text/plain;charset=utf-8');
   else if(pick===(R.AFFIRMATIVE??1))saveFile(fileName(d.book,'docx'),bookDocx(book),'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -1118,6 +1119,19 @@ function openStoryloomSettings(section='') {
   setTimeout(()=>(target||drawer)?.scrollIntoView({block:'start',behavior:'smooth'}),350);
 }
 
+/* ---------- Roleplay mode: a campaign template runs sessions with a game master instead of chapters with a novelist ---------- */
+/** True for a roleplay / campaign book (its template counts sessions, or says campaign / roleplay). */
+function isRP(d=null){try{d ??= data(); const t=tpl(d); return t.unit!=='Chapter' || /campaign|role-?play|rpg|d&d/i.test(t.name||'');}catch{return false;}}
+/** The preset, narrator and prompts Storyloom writes for this book. */
+const kit=(d=null)=>writingKit(isRP(d));
+/** Roleplay: the steps that make sense when the player writes half the text (no prose rewriting). */
+const teamSteps=(d,rs=teamSettings())=>activeSteps(rs).filter(s=>!isRP(d) || ['lint','seal'].includes(s.key));
+/** Roleplay: this session's text with the player's turns marked with their character's name. */
+function sessionText(d,c=context()) {
+  const start=d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===(d.chapter||1)?d.chapterStart.index:0;
+  return (c.chat||[]).slice(start).filter(m=>m && !m.is_system && String(m.mes||'').trim() && !(m===c.chat[0] && isHeading(m.mes))).map(m=>m.is_user?`${c.name1||'Player'}: ${String(m.mes).trim()}`:String(m.mes).trim()).join('\n\n');
+}
+
 /* ---------- The chapter team: Checker → Editor → Reader → Revise → Seal ---------- */
 function storedRoles(){const c=context();c.extensionSettings.storyloom ??= {};return c.extensionSettings.storyloom.roles ??= {};}
 const teamSettings=()=>roleSettings(storedRoles());
@@ -1157,14 +1171,14 @@ async function teamRun(label,fn) {
 }
 async function stepLint() {
   const c=context(), d=data(); readyForTeam(d);
-  const parts=chapterParts(c.chat), text=parts.join('\n\n'), f=await bookFacts(d), n=d.chapter||1, note=chapterNote(d);
-  const exact=exactLint(text,{tense:note.tense||f.tense,pov:note.pov||f.pov,knownNames:f.knownNames,castNames:f.castNames,targetWords:f.target});
+  const rp=isRP(d), parts=chapterParts(c.chat), text=rp?sessionText(d,c):parts.join('\n\n'), f=await bookFacts(d), n=d.chapter||1, note=chapterNote(d);
+  const exact=exactLint(text,{tense:note.tense||f.tense,pov:note.pov||f.pov,knownNames:[...f.knownNames,c.name1].filter(Boolean),castNames:f.castNames,targetWords:f.target,roleplay:rp});
   await teamRun('Lint',async signal=>{
     let ai=[], aiNote='', big='';
     if(teamSettings().checker.enabled) {
       status(`The Checker is reading ${f.unit} ${n}…`);
       try {
-        const raw=await roleCall('checker',lintInstruction({unit:f.unit,number:n,chapterText:text,facts:f.facts,chapterNote:note.checker||''}),{signal,check:r=>parseFindings(r).length>0||/no problems found/i.test(r)});
+        const raw=await roleCall('checker',lintInstruction({unit:f.unit,number:n,chapterText:text,facts:f.facts,chapterNote:note.checker||'',roleplay:rp,player:c.name1||'the player'}),{signal,check:r=>parseFindings(r).length>0||/no problems found/i.test(r)});
         ai=parseFindings(raw); big=biggestProblem(raw);
         if(!ai.length && !/no problems found/i.test(raw)){aiNote='The Checker’s book check came back in a form Storyloom couldn’t read; only the exact checks are shown.';logEvent('warn','Lint',aiNote,raw.slice(0,2000));}
       } catch(e) {if(signal.aborted)throw e; aiNote=`The Checker’s book check failed (${e.message}); only the exact checks are shown.`; logEvent('error','Lint',aiNote,e?.stack);}
@@ -1173,7 +1187,7 @@ async function stepLint() {
     const t=teamState(d);
     Object.assign(t,{lint:{at:new Date().toISOString(),words:(text.match(/\S+/g)||[]).length,findings,note:aiNote,big},picks:findings.map(x=>x.id),markup:null,reader:null,notePicks:null,revision:null,accepted:false});
     markDone(t,'lint');
-    status(findings.length?`${findings.length} finding${findings.length===1?'':'s'} in ${f.unit} ${n}. Untick any you don’t want acted on, then send it to the Editor.`:`${f.unit} ${n}: no problems found.`);
+    status(findings.length?`${findings.length} finding${findings.length===1?'':'s'} in ${f.unit} ${n}. ${rp?'Fix anything that matters in the chat (or swipe), then Seal the session.':'Untick any you don’t want acted on, then send it to the Editor.'}`:`${f.unit} ${n}: no problems found.`);
   });
 }
 async function stepMarkup() {
@@ -1245,7 +1259,7 @@ async function autoChapter() {
   const d=data(); readyForTeam(d);
   const u=tpl(d).unit, n=d.chapter||1, run={lint:stepLint,markup:stepMarkup,reader:stepReader};
   logEvent('info','Auto',`${u} ${n}: started`);
-  for(const s of activeSteps(teamSettings()).map(x=>x.key)) {
+  for(const s of teamSteps(d).map(x=>x.key)) {
     const t=teamState(data());
     if(t.done.includes(s))continue;
     if(run[s]){
@@ -1298,7 +1312,7 @@ function currentNarrator(d,c=context(),{record=false}={}) {
   return n;
 }
 
-const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',['CUT OFF']:'Stops mid-sentence',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
+const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',PLAYER:'Acted or spoke for your character',['CUT OFF']:'Stops mid-sentence',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
 const el=(tag,props={},...kids)=>{const e=Object.assign(document.createElement(tag),props);e.append(...kids.filter(k=>k!=null&&k!==false));return e;};
 function checkList(items,picked,onToggle,render) {
   const ul=el('ul',{className:'storyloom-lint-list'});
@@ -1312,7 +1326,7 @@ const noteBits=n=>[el('b',{className:`storyloom-sev is-${n.weight==='must'?'hard
 function renderTeam(d=null) {
   const box=document.getElementById('na-team'); if(!box)return;
   try{d ??= data();}catch{return;}
-  const t=teamState(d), rs=teamSettings(), steps=activeSteps(rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
+  const t=teamState(d), rs=teamSettings(), steps=teamSteps(d,rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
   const open=context().characters?.[context().characterId], narr=open?((d.narrators||[]).find(x=>x.avatar===open.avatar)||{name:open.name}):null;
   const nd=document.getElementById('na-dials'); if(nd)nd.hidden=!dialsOn();
   const und=document.getElementById('na-narrator-undo'); if(und)und.hidden=!d.narratorUndo || d.narratorUndo.avatar!==context().characters?.[context().characterId]?.avatar;
@@ -1439,23 +1453,26 @@ async function createNovelPreset() {
   const c=context();
   if(c.mainApi!=='openai')throw Error('The Storyloom Novel preset is for Chat Completion. Switch the API (plug icon) to Chat Completion first.');
   const pm=c.getPresetManager('openai'), from=pm.getSelectedPresetName();
-  const existing=pm.getPresetList().preset_names?.[PRESET_NAME]!==undefined?pm.getCompletionPresetByName(PRESET_NAME):null;
-  if(existing)backup({kind:'preset',label:`Preset “${PRESET_NAME}” (before it was rebuilt)`,target:{name:PRESET_NAME},before:existing});
-  await pm.savePreset(PRESET_NAME,novelPreset(getChatCompletionPreset()));
-  logEvent('info','Writing setup',`made the “${PRESET_NAME}” preset from “${from}” and switched to it`);
+  const k=kit(), name=k.presetName;
+  const existing=pm.getPresetList().preset_names?.[name]!==undefined?pm.getCompletionPresetByName(name):null;
+  if(existing)backup({kind:'preset',label:`Preset “${name}” (before it was rebuilt)`,target:{name},before:existing});
+  await pm.savePreset(name,novelPreset(getChatCompletionPreset(),{roleplay:k.roleplay}));
+  logEvent('info','Writing setup',`made the “${name}” preset from “${from}” and switched to it`);
   return from;
 }
 /** The general narrator character: found by its blanks, or created. Returns its avatar file name. */
+/** Whether a card is Storyloom's general narrator of the right kind (the game master for roleplay, the novelist's narrator otherwise). */
+const rightNarrator=(desc,k=kit())=>isGeneralNarrator(desc) && /game master/i.test(String(desc).split('\n')[0])===k.roleplay;
 async function ensureNarrator() {
-  const c=context(), found=c.characters.find(x=>isGeneralNarrator(x.description));
+  const c=context(), k=kit(), found=c.characters.find(x=>rightNarrator(x.description,k));
   if(found)return found.avatar;
   const fd=new FormData();
-  for(const [k,v] of Object.entries({ch_name:NARRATOR_NAME,description:NARRATOR_CARD,first_mes:'Chapter 1',personality:'',scenario:'',mes_example:'',creator_notes:'Made by Storyloom. One narrator for every book: its blanks are filled per chat from the book (Storyloom → Book settings). Edit the text around the blanks freely.',talkativeness:'0.5',fav:'false',tags:'Storyloom',extensions:'{}'}))fd.append(k,v);
+  for(const [key,v] of Object.entries({ch_name:k.narratorName,description:k.card,first_mes:`${(()=>{try{return tpl(data()).unit;}catch{return 'Chapter';}})()} 1`,personality:'',scenario:'',mes_example:'',creator_notes:'Made by Storyloom. One narrator for every book: its blanks are filled per chat from the book (Storyloom → Book settings). Edit the text around the blanks freely.',talkativeness:'0.5',fav:'false',tags:'Storyloom',extensions:'{}'}))fd.append(key,v);
   const h=c.getRequestHeaders(); delete h['Content-Type'];
   const r=await fetch('/api/characters/create',{method:'POST',headers:h,body:fd});
-  if(!r.ok)throw Error('SillyTavern couldn’t create the Storyloom Narrator character.');
+  if(!r.ok)throw Error(`SillyTavern couldn’t create the ${k.narratorName} character.`);
   const avatar=(await r.text()).trim(); await c.getCharacters();
-  logEvent('info','Writing setup',`created the “${NARRATOR_NAME}” character`);
+  logEvent('info','Writing setup',`created the “${k.narratorName}” character`);
   return avatar;
 }
 /** After the plan changes in the Storyloom chat: rebuild what depends on it — chapter list, current chapter plan, word budget, memory, book settings. */
@@ -1498,23 +1515,23 @@ async function writingSetup() {
   requireIdle();
   const c=context(), d=data(), u=tpl(d).unit, n=d.chapter||1;
   if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first, so Storyloom knows the book.');
-  const general=usesGeneralNarrator(c), chat=c.mainApi==='openai', pm=chat?c.getPresetManager('openai'):null, onNovel=pm?.getSelectedPresetName()===PRESET_NAME;
+  const k=kit(d), general=rightNarrator(c.characters?.[c.characterId]?.description,k), chat=c.mainApi==='openai', pm=chat?c.getPresetManager('openai'):null, onNovel=pm?.getSelectedPresetName()===k.presetName;
   const form=document.createElement('div'); form.className='storyloom-narrator-form';
   form.innerHTML=`<h3>Writing setup</h3>
     <p class="storyloom-hint">Three layers, each in its own place (why: docs/novel-setups.md in Storyloom). Everything Storyloom changes is backed up first, and the Assistant can talk any of it through with you.</p>
-    <label class="checkbox_label"><input type="checkbox" data-c="preset" ${chat?'checked':'disabled'}> <b>How to write a book</b> — ${chat?(onNovel?'rebuild the “Storyloom Novel” preset from this one':`make a “Storyloom Novel” preset from your “${escHtml(pm.getSelectedPresetName())}” preset and switch to it`):'needs a Chat Completion connection'}. <small>Its Main Prompt teaches the craft; a short reminder goes last; your sliders and your own preset stay as they are.</small></label>
-    ${general?`<p class="storyloom-hint">This chat already uses the general narrator (“${escHtml(c.characters[c.characterId].name)}”).</p>`:`<label class="checkbox_label"><input type="checkbox" data-c="narrator" checked> <b>The narrator</b> — use the general “${NARRATOR_NAME}” for this book <small>(made if you don’t have it). ${u} ${n} opens in a fresh chat with it, with everything carried over; this chat stays.</small></label>`}
+    <label class="checkbox_label"><input type="checkbox" data-c="preset" ${chat?'checked':'disabled'}> <b>${k.roleplay?'How to run the story':'How to write a book'}</b> — ${chat?(onNovel?`rebuild the “${k.presetName}” preset from this one`:`make a “${k.presetName}” preset from your “${escHtml(pm.getSelectedPresetName())}” preset and switch to it`):'needs a Chat Completion connection'}. <small>${k.roleplay?'Its Main Prompt teaches the game master’s craft (play everyone but you, keep the world consistent, never act for your character)':'Its Main Prompt teaches the craft'}; a short reminder goes last; your sliders and your own preset stay as they are.</small></label>
+    ${general?`<p class="storyloom-hint">This chat already uses the general narrator (“${escHtml(c.characters[c.characterId].name)}”).</p>`:`<label class="checkbox_label"><input type="checkbox" data-c="narrator" checked> <b>${k.roleplay?'The game master':'The narrator'}</b> — use the general “${k.narratorName}” for this ${k.roleplay?'campaign':'book'} <small>(made if you don’t have it). ${u} ${n} opens in a fresh chat with it, with everything carried over; this chat stays.</small></label>`}
     ${chat&&((c.chatCompletionSettings?.openai_max_tokens||0)<1000||(c.chatCompletionSettings?.openai_max_context||0)<16000)?`<p class="storyloom-hint is-warning">Your preset’s Max Response Length is ${c.chatCompletionSettings.openai_max_tokens} tokens and its Context Size ${c.chatCompletionSettings.openai_max_context}. That’s very small for a book: a reply of a few paragraphs needs about 1,000–2,000 tokens (more with a thinking model, which thinks before it writes), and a chapter needs a large context. Storyloom doesn’t change your sliders — raise them in the left panel (AI Response Configuration), or ask the Assistant what suits your model.</p>`:''}
     <label class="checkbox_label"><input type="checkbox" data-c="values" checked> <b>This book’s settings</b> — fill the narrator’s blanks (point of view, tense, voice, tone, genre, your rules) from the story lore. <small>“Voice and Boundaries” stays saved in the story lore; it is switched off while the narrator carries it, so a chapter can change it.</small></label>`;
   const ok=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Set it up',cancelButton:'Cancel',wide:true}).show();
   if(ok!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return;
   const on=k=>form.querySelector(`[data-c="${k}"]`)?.checked;
   const done=[];
-  if(on('preset')){const from=await createNovelPreset(); done.push(`the “${PRESET_NAME}” preset (from “${from}”, which is unchanged)`);}
+  if(on('preset')){const from=await createNovelPreset(); done.push(`the “${k.presetName}” preset (from “${from}”, which is unchanged)`);}
   if(!general && on('narrator')) {
     const avatar=await ensureNarrator();
     await startChapterChat({avatar,notes:chapterNote(d)});
-    done.push(`the ${NARRATOR_NAME} in a fresh ${u} ${n} chat`);
+    done.push(`the ${k.narratorName} in a fresh ${u} ${n} chat`);
   } else if(on('values')) {
     if(usesGeneralNarrator())await organizeBook(n);
     await fillBookValues({quiet:true}); done.push('this chat’s book settings');
@@ -1595,7 +1612,7 @@ async function sealChapter({auto=false}={}) {
   const sealedNotes=facts.seals.filter(e=>e.comment!==sumTitle).map(e=>e.content).join('\n\n');
   status(`Seal is reading ${t.unit} ${n} and writing its seal note…`);
   logEvent('info','Seal',`${t.unit} ${n}: started`);
-  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles,sealedNotes,focus:facts.focus||'the focus character',narrator:`${narr?.who||'the narrator'}${note.pov?` (${note.pov})`:facts.pov?` (${facts.pov})`:''}`,title:facts.chapterTitle}),false,null,null,'chapter-end',false,{silentUser:true,mergeState:true,holdForAuthor:'allExcept',keep:[sumTitle,sofarTitle],as:{profile:rs.seal.profile,persona:rs.seal.persona,sampling:ROLES.seal.sampling,label:'Seal'}});
+  const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles,sealedNotes,focus:facts.focus||'the focus character',narrator:`${narr?.who||'the narrator'}${note.pov?` (${note.pov})`:facts.pov?` (${facts.pov})`:''}`,title:facts.chapterTitle,roleplay:isRP(d),player:c.name1||''}),false,null,null,'chapter-end',false,{silentUser:true,mergeState:true,holdForAuthor:'allExcept',keep:[sumTitle,sofarTitle],as:{profile:rs.seal.profile,persona:rs.seal.persona,sampling:ROLES.seal.sampling,label:'Seal'}});
   const summary=(result.updates||[]).find(u=>u.title.trim().toLocaleLowerCase()===sumTitle.toLocaleLowerCase());
   if(!summary){logEvent('error','Seal','no seal note came back');throw Error(`Seal didn’t return the ${t.unit.toLowerCase()} seal note. Nothing was moved on; try again.`);}
   const tail=lastPage(chapterParts(c.chat).slice(-6).join('\n\n'));

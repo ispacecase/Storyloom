@@ -35,7 +35,14 @@ export function cropCutOff(text) {
 }
 
 /** The story prose of one chapter's chat: the narrator's messages (the swipe that's showing), without the chapter heading greeting. */
-export function chapterProse(chat, {start = 0, end = null, unit = 'Chapter'} = {}) {
+export function chapterProse(chat, {start = 0, end = null, unit = 'Chapter', includeUser = false, userName = ''} = {}) {
+  if (includeUser) { // roleplay: the session log, both sides, the player's turns marked with their name
+    const msgs = (chat || []).slice(start, end ?? undefined).filter(m => m && !m.is_system && String(m.mes || '').trim());
+    const heading = new RegExp(`^\\s*${unit}\\s+\\d+\\b[^\\n]{0,120}$`, 'i');
+    return msgs.filter((m, i) => !(i === 0 && !m.is_user && heading.test(String(m.mes).trim())))
+      .map(m => m.is_user ? `${userName || m.name || 'Player'}: ${String(m.mes).trim()}` : cropCutOff(cleanReply(m.mes).trim()))
+      .filter(Boolean).join('\n\n');
+  }
   const msgs = (chat || []).slice(start, end ?? undefined);
   const heading = new RegExp(`^\\s*${unit}\\s+\\d+\\b[^\\n]{0,120}$`, 'i');
   return msgs

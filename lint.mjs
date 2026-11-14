@@ -139,6 +139,8 @@ export const SEVERITY = Object.freeze({TENSE: 'hard', POV: 'hard', UNLISTED: 'ha
 /** All exact checks. `book` = {tense, pov, knownNames, castNames, targetWords, stock}. */
 export function exactLint(text, book = {}) {
   const paras = paragraphs(text);
+  // Roleplay: only what breaks the story (names, cut-off replies) — not prose style, and the player's own turns aren't prose.
+  if (book.roleplay) return [...unknownNames(paras, book.knownNames || []), ...nameDrift(paras, book.castNames || []), ...cutOffCheck(text)].map(f => ({...f, severity: SEVERITY[f.kind] || 'soft'}));
   return [
     ...povSlips(paras, book.pov), ...tenseSlips(paras, book.tense),
     ...unknownNames(paras, book.knownNames || []), ...nameDrift(paras, book.castNames || []),
@@ -146,23 +148,24 @@ export function exactLint(text, book = {}) {
   ].map(f => ({...f, severity: SEVERITY[f.kind] || 'soft'}));
 }
 
-export const LINT_KINDS = Object.freeze(['GRAMMAR', 'CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY', 'PLAN']);
+export const LINT_KINDS = Object.freeze(['GRAMMAR', 'CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY', 'PLAN', 'PLAYER']);
 /** The chapter with line numbers, matching the exact checks' line numbers. */
 export const numbered = text => paragraphs(text).map(p => `${p.n}| ${p.text}`).join('\n');
 /** Ask the model to check the chapter against the book's facts. */
-export function lintInstruction({unit = 'Chapter', number = 1, chapterText = '', facts = '', chapterNote = ''}) {
+export function lintInstruction({unit = 'Chapter', number = 1, chapterText = '', facts = '', chapterNote = '', roleplay = false, player = 'the player'}) {
   return `Check ${unit} ${number} below against the book's own facts and rules. Report problems; do not rewrite, do not praise.
 Check for exactly these kinds of problem:
-- GRAMMAR: spelling, punctuation, grammar, agreement, missing or doubled words in the narration (not deliberate voice in dialogue or in a narrator whose voice is meant to be rough).
-- CHARACTER: someone acts against their established personality, wants or history.
+${roleplay ? `- PLAYER: the narrator spoke, acted, thought, felt or decided for ${player} (the player's character, whose lines are marked "${player}:") — anything ${player} did that the player didn't write. Only check the narrator's lines.
+` : `- GRAMMAR: spelling, punctuation, grammar, agreement, missing or doubled words in the narration (not deliberate voice in dialogue or in a narrator whose voice is meant to be rough).
+`}- CHARACTER: someone acts against their established personality, wants or history.
 - VOICE: someone's dialogue does not sound like the VOICE AND MANNERISMS in their profile.
 - CHAPTER ORDER: events, reveals or knowledge that the outline puts in a different ${unit.toLowerCase()} (later or earlier).
 - TIMELINE: times, days, durations or order of events that do not fit the timeline or this ${unit.toLowerCase()}'s place in it.
 - PERIOD: things that do not exist or fit in the story's time and setting (technology, money, slang, brands, customs).
 - RULE: anything the writer said the story must or must never do.
 - CONTINUITY: anything that contradicts a sealed note's MUST NOT DRIFT, how the previous ${unit.toLowerCase()} left things (WHERE THINGS STAND: time, weather, where people are and what shape they are in, who knows what, things left in a state, promises) unless the text shows time passing or the change happening, or another established fact.
-- PLAN: what the outline plans for THIS ${unit.toLowerCase()} that the text has not done yet — each planned event or turn that hasn't happened, and whether the text reaches the ${unit.toLowerCase()}'s planned ending. For these there is no line to quote: quote the planned event from the outline instead and leave out the line number, e.g. - [PLAN] [hard] "<the planned event, quoted from the outline>" — planned for this ${unit.toLowerCase()}, hasn't happened yet (the outline). Use hard for a missing event, soft for an ending that is close but not reached. If everything planned has happened, write no PLAN lines.
-Each line of the chapter is numbered ("12| …"). Write one line per problem, exactly like this:
+${roleplay ? '' : `- PLAN: what the outline plans for THIS ${unit.toLowerCase()} that the text has not done yet — each planned event or turn that hasn't happened, and whether the text reaches the ${unit.toLowerCase()}'s planned ending. For these there is no line to quote: quote the planned event from the outline instead and leave out the line number, e.g. - [PLAN] [hard] "<the planned event, quoted from the outline>" — planned for this ${unit.toLowerCase()}, hasn't happened yet (the outline). Use hard for a missing event, soft for an ending that is close but not reached. If everything planned has happened, write no PLAN lines.
+`}Each line of the chapter is numbered ("12| …"). Write one line per problem, exactly like this:
 - [KIND] [hard|soft] line N: "exact quote from that line, under 20 words" — what it breaks, naming the source (e.g. Ben's profile, the outline for Chapter 3, the writer's rule, the Chapter 1 seal)
 Mark it hard if it contradicts canon (the book's facts, the outline, a seal, the writer's rules), soft if it is a matter of taste.
 Quote exactly — no paraphrasing. Measure, don't rewrite: no replacement sentences, at most one short clause of fix.
