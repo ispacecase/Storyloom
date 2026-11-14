@@ -61,7 +61,7 @@ export function cleanCharacterKeys(entries) {
   }
 }
 
-export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
+export function layoutBook(source,{chapter=1,create,template=NOVEL,voiceViaNarrator=false}={}) {
   const t=template;
   const book=structuredClone(source);
   const entries=Object.values(book.entries||{});
@@ -75,6 +75,13 @@ export function layoutBook(source,{chapter=1,create,template=NOVEL}={}) {
     else set(find(e.title),{constant:false,disable:false,order:ORDER.place,excludeRecursion:true});
   }
   set(find(t.outline.title),{disable:true});
+  // With Storyloom's general narrator, the book's point of view, tense and voice reach the story through the narrator's
+  // values (one place, chapter overrides possible). The entry stays saved as the record — switched off, with a note.
+  const voiceEntry=t.entries.filter(e=>e.show==='always').map(e=>find(e.title)).find(e=>/^[\s*_#-]*(POV|POINT OF VIEW)\s*:/mi.test(String(e?.content||'')));
+  if(voiceEntry) {
+    voiceEntry.content=String(voiceEntry.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'');
+    if(voiceViaNarrator){voiceEntry.disable=true;voiceEntry.constant=false;voiceEntry.content=`(Storyloom: kept here as the book’s record and switched off on purpose — the narrator gets these settings through its book settings, so a chapter can change them. Switch it on again any time.)\n${voiceEntry.content}`;}
+  }
   if(hasProfiles)set(find(t.cast),{disable:true});
   // Planning-only entries are switched off on purpose; say so inside them, since the editor only shows "disabled".
   const note=(entry,text)=>{if(entry)entry.content=`(Storyloom: ${text})\n${String(entry.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'')}`;};

@@ -83,3 +83,17 @@ test('switched-off planning entries say why, once, without breaking the chapter 
   assert.match(out.entries[2].content, /^\(Storyloom: planning notes, switched off on purpose/);
   assert.deepEqual(chapterList(out.entries[1].content).map(c => c.number), [1, 2]);
 });
+
+test('with the general narrator, the voice entry stays saved but is switched off with a note', async () => {
+  const {layoutBook} = await import('../lorebook-layout.mjs');
+  const {NOVEL} = await import('../templates.mjs');
+  const voiceTitle = NOVEL.entries.find(e => e.show === 'always').title;
+  const book = {entries: {0: {uid: 0, comment: voiceTitle, content: 'POV: Third person, Mara.\nTENSE: Past.', constant: true, disable: false, key: []}}};
+  const on = layoutBook(book, {template: NOVEL});
+  assert.equal(on.entries[0].disable, false);
+  const off = layoutBook(book, {template: NOVEL, voiceViaNarrator: true});
+  assert.equal(off.entries[0].disable, true);
+  assert.match(off.entries[0].content, /^\(Storyloom: kept here[\s\S]*POV: Third person, Mara\.\nTENSE: Past\.$/);
+  const back = layoutBook(off, {template: NOVEL});
+  assert.equal(back.entries[0].content, 'POV: Third person, Mara.\nTENSE: Past.');
+});

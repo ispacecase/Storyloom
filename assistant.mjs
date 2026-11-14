@@ -10,7 +10,7 @@ const POSITION_NAMES = Object.fromEntries(Object.entries(POSITIONS).map(([k, v])
 export const ROLES = Object.freeze({system: 0, user: 1, assistant: 2});
 const ROLE_NAMES = ['system', 'user', 'assistant'];
 
-const ACTION_FORMAT = `When — and only when — the writer wants a lorebook change, propose it as one block per change, after your reply:
+const ACTION_FORMAT = `When — and only when — the writer wants a change, propose it as one block per change, after your reply. Lorebook changes:
 === ACTION: add-entry | edit-entry | set-placement
 BOOK: exact lorebook name
 TITLE: exact entry title (for edit-entry and set-placement, an entry that exists)
@@ -24,7 +24,27 @@ ORDER: number                     (optional priority; higher goes first)
 CONTENT:
 the complete entry text (add-entry; for edit-entry only if the text changes)
 === END
-The writer sees each block as a card with an Apply button; nothing changes until they click it. Never claim you changed anything yourself. Never propose changes to presets, character cards or settings — explain where the writer can change those instead. Never put documentation text into a story lorebook.`;
+Writing-setup changes (only these; see HOW STORYLOOM SETS UP WRITING):
+=== ACTION: set-preset-prompt
+PROMPT: main | post-history | continue-nudge | new-chat | auxiliary
+CONTENT:
+the complete new text
+=== END
+=== ACTION: toggle-prompt
+PROMPT: main | post-history | auxiliary | enhance-definitions
+ENABLED: yes | no
+=== END
+=== ACTION: set-book-setting
+NAME: narrator | pov | tense | voice | tone | genre | rules
+SCOPE: chapter | book          (chapter = only the current chapter; book = also save it into the book's “Voice and Boundaries” record — only for pov, tense, tone, voice, rules)
+CONTENT:
+the new value
+=== END
+=== ACTION: set-narrator-card
+CONTENT:
+the complete new description of the general narrator card (keep every {{getvar::storyloom_…}} blank in it)
+=== END
+The writer sees each block as a card with an Apply button; nothing changes until they click it, and the old version is backed up first. Never claim you changed anything yourself. Preset changes only ever touch the “Storyloom Novel” preset, never the writer's own presets: if it doesn't exist yet, tell them to use Writing setup… on the Memory tab. Never propose changes to SillyTavern settings outside these (sliders, connections, other characters) — explain where the writer can change those instead. Never put documentation text into a story lorebook.`;
 
 /** How Storyloom itself delivers its entries; the assistant must not "fix" these. */
 const STORYLOOM_DESIGN = `How Storyloom sets up a novel's lorebook (deliberate — never suggest changing it):
@@ -34,8 +54,18 @@ const STORYLOOM_DESIGN = `How Storyloom sets up a novel's lorebook (deliberate �
 - Never propose cards for entries managed by Storyloom; they will be refused. Point the writer to the Memory tab or the Author's Note instead.
 - Long entry texts in the snapshot may be shortened for space; a marked "[…shortened here…]" is not a problem in the real entry. Never put a shortened text into an edit-entry card — you would cut the real entry short. If you only see part of an entry, describe the change in words instead.`;
 
+/** How Storyloom sets up the story chat for writing — the assistant's map of it. */
+const STORYLOOM_SETUP = `HOW STORYLOOM SETS UP WRITING (based on research; details in the STORYLOOM KNOWLEDGE excerpts)
+Every SillyTavern slot is just text placed somewhere in one long prompt; what matters is what it says, where it sits and its role. The top frames the job, the end is followed most strongly, the middle is easily lost; system text is followed as instruction, user text is answered, assistant text is imitated.
+Three layers keep "how to write" apart from "what's in the story", as NovelAI, Novelcrafter and Sudowrite do:
+1. The “Storyloom Novel” preset — a copy of the writer's own Chat Completion preset. Its Main Prompt teaches the craft of writing a book (scenes not summary, show don't tell, subtext, point-of-view discipline, end each reply on an open beat, manuscript text only); its Post-History Instructions are a short reminder read last; its continue-nudge and new-chat prompts speak of passages and chapters; Enhance Definitions is off so the model doesn't invent lore. The sliders are the writer's own and depend on their model.
+2. One general narrator card (“Storyloom Narrator”) — the narrator, with blanks {{getvar::storyloom_narrator}}, _pov, _tense, _voice, _tone, _genre, _rules. SillyTavern fills the blanks from this chat's variables, so one card serves every book.
+3. Book settings — this chat's values for those blanks. Storyloom fills them from the book's “Voice and Boundaries” entry and the summary entry; a chapter can override them (a different narrator or tense). “Voice and Boundaries” stays saved in the lorebook as the record; while the general narrator carries it, it is switched off there so it can't contradict a chapter's own settings.
+Story facts live in the lorebook (characters and places arrive when named). Storyloom's Memory sends Story so far and Previously at the start of the chat, this chapter's plan near the end, and (optionally) the whole outline. The writer's message is the direction for the next passage and comes last.
+When the writer wants better prose, look for the cause in this order: the latest replies (the model imitates them), the end of the prompt (Post-History), the chapter plan, then the Main Prompt. Say what you'd change and why, and propose it as a card.`;
+
 export function assistantSystem() {
-  return `${P('assistant')}\n\nYou are given (1) a snapshot of the writer's live SillyTavern setup, (2) excerpts from the official SillyTavern documentation chosen for this question, and (3) the conversation so far. Base answers about how SillyTavern works on the documentation excerpts and name the page you used, like (Docs: Usage › worldinfo). If the excerpts don't cover something, say so rather than guessing. Base answers about the writer's setup on the snapshot.\n\n${STORYLOOM_DESIGN}\n\n${ACTION_FORMAT}`;
+  return `${P('assistant')}\n\n${STORYLOOM_SETUP}\n\nYou are given (1) a snapshot of the writer's live SillyTavern setup, (2) excerpts from the official SillyTavern documentation chosen for this question, and (3) the conversation so far. Base answers about how SillyTavern works on the documentation excerpts and name the page you used, like (Docs: Usage › worldinfo). If the excerpts don't cover something, say so rather than guessing. Base answers about the writer's setup on the snapshot.\n\n${STORYLOOM_DESIGN}\n\n${ACTION_FORMAT}`;
 }
 
 const strategyOf = e => e.disable ? 'off' : e.constant ? 'always' : e.vectorized ? 'vector' : 'keyword';
@@ -62,6 +92,13 @@ export function formatSnapshot(s) {
   if (s.authorsNote) lines.push(`Author's Note: ${s.authorsNote.text ? `${words(s.authorsNote.text)} words${/Novel Architect|Storyloom writing directive/.test(s.authorsNote.text) ? ', contains the Storyloom writing directive' : ''}` : 'empty'}, position ${s.authorsNote.position}, depth ${s.authorsNote.depth}, role ${s.authorsNote.role}`);
   if (s.memory?.length) lines.push(`Sent by Storyloom itself each reply (Memory tab): ${s.memory.map(m => `${m.label} — ${m.words ? `${m.words} words, ${m.where}` : 'empty, not sent'}`).join('; ')}`);
   if (s.connection) lines.push(`Main connection: ${s.connection}`);
+  if (s.writing) {
+    const w = s.writing;
+    lines.push(`Preset in use: “${w.preset || '?'}”${w.isNovel ? ' (the Storyloom Novel preset)' : w.hasNovel ? ' (a Storyloom Novel preset exists but is not in use)' : ' (no Storyloom Novel preset yet)'}`);
+    if (w.prompts) lines.push(`Preset prompts — Main Prompt${w.prompts.mainOn ? '' : ' [off]'}: ${w.prompts.main.slice(0, 1500) || '(empty)'}\nPost-History Instructions${w.prompts.postHistoryOn ? '' : ' [off]'}: ${w.prompts.postHistory || '(empty)'}\nAuxiliary: ${w.prompts.auxiliary || '(empty)'}\nContinue nudge: ${w.prompts.continueNudge}\nNew chat prompt: ${w.prompts.newChat}\nEnhance Definitions: ${w.prompts.enhanceDefinitions ? 'on' : 'off'}`);
+    lines.push(`Narrator card: ${w.general ? 'the general Storyloom Narrator (blanks filled by book settings)' : 'not the general narrator'}`);
+    if (w.values) lines.push(`Book settings in this chat (chapter ${w.chapter}): ${Object.entries(w.values).map(([k, v]) => `${k}: ${v || '(empty)'}`).join(' | ')}`);
+  }
   if (s.novel) lines.push(`Storyloom project: ${s.novel}`);
   if (s.entries?.length) {
     lines.push(`Entries in the chat lorebook “${s.chatLorebook}”:`);
@@ -99,7 +136,14 @@ export function parseActions(text) {
   return {reply: reply.join('\n').trim(), actions, problems};
 }
 
+const SETUP_ACTIONS = {
+  'set-preset-prompt': a => { const p = String(a.prompt || '').toLowerCase(); if (!['main', 'post-history', 'continue-nudge', 'new-chat', 'auxiliary'].includes(p)) throw Error('set-preset-prompt needs PROMPT: main, post-history, continue-nudge, new-chat or auxiliary.'); if (!a.content) throw Error(`set-preset-prompt (${p}) needs CONTENT.`); return {type: a.type, prompt: p, content: a.content}; },
+  'toggle-prompt': a => { const p = String(a.prompt || '').toLowerCase(); if (!['main', 'post-history', 'auxiliary', 'enhance-definitions'].includes(p)) throw Error('toggle-prompt needs PROMPT: main, post-history, auxiliary or enhance-definitions.'); return {type: a.type, prompt: p, enabled: /^y/i.test(a.enabled || '')}; },
+  'set-book-setting': a => { const n = String(a.name || '').toLowerCase(); if (!['narrator', 'pov', 'tense', 'voice', 'tone', 'genre', 'rules'].includes(n)) throw Error('set-book-setting needs NAME: narrator, pov, tense, voice, tone, genre or rules.'); const scope = /^b/i.test(a.scope || '') ? 'book' : 'chapter'; return {type: a.type, name: n, scope, content: String(a.content ?? a.value ?? '').trim()}; },
+  'set-narrator-card': a => { if (!a.content) throw Error('set-narrator-card needs CONTENT.'); if (!/\{\{getvar::storyloom_pov\}\}/.test(a.content)) throw Error('The narrator card must keep its {{getvar::storyloom_…}} blanks.'); return {type: a.type, content: a.content}; },
+};
 function normalizeAction(a) {
+  if (SETUP_ACTIONS[a.type]) return SETUP_ACTIONS[a.type](a);
   const types = ['add-entry', 'edit-entry', 'set-placement'];
   if (!types.includes(a.type)) throw Error(`Unknown action “${a.type}”.`);
   if (!a.book) throw Error(`A ${a.type} card is missing BOOK.`);
@@ -118,7 +162,12 @@ function normalizeAction(a) {
 }
 
 /** Human-readable summary of what Apply will do. */
+const PROMPT_LABELS = {main: 'Main Prompt', 'post-history': 'Post-History Instructions', 'continue-nudge': 'continue nudge', 'new-chat': 'new chat prompt', auxiliary: 'Auxiliary Prompt', 'enhance-definitions': 'Enhance Definitions'};
 export function describeAction(a) {
+  if (a.type === 'set-preset-prompt') return `Change the ${PROMPT_LABELS[a.prompt]} of the “Storyloom Novel” preset`;
+  if (a.type === 'toggle-prompt') return `Turn ${a.enabled ? 'on' : 'off'} ${PROMPT_LABELS[a.prompt]} in the “Storyloom Novel” preset`;
+  if (a.type === 'set-book-setting') return `Set this ${a.scope === 'book' ? 'book' : 'chapter'}’s ${a.name} to “${a.content.slice(0, 80)}${a.content.length > 80 ? '…' : ''}”${a.scope === 'book' ? ' (also saved in “Voice and Boundaries”)' : ''}`;
+  if (a.type === 'set-narrator-card') return 'Change the general narrator card’s description';
   const parts = [];
   if (a.strategy) parts.push(a.strategy === 'always' ? 'always on' : a.strategy === 'off' ? 'switched off' : 'triggered by keywords');
   if (a.position) parts.push(a.position === 'depth' ? `placed at depth ${a.depth ?? 4}${a.role ? ` as ${a.role}` : ''}` : `placed: ${a.position}`);

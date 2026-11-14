@@ -265,3 +265,6 @@
 .storyloom-narrator-form .checkbox_label small { opacity:.75; }
 .storyloom-narrator-form label { display:block; text-align:left; margin-top:.5rem; }
 .storyloom-narrator-form textarea { width:100%; }
+.storyloom-narrator-form .checkbox_label { display:block; text-align:left; }
+.storyloom-narrator-form .checkbox_label input { margin-right:.35rem; vertical-align:middle; }
+.storyloom-narrator-form .is-warning { color:#e0b252; }

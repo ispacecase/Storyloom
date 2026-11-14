@@ -85,3 +85,13 @@ test('the assistant knows what Storyloom delivers itself and cannot switch it on
   assert.throws(() => applyAction(long, {type: 'edit-entry', book: 'B', title: 'Voice', content: 'POV: First person.\nTone: A'}, () => null), /cut “Voice” from .* — it looks like the assistant only saw part of it/);
   assert.doesNotThrow(() => applyAction(long, {type: 'edit-entry', book: 'B', title: 'Voice', content: 'POV: Third person.\nTone: Bright.'}, () => null), 'a genuinely different shorter text is allowed');
 });
+
+test('the assistant can propose writing-setup changes, checked strictly', async () => {
+  const {parseActions, describeAction, assistantSystem} = await import('../assistant.mjs');
+  const r = parseActions('Here.\n=== ACTION: set-preset-prompt\nPROMPT: main\nCONTENT:\nYou are a novelist.\n=== END\n=== ACTION: set-book-setting\nNAME: pov\nSCOPE: book\nCONTENT:\nFirst person, Danny\n=== END\n=== ACTION: set-narrator-card\nCONTENT:\nNo blanks here\n=== END\n=== ACTION: toggle-prompt\nPROMPT: sliders\nENABLED: no\n=== END');
+  assert.deepEqual(r.actions.map(a => a.type), ['set-preset-prompt', 'set-book-setting']);
+  assert.equal(r.problems.length, 2);
+  assert.match(describeAction(r.actions[1]), /book’s pov.*Voice and Boundaries/);
+  assert.match(assistantSystem(), /HOW STORYLOOM SETS UP WRITING[\s\S]*Storyloom Novel/);
+  assert.match(assistantSystem(), /never the writer's own presets/);
+});

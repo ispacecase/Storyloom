@@ -1,5 +1,6 @@
 import { doNewChat } from '../../../../script.js';
-import { promptManager } from '../../../openai.js';
+import { promptManager, getChatCompletionPreset } from '../../../openai.js';
+import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
@@ -427,6 +428,15 @@ async function ensureDocs({force=false}={}) {
   renderDocsStatus();
   return cache.chunks;
 }
+/** Storyloom's own research (docs/ in the extension), searched alongside the SillyTavern docs. */
+const STORYLOOM_DOCS=['prompt-slots.md','novel-craft.md','novel-setups.md'];
+let storyloomChunks=null;
+async function loadStoryloomDocs() {
+  if(storyloomChunks)return storyloomChunks;
+  const out=[];
+  for(const f of STORYLOOM_DOCS){try{const r=await fetch(new URL(`docs/${f}`,import.meta.url),{cache:'no-store'}); if(r.ok)out.push(...chunkMarkdown(`storyloom/${f}`,await r.text()));}catch(e){warnLog('Storyloom knowledge:',e);}}
+  return storyloomChunks=out;
+}
 async function gatherSnapshot(question) {
   const c=context(), wi=await import('../../../world-info.js'), oai=c.chatCompletionSettings||{};
   const order=(oai.prompt_order||[]).find(o=>Number(o.character_id)===100001)?.order || [];
@@ -446,7 +456,13 @@ async function gatherSnapshot(question) {
   try{const d=data(); if(d.book)novel=`lorebook “${d.book}”, template ${tpl(d).name}, ${d.interview?.phase==='done'?`planned, now on ${tpl(d).unit} ${d.chapter||1}`:`planning (${d.interview?.phase||'not started'})`}`;}catch{}
   const md=c.chatMetadata||{};
   const {managed,memory}=await storyloomManaged();
-  return formatSnapshot({managed,memory,
+  let writing=null;
+  try {
+    const pm=c.mainApi==='openai'?c.getPresetManager('openai'):null, presetName=pm?.getSelectedPresetName()||'';
+    let n=1; try{n=data().chapter||1;}catch{}
+    writing={preset:presetName,isNovel:presetName===PRESET_NAME,hasNovel:pm?.getPresetList().preset_names?.[PRESET_NAME]!==undefined,prompts:c.mainApi==='openai'?presetPrompts(getChatCompletionPreset()):null,general:usesGeneralNarrator(c),values:readValues(c),chapter:n};
+  } catch(e){warnLog('Storyloom snapshot (writing setup):',e);}
+  return formatSnapshot({managed,memory,writing,
     character:card?{name:card.name,description:String(card.description||card.data?.description||''),lorebook:card.data?.extensions?.world||''}:null,
     chatLorebook,globalLorebooks:[...(wi.selected_world_info||[])],allLorebooks:c.getWorldInfoNames(),
     worldInfo:{depth:wi.world_info_depth,budget:wi.world_info_budget,recursive:wi.world_info_recursive,caseSensitive:wi.world_info_case_sensitive,wholeWords:wi.world_info_match_whole_words},
@@ -481,8 +497,80 @@ function renderAssistant() {
   });
   log.scrollTop=log.scrollHeight;
 }
+const PROMPT_IDS={main:'main','post-history':'jailbreak',auxiliary:'nsfw','enhance-definitions':'enhanceDefinitions'};
+/** Change the Storyloom Novel preset (never the writer's own). Backs it up first; returns the old preset. */
+async function changeNovelPreset(mutate,label) {
+  const c=context(); if(c.mainApi!=='openai')throw Error('Preset changes need a Chat Completion connection.');
+  const pm=c.getPresetManager('openai'), list=pm.getPresetList();
+  if(list.preset_names?.[PRESET_NAME]===undefined)throw Error(`There is no “${PRESET_NAME}” preset yet. Use Writing setup… on the Memory tab to make it.`);
+  const selected=pm.getSelectedPresetName()===PRESET_NAME;
+  const before=selected?getChatCompletionPreset():structuredClone(pm.getCompletionPresetByName(PRESET_NAME));
+  const after=structuredClone(before); mutate(after);
+  backup({kind:'preset',label:`Preset “${PRESET_NAME}” (before: ${label})`,target:{name:PRESET_NAME},before});
+  await pm.savePreset(PRESET_NAME,after,{skipUpdate:!selected});
+  if(!selected)list.presets[list.preset_names[PRESET_NAME]]=after;
+  return before;
+}
+async function applySetupAction(a) {
+  const c=context();
+  if(a.type==='set-preset-prompt'||a.type==='toggle-prompt') {
+    const before=await changeNovelPreset(p=>{
+      if(a.type==='set-preset-prompt') {
+        if(a.prompt==='continue-nudge')p.continue_nudge_prompt=a.content;
+        else if(a.prompt==='new-chat')p.new_chat_prompt=a.content;
+        else {p.prompts ??= []; let x=p.prompts.find(q=>q.identifier===PROMPT_IDS[a.prompt]); if(!x){x={identifier:PROMPT_IDS[a.prompt],name:a.prompt,system_prompt:true,role:'system'};p.prompts.push(x);} x.content=a.content;}
+      } else for(const o of p.prompt_order||[])for(const i of o.order||[])if(i.identifier===PROMPT_IDS[a.prompt])i.enabled=a.enabled;
+    },describeAction(a));
+    return {kind:'preset',before};
+  }
+  if(a.type==='set-book-setting') {
+    const d=data(), n=d.chapter||1, prevValues=readValues(c), prevChapter=structuredClone(d.chapterValues?.[n]||{});
+    const values={...prevValues,[a.name]:a.content};
+    d.chapterValues ??= {}; d.chapterValues[n]={...(d.chapterValues[n]||{}),[a.name]:a.content};
+    if(a.name==='pov'||a.name==='tense'){d.chapterNotes ??= {}; d.chapterNotes[n]={...(d.chapterNotes[n]||{}),[a.name]:a.content};}
+    let bookUndo=null;
+    if(a.scope==='book' && ['pov','tense','tone','voice','rules'].includes(a.name)) {
+      const label={pov:'POV',tense:'TENSE',tone:'TONE',voice:'REGISTER',rules:'ALWAYS OR NEVER'}[a.name];
+      const before=await freshBook(d.book), book=structuredClone(before);
+      const e=Object.values(book.entries||{}).find(x=>/^[\s*_#-]*(POV|POINT OF VIEW)\s*:/mi.test(String(x.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'')) && !/^Current Writing Directive$/i.test(x.comment||''));
+      if(!e)throw Error('This book has no “Voice and Boundaries” entry to save it in.');
+      const re=new RegExp(`^([\\s*_#-]*${label}\\s*:).*$`,'mi');
+      e.content=re.test(e.content)?e.content.replace(re,`$1 ${a.content}`):`${e.content}\n${label}: ${a.content}`;
+      await c.saveWorldInfo(d.book,book,true);
+      d.history ??= []; d.history.push({id:crypto.randomUUID(),book:d.book,changes:buildChange(before,book),source:`assistant: ${a.name}`,at:new Date().toISOString()});
+      bookUndo={uid:e.uid,before:before.entries[e.uid],after:book.entries[e.uid]};
+      delete d.chapterValues[n][a.name];
+    }
+    await persist(); await writeValues(values); await applyMemory(); renderTeam();
+    return {kind:'value',prevValues,prevChapter,chapter:n,bookUndo};
+  }
+  if(a.type==='set-narrator-card') {
+    const ch=c.characters.find(x=>isGeneralNarrator(x.description)); if(!ch)throw Error(`There is no general narrator yet. Use Writing setup… on the Memory tab to make “${NARRATOR_NAME}”.`);
+    const before=charSnapshot(ch);
+    backup({kind:'character',label:`${ch.name} (before the Assistant’s change)`,target:{avatar:ch.avatar},before});
+    await writeCharacter(ch.avatar,{description:a.content});
+    return {kind:'narrator',avatar:ch.avatar,before};
+  }
+  throw Error(`Unknown change “${a.type}”.`);
+}
+async function undoSetupAction(a) {
+  const c=context(), u=a.undo;
+  if(u.kind==='preset'){await changeNovelPreset(p=>{for(const k of Object.keys(p))delete p[k]; Object.assign(p,structuredClone(u.before));},'undo');}
+  else if(u.kind==='narrator'){await writeCharacter(u.avatar,{description:u.before.description});}
+  else if(u.kind==='value') {
+    const d=data(); d.chapterValues ??= {}; d.chapterValues[u.chapter]=u.prevChapter;
+    if(u.bookUndo){const book=await freshBook(d.book); if(JSON.stringify(book.entries?.[u.bookUndo.uid])!==JSON.stringify(u.bookUndo.after))throw Error('“Voice and Boundaries” changed since; edit it in the lorebook instead.'); book.entries[u.bookUndo.uid]=u.bookUndo.before; await c.saveWorldInfo(d.book,book,true);}
+    await persist(); await writeValues(u.prevValues); await applyMemory(); renderTeam();
+  }
+}
 async function applyAssistantAction(mi,id) {
   const st=assistantState(), a=st.messages[mi]?.actions?.find(x=>x.id===id); if(!a)return;
+  if(!a.book) {
+    requireIdle();
+    try {a.undo=await applySetupAction(a); a.status='applied'; a.error=''; saveAssistant(); renderAssistant(); status(`Applied: ${describeAction(a)}`); logEvent('info','Assistant',`applied: ${describeAction(a)}`);}
+    catch(e){a.error=e.message; saveAssistant(); renderAssistant(); throw e;}
+    return;
+  }
   requireIdle(); syncing=true;
   try {
     const c=context();
@@ -499,6 +587,7 @@ async function applyAssistantAction(mi,id) {
 }
 async function undoAssistantAction(mi,id) {
   const st=assistantState(), a=st.messages[mi]?.actions?.find(x=>x.id===id); if(!a?.undo)return;
+  if(!a.book){requireIdle(); await undoSetupAction(a); a.status='pending'; delete a.undo; saveAssistant(); renderAssistant(); status(`Undone: ${describeAction(a)}. The card can be applied again.`); logEvent('info','Assistant',`undone: ${describeAction(a)}`); return;}
   requireIdle(); syncing=true;
   try {
     const c=context(), book=await freshBook(a.book), {uid,before,after}=a.undo;
@@ -518,23 +607,25 @@ async function askAssistant(text) {
   assistantBusy=true; const controller=new AbortController(); renderModelWork(controller);
   try {
     status('Reading the SillyTavern docs…');
-    let results=[],method='keywords';
+    let results=[],method='keywords',terms=[];
     try {
       const chunks=await ensureDocs();
       const idx=docsIndexState(), src=vectorSource(c.extensionSettings.vectors);
       const indexed=src && idx.source===src.source && idx.count===chunks.length;
       const prior=st.messages.slice(-3,-1).map(m=>m.content).join(' ').slice(-600);
       // Questions use story words; the docs use SillyTavern's. A short request translates first.
-      let terms=[];
+      terms=[];
       try {status('Working out which SillyTavern features this is about…');terms=parseSearchTerms(await llm(c,searchTermsPrompt(`${prior}\n${text}`.trim()),profile,controller.signal,600,'You map questions to SillyTavern documentation search terms.',direct));}
       catch(e){if(controller.signal.aborted)throw e;warnLog('Storyloom search terms:',e);}
       status('Reading the SillyTavern docs…');
       ({results,method}=await searchDocsMany({fetchFn:fetch,headers:c.getRequestHeaders(),source:indexed?src:null,chunks},[...terms,text],6));
     } catch(e) {warnLog('Storyloom docs:',e); docsLabel(`SillyTavern docs unavailable (${e.message}).`);}
+    let known=[];
+    try {const sl=await loadStoryloomDocs(); if(sl.length)known=(await searchDocsMany({fetchFn:fetch,headers:c.getRequestHeaders(),source:null,chunks:sl},[text,...terms],4)).results;} catch(e){warnLog('Storyloom knowledge search:',e);}
     status('Reading your setup…');
     const snapshot=await gatherSnapshot(text);
     const recent=st.messages.slice(-15,-1).map(m=>`${m.role==='user'?'Writer':'Assistant'}: ${m.content}`).join('\n\n');
-    const prompt=`SETUP SNAPSHOT\n${snapshot}\n\nSILLYTAVERN DOCS EXCERPTS (found by ${method})\n${results.map(r=>r.text).join('\n\n---\n\n')||'(none found)'}\n\n${st.summary?`EARLIER CONVERSATION SUMMARY\n${st.summary}\n\n`:''}RECENT CONVERSATION\n${recent||'(this is the first message)'}\n\nWriter: ${text}`;
+    const prompt=`SETUP SNAPSHOT\n${snapshot}\n\nSILLYTAVERN DOCS EXCERPTS (found by ${method})\n${results.map(r=>r.text).join('\n\n---\n\n')||'(none found)'}\n\nSTORYLOOM KNOWLEDGE (research behind Storyloom's writing setup)\n${known.map(r=>r.text).join('\n\n---\n\n')||'(none found)'}\n\n${st.summary?`EARLIER CONVERSATION SUMMARY\n${st.summary}\n\n`:''}RECENT CONVERSATION\n${recent||'(this is the first message)'}\n\nWriter: ${text}`;
     status('Waiting for the AI…');
     const raw=await llm(c,prompt,profile,controller.signal,tokens,assistantSystem(),direct);
     const parsed=parseActions(raw);
@@ -677,6 +768,7 @@ async function startChapterChat(narrator=null) {
   const c=context(), d=data(), bookName=d.book, previous=c.chatId, t=tpl(d), n=d.chapter||1;
   if(narrator) {
     d.chapterNotes ??= {}; d.chapterNotes[n]={...(narrator.notes||{})};
+    if(narrator.values && Object.keys(narrator.values).length){d.chapterValues ??= {}; d.chapterValues[n]={...narrator.values};}
     const reg=narratorRegistry(d).find(x=>x.avatar===narrator.avatar); if(reg && !reg.chapters.includes(n))reg.chapters.push(n);
   }
   const copy=structuredClone(d);
@@ -698,6 +790,8 @@ async function startChapterChat(narrator=null) {
   await persist();
   if(!await attachBook(bookName,context()))throw Error('The new chat could not be linked to the novel’s lorebook.');
   await setupNovel();
+  try {if(usesGeneralNarrator())await organizeBook(n); await fillBookValues({quiet:true});} catch(e){warnLog('Storyloom book settings:',e);}
+  for(let i=0;i<20 && !context().chat.length;i++)await new Promise(r=>setTimeout(r,150)); // the greeting arrives a moment after the chat opens
   const c2=context(), title=(copy.outlineChapters||[]).find(x=>x.number===n)?.title||'', heading=`${t.unit} ${n}${title?` — ${title}`:''}`;
   if(c2.chat.length===1 && !c2.chat[0].is_user && c2.chat[0].mes!==heading) {
     const m=c2.chat[0]; m.mes=heading; if(Array.isArray(m.swipes)){m.swipes=[heading];m.swipe_id=0;m.swipe_info=[m.swipe_info?.[0]||{}];}
@@ -978,6 +1072,138 @@ function renderTeam(d=null) {
   }
 }
 
+/* ---------- Writing setup: the Storyloom Novel preset, the general narrator, and this chat's book settings ---------- */
+const usesGeneralNarrator=(c=context())=>isGeneralNarrator(c.characters?.[c.characterId]?.description);
+/** This book's settings for the chapter: read from the story lore, then this chapter's own changes on top. */
+async function bookValuesFor(d,n=d.chapter||1) {
+  const t=tpl(d), book=await freshBook(d.book), entries=Object.values(book.entries||{});
+  const find=title=>entries.find(e=>String(e.comment||'').trim().toLocaleLowerCase()===String(title).toLocaleLowerCase());
+  const voice=entries.find(e=>/^[\s*_#-]*(POV|POINT OF VIEW)\s*:/mi.test(String(e.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'')) && !/^Current Writing Directive$/i.test(e.comment||''));
+  let focus=''; try{focus=(await bookFacts(d)).focus||'';}catch{}
+  const v=bookValues({voice:String(voice?.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,''),summary:find(t.summary.title)?.content,directive:find('Current Writing Directive')?.content,focus});
+  const note=chapterNote(d,n), over=d.chapterValues?.[n]||{};
+  if(note.pov)v.pov=note.pov; if(note.tense)v.tense=note.tense;
+  for(const [k,x] of Object.entries(over))if(x)v[k]=x;
+  return v;
+}
+const readValues=(c=context())=>Object.fromEntries(VALUES.map(v=>[v.key,String(c.variables?.local?.get?.(varName(v.key))??'')]));
+async function writeValues(values) {
+  const c=context();
+  for(const {key} of VALUES)c.variables.local.set(varName(key),values[key]??'');
+  await c.saveMetadata();
+}
+/** Fill this chat's book settings (the narrator's blanks) from the story lore. */
+async function fillBookValues({quiet=false}={}) {
+  const d=data(); if(!d.book || d.interview?.phase!=='done')return null;
+  const v=await bookValuesFor(d); await writeValues(v);
+  logEvent('info','Book settings',`filled this chat’s book settings from the story lore (${d.book}, ${tpl(d).unit} ${d.chapter||1})`);
+  if(!quiet)status('This chat’s book settings are filled in from the story lore.');
+  return v;
+}
+/** Make (or rebuild) the "Storyloom Novel" preset from the preset in use now, and switch to it. The writer's preset is not changed. */
+async function createNovelPreset() {
+  const c=context();
+  if(c.mainApi!=='openai')throw Error('The Storyloom Novel preset is for Chat Completion. Switch the API (plug icon) to Chat Completion first.');
+  const pm=c.getPresetManager('openai'), from=pm.getSelectedPresetName();
+  const existing=pm.getPresetList().preset_names?.[PRESET_NAME]!==undefined?pm.getCompletionPresetByName(PRESET_NAME):null;
+  if(existing)backup({kind:'preset',label:`Preset “${PRESET_NAME}” (before it was rebuilt)`,target:{name:PRESET_NAME},before:existing});
+  await pm.savePreset(PRESET_NAME,novelPreset(getChatCompletionPreset()));
+  logEvent('info','Writing setup',`made the “${PRESET_NAME}” preset from “${from}” and switched to it`);
+  return from;
+}
+/** The general narrator character: found by its blanks, or created. Returns its avatar file name. */
+async function ensureNarrator() {
+  const c=context(), found=c.characters.find(x=>isGeneralNarrator(x.description));
+  if(found)return found.avatar;
+  const fd=new FormData();
+  for(const [k,v] of Object.entries({ch_name:NARRATOR_NAME,description:NARRATOR_CARD,first_mes:'Chapter 1',personality:'',scenario:'',mes_example:'',creator_notes:'Made by Storyloom. One narrator for every book: its blanks are filled per chat from the book (Storyloom → Book settings). Edit the text around the blanks freely.',talkativeness:'0.5',fav:'false',tags:'Storyloom',extensions:'{}'}))fd.append(k,v);
+  const h=c.getRequestHeaders(); delete h['Content-Type'];
+  const r=await fetch('/api/characters/create',{method:'POST',headers:h,body:fd});
+  if(!r.ok)throw Error('SillyTavern couldn’t create the Storyloom Narrator character.');
+  const avatar=(await r.text()).trim(); await c.getCharacters();
+  logEvent('info','Writing setup',`created the “${NARRATOR_NAME}” character`);
+  return avatar;
+}
+/** Writing setup: the preset, the general narrator for this book, and this chat's book settings. */
+async function writingSetup() {
+  requireIdle();
+  const c=context(), d=data(), u=tpl(d).unit, n=d.chapter||1;
+  if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first, so Storyloom knows the book.');
+  const general=usesGeneralNarrator(c), chat=c.mainApi==='openai', pm=chat?c.getPresetManager('openai'):null, onNovel=pm?.getSelectedPresetName()===PRESET_NAME;
+  const form=document.createElement('div'); form.className='storyloom-narrator-form';
+  form.innerHTML=`<h3>Writing setup</h3>
+    <p class="storyloom-hint">Three layers, each in its own place (why: docs/novel-setups.md in Storyloom). Everything Storyloom changes is backed up first, and the Assistant can talk any of it through with you.</p>
+    <label class="checkbox_label"><input type="checkbox" data-c="preset" ${chat?'checked':'disabled'}> <b>How to write a book</b> — ${chat?(onNovel?'rebuild the “Storyloom Novel” preset from this one':`make a “Storyloom Novel” preset from your “${escHtml(pm.getSelectedPresetName())}” preset and switch to it`):'needs a Chat Completion connection'}. <small>Its Main Prompt teaches the craft; a short reminder goes last; your sliders and your own preset stay as they are.</small></label>
+    ${general?`<p class="storyloom-hint">This chat already uses the general narrator (“${escHtml(c.characters[c.characterId].name)}”).</p>`:`<label class="checkbox_label"><input type="checkbox" data-c="narrator" checked> <b>The narrator</b> — use the general “${NARRATOR_NAME}” for this book <small>(made if you don’t have it). ${u} ${n} opens in a fresh chat with it, with everything carried over; this chat stays.</small></label>`}
+    ${chat&&((c.chatCompletionSettings?.openai_max_tokens||0)<1000||(c.chatCompletionSettings?.openai_max_context||0)<16000)?`<p class="storyloom-hint is-warning">Your preset’s Max Response Length is ${c.chatCompletionSettings.openai_max_tokens} tokens and its Context Size ${c.chatCompletionSettings.openai_max_context}. That’s very small for a book: a reply of a few paragraphs needs about 1,000–2,000 tokens (more with a thinking model, which thinks before it writes), and a chapter needs a large context. Storyloom doesn’t change your sliders — raise them in the left panel (AI Response Configuration), or ask the Assistant what suits your model.</p>`:''}
+    <label class="checkbox_label"><input type="checkbox" data-c="values" checked> <b>This book’s settings</b> — fill the narrator’s blanks (point of view, tense, voice, tone, genre, your rules) from the story lore. <small>“Voice and Boundaries” stays saved in the story lore; it is switched off while the narrator carries it, so a chapter can change it.</small></label>`;
+  const ok=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Set it up',cancelButton:'Cancel',wide:true}).show();
+  if(ok!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return;
+  const on=k=>form.querySelector(`[data-c="${k}"]`)?.checked;
+  const done=[];
+  if(on('preset')){const from=await createNovelPreset(); done.push(`the “${PRESET_NAME}” preset (from “${from}”, which is unchanged)`);}
+  if(!general && on('narrator')) {
+    const avatar=await ensureNarrator();
+    await startChapterChat({avatar,notes:chapterNote(d)});
+    done.push(`the ${NARRATOR_NAME} in a fresh ${u} ${n} chat`);
+  } else if(on('values')) {
+    if(usesGeneralNarrator())await organizeBook(n);
+    await fillBookValues({quiet:true}); done.push('this chat’s book settings');
+  }
+  status(`Set up: ${done.join(', ')||'nothing ticked'}.`);
+  renderTeam();
+}
+/** Book settings: view and change the narrator's blanks for this chapter (or the whole book). */
+async function editBookSettings() {
+  requireIdle();
+  const c=context(), d=data(), u=tpl(d).unit, n=d.chapter||1;
+  if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
+  const fromBook=await bookValuesFor({...d,chapterValues:{},chapterNotes:{}},n), now={...fromBook,...Object.fromEntries(Object.entries(readValues(c)).filter(([,x])=>x))};
+  const form=document.createElement('div'); form.className='storyloom-narrator-form';
+  form.innerHTML=`<h3>Book settings — ${escHtml(u)} ${n}</h3><p class="storyloom-hint">${usesGeneralNarrator(c)?'These fill the narrator’s blanks in this chat.':'This chat’s character isn’t the general narrator, so these are kept for when it is (Writing setup…).'} Changes here apply to ${u.toLowerCase()} ${n}; the book’s own record stays in “Voice and Boundaries”.</p>${VALUES.map(v=>`<label>${v.label} <small>— ${escHtml(v.hint)}</small><textarea class="text_pole" rows="2" data-k="${v.key}"></textarea></label>`).join('')}`;
+  for(const ta of form.querySelectorAll('textarea'))ta.value=now[ta.dataset.k]||'';
+  const pick=await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Save',cancelButton:'Cancel',wide:true,customButtons:[{text:'Back to the book’s settings',result:2}]}).show();
+  if(pick===2){d.chapterValues ??= {}; delete d.chapterValues[n]; await persist(); await writeValues(fromBook); renderTeam(); return status(`${u} ${n} uses the book’s own settings again.`);}
+  if(pick!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return;
+  const vals=Object.fromEntries(VALUES.map(v=>[v.key,form.querySelector(`[data-k="${v.key}"]`).value.trim()]));
+  d.chapterValues ??= {}; d.chapterValues[n]=Object.fromEntries(Object.entries(vals).filter(([k,x])=>x!==(fromBook[k]||'')));
+  d.chapterNotes ??= {}; d.chapterNotes[n]={...(d.chapterNotes[n]||{}),pov:vals.pov!==(fromBook.pov||'')?vals.pov:'',tense:vals.tense!==(fromBook.tense||'')?vals.tense:''};
+  await persist(); await writeValues(vals); await applyMemory(); renderTeam();
+  logEvent('info','Book settings',`${u} ${n}: ${Object.keys(d.chapterValues[n]).join(', ')||'no'} changes from the book`);
+  status(`Book settings saved for ${u} ${n}.`);
+}
+/** A different narration for a chapter with the general narrator: same card, different settings. */
+async function newNarration(next,cur) {
+  const c=context(), d=data(), u=tpl(d).unit, plan=await chapterPlan(d,next);
+  const wish=await c.Popup.show.input(`Narration for ${u} ${next}`,`<p>How should ${u} ${next} be told? For example “Danny, first person, rough and short”. ${plan?`The outline for ${u} ${next} is “${escHtml(plan.title)}”.`:''}</p>`,'',{okButton:'Next',cancelButton:'Cancel'});
+  if(wish===null || wish===undefined || wish===false)return null;
+  const again=suggestNarrators(narratorRegistry(d).filter(x=>x.values),{wish:String(wish),current:''})[0];
+  if(again && await c.Popup.show.confirm(`Use ${escHtml(shortWho(again))}’s narration again?`,`${escHtml(shortWho(again))} already narrated ${u} ${again.chapters.join(', ')||'before'}. Use the same settings (and Checker and Editor notes)?`))return {avatar:cur?.avatar,notes:again.notes||{},values:again.values};
+  const base=await bookValuesFor(d,next);
+  let draft={values:base,checkerNote:'',editorNote:''};
+  if(await c.Popup.show.confirm('Want help with the settings?','Storyloom suggests this chapter’s settings from the book and the outline. You edit them before anything is saved.')) {
+    const f=await bookFacts(d), ctl=new AbortController(); renderModelWork(ctl); busy=true;
+    try {
+      status('Storyloom is suggesting the narration…');
+      let b='',direct=null; try{b=d.profile||'';direct=directSnapshot(d,c);}catch{}
+      const raw=await llm(c,narrationInstruction({unit:u,number:next,wish:String(wish),facts:`${plan?`THIS ${u.toUpperCase()}'S PLAN\n${plan.text}\n\n`:''}${f.facts}`,current:base}),b,ctl.signal,Number(d.responseTokens||12000),'You help a writer set up how a chapter of their book is narrated. You never write the story.',direct,{label:'Narration'});
+      const p=parseNarration(raw); if(!p){logEvent('error','Narration','suggestion unreadable',raw.slice(0,2000));throw Error('The suggestion came back in a form Storyloom couldn’t read. Try again, or skip the help.');}
+      draft={values:{...base,...Object.fromEntries(Object.entries(p.values).filter(([,x])=>x))},checkerNote:p.checkerNote,editorNote:p.editorNote};
+    } finally {busy=false;renderModelWork(null);}
+  }
+  const form=document.createElement('div'); form.className='storyloom-narrator-form';
+  form.innerHTML=`<h3>Narration for ${escHtml(u)} ${next}</h3>${VALUES.map(v=>`<label>${v.label}<textarea class="text_pole" rows="2" data-k="${v.key}"></textarea></label>`).join('')}<label>Checker note <small>(what to accept as intended)</small><textarea class="text_pole" rows="2" data-n="checker"></textarea></label><label>Editor note <small>(what to preserve)</small><textarea class="text_pole" rows="2" data-n="editor"></textarea></label>`;
+  for(const ta of form.querySelectorAll('[data-k]'))ta.value=draft.values[ta.dataset.k]||'';
+  form.querySelector('[data-n="checker"]').value=draft.checkerNote||''; form.querySelector('[data-n="editor"]').value=draft.editorNote||'';
+  if(await new c.Popup(form,c.POPUP_TYPE.CONFIRM,'',{okButton:'Use these',cancelButton:'Cancel',wide:true}).show()!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return null;
+  const values=Object.fromEntries(VALUES.map(v=>[v.key,form.querySelector(`[data-k="${v.key}"]`).value.trim()]));
+  const changed=Object.fromEntries(Object.entries(values).filter(([k,x])=>x!==(base[k]||'')));
+  const notes={checker:form.querySelector('[data-n="checker"]').value.trim(),editor:form.querySelector('[data-n="editor"]').value.trim(),pov:changed.pov||'',tense:changed.tense||''};
+  narratorRegistry(d).push({avatar:cur?.avatar,name:values.narrator||String(wish),who:values.narrator||String(wish).split(/[,.;]/)[0].trim(),chapters:[],notes,values:changed});
+  await persist();
+  return {avatar:cur?.avatar,notes,values:changed};
+}
+
 /* ---------- Seal and what comes next ---------- */
 const escHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 async function sealChapter() {
@@ -1045,9 +1271,9 @@ async function chooseNarrator(next) {
     if(extra){notes.checker=`In this ${u.toLowerCase()}: ${extra} — this is intended.`;notes.editor=`In this ${u.toLowerCase()}: ${extra} — preserve it.`;}
     return {avatar:cur.avatar,notes};
   }
-  if(pick>=10){const x=earlier[pick-10];return {avatar:x.avatar,notes:x.notes||{}};}
+  if(pick>=10){const x=earlier[pick-10];return {avatar:x.avatar||cur?.avatar,notes:x.notes||{},values:x.values};}
   if(pick!==3)return null;
-  return newNarrator(next,cur);
+  return usesGeneralNarrator(c)?newNarration(next,cur):newNarrator(next,cur);
 }
 /** The writer's narrator template (Extensions → Storyloom → Narrator template), or the default. */
 const narratorTemplate=()=>parseNarratorTemplate(context().extensionSettings.storyloom?.narratorTemplate||'');
@@ -1899,6 +2125,7 @@ async function finishInterview() {
     try {bookMessage=await nameFinishedLorebook(d);}
     catch {bookMessage=' The outline is saved in the draft lorebook. Storyloom could not switch it to a titled book.';}
     try {await organizeBook(1);} catch(e) {warnLog('Storyloom layout:',e);}
+    try {await fillBookValues({quiet:true});} catch(e) {warnLog('Storyloom book settings:',e);}
     options();
     status('Outline saved.'+bookMessage+' '+reviewNote.slice(0,300)+' Writing full character profiles next…');
     await writeProfiles(bookMessage);
@@ -1915,7 +2142,7 @@ async function organizeBook(chapter=null) {
     const n=chapter ?? d.chapter ?? 1;
     const t=tpl(d), outlineEntry=findEntry(before,t.outline.title);
     if(outlineEntry)d.outlineChapters=chapterList(outlineEntry.content,t.unit).map(({number,title})=>({number,title}));
-    const after=layoutBook(before,{chapter:n,create:book=>createWorldInfoEntry(name,book),template:t});
+    const after=layoutBook(before,{chapter:n,create:book=>createWorldInfoEntry(name,book),template:t,voiceViaNarrator:usesGeneralNarrator(c)});
     const directive=Object.values(after.entries).find(e=>e.comment==='Current Writing Directive');
     if(directive)directive.content=directiveForChapter(directive.content,n);
     const changes=buildChange(before,after);
@@ -2021,6 +2248,7 @@ async function restoreBackup(b) {
   else if(b.kind==='prompt'){const all=storedPrompts(), key=b.target?.key; backup({kind:'prompt',label:`${b.label} (before a restore)`,target:{key},before:all[key]??null}); if(b.before==null)delete all[key]; else all[key]=b.before; setPromptOverrides(all); c.saveSettingsDebounced(); renderPromptEditor();}
   else if(b.kind==='persona'){const roles=storedRoles(), k=b.target?.role; backup({kind:'persona',label:`${b.label} (before a restore)`,target:{role:k},before:roles[k]?.persona||null}); roles[k]={...roles[k],persona:b.before||''}; c.saveSettingsDebounced(); renderTeamSettings();}
   else if(b.kind==='narratorTemplate'){const st=(c.extensionSettings.storyloom ??= {}); backup({kind:'narratorTemplate',label:'Narrator template (before a restore)',before:st.narratorTemplate??null}); if(b.before==null)delete st.narratorTemplate; else st.narratorTemplate=b.before; c.saveSettingsDebounced(); const t=document.getElementById('sl-narrator-template-text'); if(t)t.value=narratorTemplateText(narratorTemplate());}
+  else if(b.kind==='preset'){const pm=c.getPresetManager('openai'), name=b.target?.name||PRESET_NAME, cur=pm.getPresetList().preset_names?.[name]!==undefined?pm.getCompletionPresetByName(name):null; if(cur)backup({kind:'preset',label:`Preset “${name}” (before a restore)`,target:{name},before:cur}); await pm.savePreset(name,b.before,{skipUpdate:pm.getSelectedPresetName()!==name}); if(pm.getSelectedPresetName()!==name){const l=pm.getPresetList(); if(l.preset_names?.[name]!==undefined)l.presets[l.preset_names[name]]=b.before;}}
   else if(b.kind==='template'){const list=storedTemplates(), name=b.before?.name, i=list.findIndex(x=>{try{return parseTemplate(x).name===name}catch{return false}}); if(i>=0){backup({kind:'template',label:`Template “${name}” (before a restore)`,target:{name},before:{name,text:list[i]}}); list[i]=b.before.text;} else list.push(b.before.text); c.saveSettingsDebounced(); try{renderTemplates(data());}catch{}}
   else throw Error('Chapter text comes back from the message’s swipes (the arrows on the message). Use Copy to take this backup’s text.');
   logEvent('info','Backup',`restored: ${b.label}`);
@@ -2226,7 +2454,7 @@ function init() {
       <p id="na-memory-empty" class="storyloom-hint">Memory starts once your outline exists. It carries what has happened from one chapter chat to the next.</p>
       <div id="na-team" class="storyloom-team" hidden>
         <p id="na-team-label" class="storyloom-team-label"></p>
-        <div class="storyloom-row"><button id="na-narrator" type="button" title="Write or rewrite how this chat’s narrator tells the story — its description and Main Prompt override — with Storyloom’s help.">Narrator…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button></div>
+        <div class="storyloom-row"><button id="na-writing-setup" type="button" title="The Storyloom Novel preset (how to write a book), the general narrator, and this book’s settings — in one step.">Writing setup…</button><button id="na-book-settings" type="button" title="This chapter’s point of view, tense, voice, tone, genre and rules — the narrator’s blanks.">Book settings…</button><button id="na-narrator-undo" type="button" hidden>Undo narrator change</button></div>
         <ol id="na-team-steps" class="storyloom-steps"></ol>
         <p id="na-team-hint" class="storyloom-hint"></p>
         <button id="na-team-next" type="button" class="storyloom-team-next">Next →</button>
@@ -2417,7 +2645,8 @@ function init() {
   document.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-open-ext').onclick=()=>openStoryloomSettings();
-  document.querySelector('#na-narrator').onclick=()=>{lastAction='Narrator';setupNarrator().catch(fail);};
+  document.querySelector('#na-writing-setup').onclick=()=>{lastAction='Writing setup';writingSetup().catch(fail);};
+  document.querySelector('#na-book-settings').onclick=()=>{lastAction='Book settings';editBookSettings().catch(fail);};
   document.querySelector('#na-narrator-undo').onclick=()=>{lastAction='Undo narrator change';undoNarrator().catch(fail);};
   const sendAssistant=async()=>{const input=document.querySelector('#na-assistant-input'),v=input.value.trim();if(!v)return;input.value='';try{await askAssistant(v);}catch(e){fail(e);if(!input.value)input.value=v;}};
   document.querySelector('#na-assistant-send').onclick=sendAssistant;

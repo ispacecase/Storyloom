@@ -7,6 +7,8 @@
 export const BACKUP_MAX = 200;
 export const BACKUP_KINDS = Object.freeze({
   globalMain: 'Global Main Prompt',
+  preset: 'Preset',
+  bookValue: 'Book setting',
   character: 'Character card',
   prompt: 'Storyloom prompt',
   persona: 'Role personality',
