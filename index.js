@@ -2013,7 +2013,7 @@ let lastDialsUsage=null, dialsRegistered=false;
 /** Storyloom's calls use the Dials options set for SillyTavern's chat (on by default), plus any set for Storyloom itself. */
 const dialsSameAsChat=()=>{try{return context().extensionSettings.storyloom?.dialsSameAsChat!==false;}catch{return true;}};
 /** Open Dials' panel (it lives in SillyTavern's AI Response Configuration drawer, the sliders button). */
-function openDials(){const b=document.querySelector('#ai-config-button .drawer-toggle')||document.getElementById('leftNavDrawerIcon'); if(!document.querySelector('#left-nav-panel.openDrawer'))b?.click(); status('Dials is open on the left. Pick “Storyloom” under “Settings for:” to change Storyloom’s own options.');}
+function openDials(){try{if(typeof window.Dials?.open==='function' && window.Dials.open('storyloom'))return status('Dials is open on the left, showing Storyloom’s settings.');}catch(e){warnLog('Storyloom: Dials.open failed:',e);} const b=document.querySelector('#ai-config-button .drawer-toggle')||document.getElementById('leftNavDrawerIcon'); if(!document.querySelector('#left-nav-panel.openDrawer'))b?.click(); status('Dials is open on the left. Pick “Storyloom” under “Settings for:” to change Storyloom’s own options.');}
 /** The usage of a Dials-tagged request, if it arrives within a few seconds. */
 async function usageOf(p,ms=4000){if(!p)return null; try{return await Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))]);}catch{return null;}}
 const usageText=u=>{const x=u?.usage||{}; return [x.prompt!=null&&`prompt ${x.prompt.toLocaleString()}`,x.thinking&&`thinking ${x.thinking.toLocaleString()}`,x.reply!=null&&`reply ${x.reply.toLocaleString()}`].filter(Boolean).join(' · ')+(u?.finishReason?` · stopped: ${u.finishReason}`:'')+(u?.limit?.thinkingOnly?' · spent everything thinking':u?.limit?.level==='cut'?' · cut off at the limit':'');};
@@ -2029,7 +2029,7 @@ function storyloomConnection(profile=null) {
 }
 function registerWithDials() {
   if(dialsRegistered || !dialsOn() || typeof window.Dials.registerCaller!=='function')return;
-  try{window.Dials.registerCaller('storyloom',{label:'Storyloom',getConnection:()=>storyloomConnection()}); dialsRegistered=true; logEvent('info','Dials',`found Dials ${window.Dials.version||''}; Storyloom’s own calls use its settings`); markCutOffs();}
+  try{window.Dials.registerCaller('storyloom',{label:'Storyloom',getConnection:()=>storyloomConnection(),inheritsFrom:()=>dialsSameAsChat()?'sillytavern':null}); /* Dials 0.2+: shows the combined settings */ dialsRegistered=true; logEvent('info','Dials',`found Dials ${window.Dials.version||''}; Storyloom’s own calls use its settings`); markCutOffs();}
   catch(e){warnLog('Storyloom: could not register with Dials:',e);}
 }
 const ANSWER_NOW='Your last reply was only reasoning, with no answer. Keep your thinking brief this time and write the answer itself, in the format asked for above.';
