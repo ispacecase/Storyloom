@@ -11,7 +11,7 @@ import { createNovel, selectNovel } from './state.mjs';
 import { enqueue, nextJob, requiresReview, wasApplied, changedProcessed } from './queue.mjs';
 import { foundationTemplate, initialDirective, normalizeFoundation, foundationTitle } from './template.mjs';
 import { buildChange, undoChange, classifyChange, describeChange } from './history.mjs';
-import { generate, profileOptions, requestModel } from './generation.mjs';
+import { generate, profileOptions, requestModel, withIncludeBody } from './generation.mjs';
 import { queueContinuity, completeContinuity, continuityPrompt } from './continuity.mjs';
 import { selectLore, recentConversation, ensureCompleteUpdates, unsafeUpdates, planningBudget } from './context.mjs';
 import { saveVerified } from './persistence.mjs';
@@ -985,6 +985,8 @@ async function exportBook() {
 
 /* ---------- Log: what Storyloom did, what failed and why (Extensions → Storyloom → Log) ---------- */
 const LOG_KEY='storyloom-log';
+let sentEffortLogged=false;
+const sendEffort=()=>{try{return context().extensionSettings.storyloom?.sendEffort!==false;}catch{return true;}};
 const shortThinking=()=>{try{return context().extensionSettings.storyloom?.shortThinking!==false;}catch{return true;}};
 const fullLog=()=>{try{return !!context().extensionSettings.storyloom?.logFull;}catch{return false;}};
 function readLog(){try{const v=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');return Array.isArray(v)?v:[];}catch{return [];}}
@@ -2576,12 +2578,14 @@ function renderExtSettings() {
   try{renderPromptEditor();}catch(e){warnLog('Storyloom prompts:',e);} let d={}; try{d=data();}catch{} try{renderTemplates(d);}catch(e){warnLog('Storyloom templates:',e);}
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
+  const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
 }
 function buildExtSettings(openButton,panel) {
   const host=document.querySelector('#extensions_settings2, #extensions_settings'); if(!host)return;
   const wrap=document.createElement('div'); wrap.id='storyloom-ext'; wrap.className='storyloom-ext';
   wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
+    <label class="checkbox_label" title="SillyTavern ignores its own Reasoning Effort setting on Custom (OpenAI-compatible) endpoints such as Venice, unless the model is one of OpenAI’s. This sends it anyway, through the request’s body — only when it is set to something other than Auto, and never over a reasoning_effort you put in Include Body yourself."><input id="sl-send-effort" type="checkbox"> Send SillyTavern’s Reasoning Effort to Custom endpoints (Venice and others) in the story chat</label>
     <label class="checkbox_label" title="Thinking models (deepseek and others) can spend a whole reply thinking and write nothing. This asks them for low reasoning effort on Storyloom’s own work — Lint, Editor, Reader, Seal, planning, the Assistant. Your story chat keeps your preset’s setting."><input id="sl-short-thinking" type="checkbox"> Keep Storyloom’s own thinking short (low reasoning effort; never your story chat)</label>
     <details id="sl-team" open><summary>Chapter team</summary><p class="storyloom-hint">The people who work on each chapter after it’s written: Lint → Editor → Reader → Revise → Seal (Memory tab). Switch a role off to skip its step. Each can use its own model — a fast, cheap one for the Checker, a stronger one for the Editor. If a role’s model fails or answers in a form Storyloom can’t read, Storyloom asks its own connection once and says so in the log. Their jobs are fixed so the steps can’t break; their personalities are yours to change.</p>${teamMarkup()}</details>
     <details id="sl-narrator-template"><summary>Narrator template</summary><p class="storyloom-hint">The headings Storyloom uses as a guide when it drafts a narrator — one “HEADING: what it covers” per line. It’s a guide, not a form: Storyloom skips headings that don’t fit the story and adds its own when the story needs them.</p><textarea id="sl-narrator-template-text" class="text_pole" rows="10" spellcheck="false"></textarea><div class="storyloom-row"><button id="sl-narrator-template-save" type="button" class="menu_button">Save</button><button id="sl-narrator-template-reset" type="button" class="menu_button">Reset to original</button></div></details>
@@ -2618,6 +2622,7 @@ function buildExtSettings(openButton,panel) {
   wrap.querySelector('#sl-narrator-template-save').onclick=()=>{const rows=parseNarratorTemplate(tplBox.value);if((st().narratorTemplate??null)!==narratorTemplateText(rows))backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate??null});st().narratorTemplate=narratorTemplateText(rows);saveSettings();tplBox.value=st().narratorTemplate;toastr?.success?.(`Narrator template saved (${rows.length} headings).`);logEvent('info','Settings','narrator template saved');};
   wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{if(st().narratorTemplate!=null)backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate});delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
+  wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};
   wrap.querySelector('#sl-log-copy').onclick=async()=>{try{await navigator.clipboard.writeText(logText(readLog()));toastr?.success?.('Storyloom log copied.');}catch(e){toastr?.error?.('Could not copy: '+e.message);}};
@@ -2983,6 +2988,14 @@ function init() {
   const c=context();
   setPromptOverrides(c.extensionSettings.storyloom?.prompts);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
+  // SillyTavern drops its Reasoning Effort for Custom endpoints (except OpenAI's models); put it in the request body so Venice & co. get it.
+  if(c.event_types.CHAT_COMPLETION_SETTINGS_READY)c.eventSource.on(c.event_types.CHAT_COMPLETION_SETTINGS_READY,gd=>{try{
+    if(!sendEffort() || gd?.chat_completion_source!=='custom')return;
+    const effort={min:'minimal',low:'low',medium:'medium',high:'high',max:'max'}[context().chatCompletionSettings?.reasoning_effort];
+    if(!effort)return;
+    const before=gd.custom_include_body; gd.custom_include_body=withIncludeBody(before,'reasoning_effort',effort);
+    if(before!==gd.custom_include_body && !sentEffortLogged){sentEffortLogged=true;logEvent('info','Story chat',`sent Reasoning Effort “${effort}” to the Custom endpoint (SillyTavern leaves it out there)`);}
+  }catch(e){warnLog('Storyloom reasoning effort:',e);}});
   c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{applyReplyLength();}catch(e){warnLog('Storyloom reply length:',e);}});
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
   setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),2500);
