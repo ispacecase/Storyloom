@@ -646,7 +646,7 @@ function renderTabs() {
   for(const tab of ['story','memory','assistant'])document.querySelector('#na-tab-'+tab).classList.toggle('is-active',activeTab===tab);
   document.querySelector('#na-assistant').hidden=settingsOpen || activeTab!=='assistant';
   document.querySelector('#na-memory').hidden=settingsOpen || activeTab!=='memory';
-  if(activeTab==='memory')renderMemory().catch(fail);
+  if(activeTab==='memory' && !noChatOpen())renderMemory().catch(fail);
   if(activeTab==='assistant'){renderAssistant();renderDocsStatus();}
 }
 
@@ -1123,6 +1123,27 @@ async function ensureNarrator() {
   const avatar=(await r.text()).trim(); await c.getCharacters();
   logEvent('info','Writing setup',`created the “${NARRATOR_NAME}” character`);
   return avatar;
+}
+/** Start a book from nothing: the general narrator (made if needed), a fresh chat with it, the Novel preset if wanted, then the usual start screen. */
+async function startNewBook() {
+  requireIdle();
+  const c=context(), avatar=await ensureNarrator();
+  const idx=context().characters.findIndex(x=>x.avatar===avatar); if(idx<0)throw Error('The Storyloom Narrator could not be found.');
+  const before=c.chatId;
+  await context().selectCharacterById(idx);
+  for(let i=0;i<40 && !(context().chatId && context().characters?.[context().characterId]?.avatar===avatar);i++)await new Promise(r=>setTimeout(r,250));
+  if(context().characters?.[context().characterId]?.avatar!==avatar)throw Error('SillyTavern could not open the narrator’s chat. Close any open editor and try again.');
+  // Reuse the narrator's chat only if it is empty; otherwise open a fresh one so books never share a chat.
+  const used=()=>{const x=context(); return x.chat.some(m=>m.is_user) || x.chat.length>1 || Object.values(x.chatMetadata?.[KEY]?.novels||{}).some(n=>n.book);};
+  if(used() || context().chatId===before)await doNewChat();
+  const c2=context();
+  if(c2.mainApi==='openai') {
+    const pm=c2.getPresetManager('openai');
+    if(pm.getSelectedPresetName()!==PRESET_NAME && await c2.Popup.show.confirm('Use the Storyloom Novel preset?',`<p>For writing, Storyloom can make a “${PRESET_NAME}” preset from your “${escHtml(pm.getSelectedPresetName())}” preset and switch to it: its Main Prompt teaches the model how to write a book, and a short reminder goes last. Your sliders and your own preset stay as they are, and you can switch back any time.</p>`))await createNovelPreset();
+  }
+  logEvent('info','Start a new book',`opened a fresh chat with ${NARRATOR_NAME}`);
+  activeTab='story'; settingsOpen=false; options(); renderPanelView();
+  status('New book. Pick a template, then choose Simple or Deep. When the outline is done, the narrator’s settings fill in from the book.');
 }
 /** Writing setup: the preset, the general narrator for this book, and this chat's book settings. */
 async function writingSetup() {
@@ -1644,11 +1665,19 @@ function renderModelWork(controller) {
   document.querySelector('#na-cancel-model').hidden=!controller;
   for (const id of ['na-send','na-skip','na-next','na-outline']) document.querySelector('#'+id).disabled=!!controller;
 }
+const noChatOpen=()=>!context().chatId;
 function renderPanelView() {
-  const panel=document.getElementById('na-panel');
+  const panel=document.getElementById('na-panel'), none=noChatOpen();
   document.querySelector('#na-settings').hidden=!settingsOpen;
-  document.querySelector('#na-workspace').hidden=settingsOpen || activeTab!=='story';
+  document.querySelector('#na-nochat').hidden=!none || settingsOpen || activeTab==='assistant';
+  document.querySelector('#na-workspace').hidden=none || settingsOpen || activeTab!=='story';
   renderTabs();
+  if(none) {
+    document.querySelector('#na-memory').hidden=true;
+    document.querySelector('#na-back').hidden=true;
+    const toggle=document.querySelector('#na-settings-toggle'); toggle.textContent=settingsOpen?'Done':'Settings'; toggle.setAttribute('aria-expanded',String(settingsOpen));
+    return;
+  }
   const toggle=document.querySelector('#na-settings-toggle');
   toggle.textContent=settingsOpen?'Done':'Settings';
   toggle.setAttribute('aria-expanded',String(settingsOpen));
@@ -2368,7 +2397,7 @@ async function toggleDictation(textarea,button) {
 
 function init() {
   const button = document.createElement('button'); button.className='menu_button'; button.textContent='Storyloom';
-  const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s setup: the chapter plan is now sent from the Memory tab instead of the lorebook.');}),300);try{options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
+  const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s setup: the chapter plan is now sent from the Memory tab instead of the lorebook.');}),300);try{if(noChatOpen()){document.getElementById('na-panel').hidden=false;renderPanelView();status('No book is open. Start a new book, or open a book’s chat.');return;}options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
   button.addEventListener('click',()=>{openPanel();document.querySelector('#extensions-settings-button .drawer-toggle')?.click();});
   const shortcut=document.createElement('button');shortcut.type='button';shortcut.id='storyloom-chat-shortcut';shortcut.title='Open Storyloom';shortcut.setAttribute('aria-label','Open Storyloom');shortcut.innerHTML='<i class="fa-solid fa-feather-pointed" aria-hidden="true"></i>';shortcut.addEventListener('click',openPanel);document.getElementById('leftSendForm')?.append(shortcut);
   const panel = document.createElement('aside'); panel.id='na-panel'; panel.hidden=true;
@@ -2409,6 +2438,7 @@ function init() {
         </details>
       </div>
     </section>
+    <section id="na-nochat" class="storyloom-welcome storyloom-nochat" hidden><span class="storyloom-eyebrow">NO BOOK OPEN</span><h2>Start a new book<br><em>or open one you’re writing.</em></h2><p>Each book lives in its own chat with the narrator. Start a new one here — Storyloom makes the Storyloom Narrator if you don’t have it, opens a fresh chat with it, offers the Storyloom Novel preset, and then asks how you’d like to begin. To carry on a book, open its chat. The Assistant tab works without a book.</p><button id="na-start-book" type="button" class="storyloom-team-next">Start a new book →</button></section>
     <div id="na-workspace" class="storyloom-workspace">
     <div class="storyloom-book">
       <label for="na-book">Lorebook for this chat</label>
@@ -2645,6 +2675,7 @@ function init() {
   document.querySelector('#na-tab-assistant').onclick=()=>{activeTab='assistant';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-tab-memory').onclick=()=>{activeTab='memory';settingsOpen=false;renderPanelView();};
   document.querySelector('#na-open-ext').onclick=()=>openStoryloomSettings();
+  document.querySelector('#na-start-book').onclick=()=>{lastAction='Start a new book';startNewBook().catch(fail);};
   document.querySelector('#na-writing-setup').onclick=()=>{lastAction='Writing setup';writingSetup().catch(fail);};
   document.querySelector('#na-book-settings').onclick=()=>{lastAction='Book settings';editBookSettings().catch(fail);};
   document.querySelector('#na-narrator-undo').onclick=()=>{lastAction='Undo narrator change';undoNarrator().catch(fail);};
@@ -2697,7 +2728,7 @@ function init() {
   setTimeout(()=>checkForUpdate(true),8000);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,name=>{if(linkRunning)return;clearTimeout(linkTimer);linkTimer=setTimeout(()=>syncLinks(typeof name==='string'?name:null),1000);});
   setTimeout(()=>{if(storedLinks().length)syncLinks();},4000);
-  c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();try{renderExtSettings();}catch{}modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;document.querySelector('#na-session-key').value='';if(!panel.hidden){try{options();status('')}catch{panel.hidden=true}} queueSync(); scheduleDrain();});
+  c.eventSource.on(c.event_types.CHAT_CHANGED,()=>{queueMemory();try{renderExtSettings();}catch{}modelController?.abort();atStart=false;settingsOpen=false;sessionKey=null;document.querySelector('#na-session-key').value='';if(!panel.hidden){try{if(noChatOpen())renderPanelView(); else {options();status('');}}catch(e){warnLog('Storyloom chat change:',e);}} queueSync(); scheduleDrain();});
   buildExtSettings(button,panel);
   addMic(document.getElementById('na-input'),document.querySelector('#na-composer .storyloom-compose-footer'),document.getElementById('na-send'));
   addMic(document.getElementById('na-assistant-input'),document.querySelector('#na-assistant .storyloom-compose-footer'),document.getElementById('na-assistant-send'));
