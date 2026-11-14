@@ -116,3 +116,19 @@ export function mergeCurrentState(existing, update) {
   const after = next < 0 ? '' : '\n\n' + rest.slice(next).join('\n').trim();
   return `${body.slice(0, start).replace(/\s+$/, '')}\n\n${section}${after}`;
 }
+
+/**
+ * How much fits in one narrator reply, from the preset's Max Response Length (tokens). A chapter's word total
+ * is reached across many replies; without this the narrator tries to write the whole chapter at once and the
+ * response limit cuts it off mid-sentence. ~0.6 words per token leaves room for formatting and short thinking.
+ */
+export function replyWords(maxTokens) {
+  const t = Number(maxTokens) || 0;
+  if (t <= 0) return 0;
+  return Math.min(1500, Math.max(50, Math.floor(t * 0.6 / 50) * 50)); // a passage, not a chapter; thinking shares the limit
+}
+export function replyLengthNote(maxTokens, unit = 'Chapter') {
+  const w = replyWords(maxTokens);
+  if (!w) return '';
+  return `REPLY LENGTH: this reply has room for about ${w} words, no more. Write one passage of the ${unit.toLowerCase()} that fits in that — not the whole ${unit.toLowerCase()} — and finish your last sentence before you reach it. The ${unit.toLowerCase()}'s full length comes from many replies.`;
+}

@@ -39,3 +39,12 @@ test('the docx is a valid zip that unzip can read, with the story inside', () =>
   assert.match(documentXml({chapters: [{heading: 'C1', text: 'x'}, {heading: 'C2', text: 'y'}]}), /<w:pageBreakBefore\/>[\s\S]*C2/);
   assert.equal(fileName('A/B: "C"', 'docx'), 'A-B- -C-.docx');
 });
+
+test('a reply cut off by the response limit loses its unfinished end on export', async () => {
+  const {cropCutOff} = await import('../export.mjs');
+  assert.equal(cropCutOff('She pulled her coat straight. "There\'s ice cream in the little freezer, if she asks. Not before tea'), 'She pulled her coat straight.');
+  assert.equal(cropCutOff('One.\n\nShe went to the door and got her'), 'One.\n\nShe went to the door and got her'.slice(0, 4));
+  assert.equal(cropCutOff('“Fine,” she said. And then the'), '“Fine,” she said.');
+  assert.equal(cropCutOff('All done.'), 'All done.');
+  assert.equal(chapterProse([{mes: 'A whole line.'}, {mes: 'Half a sen'}]), 'A whole line.');
+});

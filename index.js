@@ -25,12 +25,12 @@ import { castNames, characterProfilesInstruction, validateCharacters, characterT
 import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
-import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody } from './memory.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
 import { wordBudget, castFit, budgetLines, SCENE_MIN, parseNumber, coreShare } from './budget.mjs';
-import { exactLint, lintInstruction, parseFindings, countsLine, biggestProblem, ALL_BUCKETS } from './lint.mjs';
+import { exactLint, lintInstruction, parseFindings, countsLine, biggestProblem, ALL_BUCKETS, endsCutOff } from './lint.mjs';
 import { addEntry, filterEntries, logText } from './log.mjs';
 import { ROLES, ROLE_KEYS, STEPS, roleSettings, roleSystem, activeSteps, parseNotes, overallLine, markupInstruction, readerInstruction, reviseInstruction, parseRevision, wordDiff, narratorInstruction, parseNarrator, narratorLabel, suggestNarrators, parseNarratorTemplate, narratorTemplateText, defaultMainPrompt } from './roles.mjs';
 import { startInterview, currentQuestion, questionCount, advanceInterview, answerInstruction, finalizeInstruction, validateOutline, recordAnswer, isCollaborativeReply, deepNotesUpdate } from './interview.mjs';
@@ -681,6 +681,14 @@ async function applyMemory() {
   const note=book&&d?chapterNote(d):{}, u=vars.unit;
   const narration=(note.pov||note.tense)?`NARRATION FOR THIS ${u.toUpperCase()} (this overrides the writing directive's point of view and tense): ${[note.pov&&`POV: ${note.pov}`,note.tense&&`Tense: ${note.tense}`].filter(Boolean).join('; ')}`:'';
   c.setExtensionPrompt('storyloom_narration',narration,1,2,false,0);
+  applyReplyLength(!!(book&&d), u);
+}
+/** Tell the narrator how many words fit in one reply (from the current Max Response Length), so it doesn't try to write the whole chapter and get cut off. */
+function applyReplyLength(on=null, unit='Chapter') {
+  const c=context();
+  if(on===null){try{const d=data(); on=!!(d.book && c.chatMetadata?.world_info===d.book); unit=tpl(d).unit;}catch{on=false;}}
+  const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit):'';
+  c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,0);
 }
 let memoryTimer;
 const queueMemory=()=>{clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),400);};
@@ -808,6 +816,27 @@ async function startChapterChat(narrator=null) {
   status(`This is a fresh chat for ${t.unit} ${n}${title?` — ${title}`:''}. Story so far, Previously, the plan and the narrator are in place.`);
 }
 
+/* ---------- Cut-off replies: marked in the chat (display only, never sent to the model), left out on export ---------- */
+function inBookChat(){try{const d=data(),c=context();return !!(d.book && c.chatMetadata?.world_info===d.book);}catch{return false;}}
+/** Say why a reply stopped mid-sentence: the response limit (thinking counts against it) or the provider ending it early. */
+async function explainCutOff(id,m) {
+  const c=context(), limit=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
+  const count=async t=>{t=String(t||''); if(!t)return 0; try{return await c.getTokenCountAsync(t);}catch{return Math.ceil(t.length/4);}};
+  const think=await count(m.extra?.reasoning), reply=await count(m.mes), used=think+reply;
+  const how='Press Continue to finish it (☰ menu next to the message box → Continue). If you don’t, Export leaves the unfinished sentence out.';
+  const msg=limit && used>=limit*0.85
+    ? `It ran out of room: about ${used.toLocaleString()} of your ${limit.toLocaleString()}-token Max Response Length${think?` — ${think.toLocaleString()} went on the model’s thinking, which counts against the same limit`:''}. ${how}`
+    : `It stopped well short of your ${limit?`${limit.toLocaleString()}-token `:''}limit (about ${used.toLocaleString()} tokens${think?`, ${think.toLocaleString()} of them thinking`:''}), so your setting didn’t cut it — the provider ended the reply early (its own output cap, a timeout or a dropped stream). ${how}`;
+  toastr.warning(msg,'Storyloom: reply stopped mid-sentence',{timeOut:15000,extendedTimeOut:10000});
+  logEvent('warn','Narrator',`reply ${id} stopped mid-sentence: ~${used} tokens (${think} thinking) of ${limit||'?'}`,String(m.mes).slice(-200));
+}
+function markCutOffs() {
+  const c=context(), on=inBookChat();
+  for(const el of document.querySelectorAll('#chat .mes[mesid]')) {
+    const m=c.chat?.[Number(el.getAttribute('mesid'))];
+    el.classList.toggle('storyloom-cutoff',on && !!m && !m.is_user && !m.is_system && endsCutOff(m.mes));
+  }
+}
 /* ---------- Export book: the narration of every chapter, in order, as .docx or .txt ---------- */
 async function chatFile(avatar,file) {
   const r=await fetch('/api/chats/get',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({avatar_url:avatar,file_name:String(file).replace(/\.jsonl$/,'')}),cache:'no-store'});
@@ -999,8 +1028,10 @@ async function stepRevise() {
   if(!notes.length)throw Error('Tick at least one note for the Editor to fix — or go straight to Seal.');
   await teamRun('Revise',async signal=>{
     status(`The Editor is revising ${f.unit} ${n} (${notes.length} note${notes.length===1?'':'s'})…`);
-    const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>!!parseRevision(r,parts.length),tokens:16000});
-    const revised=parseRevision(raw,parts.length);
+    const whole=v=>!!v && !v.some((p,k)=>endsCutOff(p)&&!endsCutOff(parts[k]));
+    const raw=await roleCall('editor',reviseInstruction({unit:f.unit,number:n,parts,facts:f.facts,notes}),{signal,check:r=>whole(parseRevision(r,parts.length)),tokens:16000});
+    let revised=parseRevision(raw,parts.length);
+    if(revised && !whole(revised)){logEvent('error','Revise','revision stops mid-sentence',raw.slice(-1500));throw Error('The Editor’s revision stopped mid-sentence (its reply was probably cut off). Nothing was changed; try again, or give the Editor a model with a longer reply.');}
     if(!revised){logEvent('error','Revise',`revision incomplete (needed ${parts.length} parts)`,raw.slice(0,3000));throw Error(`The Editor’s revision didn’t come back whole (all ${parts.length} part${parts.length===1?'':'s'} are needed). Nothing was changed; try again.`);}
     t.revision={at:new Date().toISOString(),original:parts,parts:revised,notes:notes.map(x=>x.id)}; t.accepted=false;
     status('The revision is ready. Read the changes below, then Accept or Discard.');
@@ -1026,6 +1057,28 @@ async function acceptRevision() {
   status(`Revision accepted. ${changed} message${changed===1?'':'s'} changed — the original is kept as the previous swipe on each. Next: Seal.`);
   renderTeam();
 }
+/** Auto: run every step that's left — Lint, Editor, Reader, Revise (keeping every note), accept the revision — then Seal. Only the what-next choice is asked. */
+async function autoChapter() {
+  const d=data(); readyForTeam(d);
+  const u=tpl(d).unit, n=d.chapter||1, run={lint:stepLint,markup:stepMarkup,reader:stepReader};
+  logEvent('info','Auto',`${u} ${n}: started`);
+  for(const s of activeSteps(teamSettings()).map(x=>x.key)) {
+    const t=teamState(data());
+    if(t.done.includes(s))continue;
+    if(run[s]){
+      await run[s]();
+      if(s==='lint' && teamState(data()).lint?.findings?.some(f=>f.kind==='CUT OFF'))throw Error(`${u} ${n} stops mid-sentence — the narrator’s last reply was cut off. Press Continue in the chat (or raise Max Response Length), then Auto again. Auto stopped after Lint; nothing was changed.`);
+      continue;
+    }
+    if(s==='revise') {
+      if(!t.revision){ if(!allNotes(t).length){status('No notes to fix — going straight to Seal.');continue;} t.notePicks=null; await stepRevise(); }
+      if(!teamState(data()).accepted)await acceptRevision();
+      continue;
+    }
+    if(s==='seal')await sealChapter({auto:true});
+  }
+  logEvent('info','Auto',`${u} ${n}: finished`);
+}
 async function discardRevision() {const t=teamState(); t.revision=null; await persist(); renderTeam(); status('Revision discarded. The chapter is unchanged.');}
 
 /** A chapter's plan from the outline entry: {number, title, text}. */
@@ -1041,7 +1094,7 @@ function currentNarrator(d,c=context(),{record=false}={}) {
   return n;
 }
 
-const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
+const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',['CUT OFF']:'Stops mid-sentence',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
 const el=(tag,props={},...kids)=>{const e=Object.assign(document.createElement(tag),props);e.append(...kids.filter(k=>k!=null&&k!==false));return e;};
 function checkList(items,picked,onToggle,render) {
   const ul=el('ul',{className:'storyloom-lint-list'});
@@ -1066,6 +1119,11 @@ function renderTeam(d=null) {
     const b=el('button',{type:'button',className:`storyloom-step${t.done.includes(s.key)?' is-done':''}${s.key===nextKey?' is-next':''}`,title:s.hint},el('span',{textContent:t.done.includes(s.key)?'✓ ':''}),s.label);
     b.onclick=()=>{lastAction=s.label;run[s.key]().catch(fail);};
     row.append(el('li',{},b));
+  }
+  if(!t.done.includes('seal')) {
+    const a=el('button',{type:'button',className:'storyloom-step storyloom-auto',title:'Runs every step that’s left on its own: Lint, Editor, Reader, Revise (keeping every note), accepts the revision and seals. The originals stay as swipes and Backups keep the chapter as it was. You only choose what comes next.'},'Auto ▶');
+    a.onclick=()=>{lastAction='Auto';autoChapter().catch(fail);};
+    row.append(el('li',{},a));
   }
   document.getElementById('na-team-hint').textContent=`Next: ${STEPS.find(s=>s.key===nextKey).label} — ${STEPS.find(s=>s.key===nextKey).hint}`;
   const body=document.getElementById('na-team-body'); body.replaceChildren();
@@ -1306,7 +1364,7 @@ async function newNarration(next,cur) {
 
 /* ---------- Seal and what comes next ---------- */
 const escHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-async function sealChapter() {
+async function sealChapter({auto=false}={}) {
   requireIdle();
   const c=context(), d=data(), t=tpl(d);
   if(!d.book || d.interview?.phase!=='done')throw Error('Create the outline first.');
@@ -1314,8 +1372,8 @@ async function sealChapter() {
   const {text,messages}=transcriptOf(c.chat);
   if(messages<1)throw Error(`This chat has nothing in it yet. Write ${t.unit} ${n} in the main chat first.`);
   const team=teamState(d);
-  if(team.revision && !team.accepted && !await c.Popup.show.confirm('Seal without the revision?','The Editor’s revision hasn’t been accepted. Seal the chapter as it is in the chat now?'))return;
-  if(!await c.Popup.show.confirm(`Seal ${t.unit} ${n}?`,`<p>Seal will:</p><ol><li>Read this chat and write the ${t.unit.toLowerCase()}’s seal note (summary, what changed, what the narrator now knows, what must not drift, open threads).</li><li>Add it to <b>Story so far</b> and make it <b>Previously</b> for the next ${t.unit.toLowerCase()}.</li><li>Offer any character changes as Suggestions for you to approve.</li></ol><p>Then you choose what’s next. This chat is not changed.</p>`))return;
+  if(!auto && team.revision && !team.accepted && !await c.Popup.show.confirm('Seal without the revision?','The Editor’s revision hasn’t been accepted. Seal the chapter as it is in the chat now?'))return;
+  if(!auto && !await c.Popup.show.confirm(`Seal ${t.unit} ${n}?`,`<p>Seal will:</p><ol><li>Read this chat and write the ${t.unit.toLowerCase()}’s seal note (summary, what changed, what the narrator now knows, what must not drift, open threads).</li><li>Add it to <b>Story so far</b> and make it <b>Previously</b> for the next ${t.unit.toLowerCase()}.</li><li>Offer any character changes as Suggestions for you to approve.</li></ol><p>Then you choose what’s next. This chat is not changed.</p>`))return;
   const book=await freshBook(d.book), rs=teamSettings();
   const sofarTitle=MEMORY_ITEMS[0].title, sumTitle=summaryTitle(t.unit,n);
   const castTitles=Object.values(book.entries||{}).map(e=>String(e.comment||'')).filter(x=>/^character\s*[—–-]/i.test(x));
@@ -2829,6 +2887,7 @@ function init() {
   const c=context();
   setPromptOverrides(c.extensionSettings.storyloom?.prompts);
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueSync);
+  c.eventSource.on(c.event_types.GENERATION_STARTED,(type,opts,dry)=>{try{applyReplyLength();}catch(e){warnLog('Storyloom reply length:',e);}});
   c.eventSource.on(c.event_types.WORLDINFO_UPDATED,queueMemory);
   setTimeout(()=>applyMemory().catch(e=>warnLog('Storyloom memory:',e)),2500);
   showVersion();
@@ -2844,6 +2903,12 @@ function init() {
   c.eventSource.on(c.event_types.MESSAGE_EDITED,id=>sourceChanged(id));
   c.eventSource.on(c.event_types.MESSAGE_DELETED,id=>sourceChanged(id,true));
   c.eventSource.on(c.event_types.MESSAGE_SWIPED,id=>sourceChanged(id));
+  for(const ev of ['MESSAGE_RECEIVED','MESSAGE_EDITED','MESSAGE_SWIPED','MESSAGE_UPDATED','CHAT_CHANGED','CHARACTER_MESSAGE_RENDERED'])if(c.event_types[ev])c.eventSource.on(c.event_types[ev],()=>setTimeout(markCutOffs,300));
+  c.eventSource.on(c.event_types.MESSAGE_RECEIVED,(id,type)=>{try{
+    if(type==='first_message'||type==='quiet')return;
+    const m=context().chat[id]; if(!m||m.is_user||m.is_system||!inBookChat())return;
+    if(endsCutOff(m.mes))explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
+  }catch(e){warnLog('Storyloom cut-off check:',e);}});
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED, (id,type)=>{try {
     if(type==='first_message') return;
     const cc=context(), d=data(); if(!d.watch || !d.book) return;

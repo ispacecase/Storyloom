@@ -54,3 +54,14 @@ test('prose transcript drops speaker labels and the writer’s own messages', as
   assert.deepEqual(transcriptOf(chat, 60000, {prose: true}), {text: 'Ruth came home.\n\nIt rained.', messages: 2});
   assert.match(transcriptOf(chat).text, /^Novel Engine: Ruth/);
 });
+
+test('the narrator is told how much fits in one reply', async () => {
+  const {replyWords, replyLengthNote} = await import('../memory.mjs');
+  assert.equal(replyWords(2000), 1200);
+  assert.equal(replyWords(300), 150);
+  assert.equal(replyWords(0), 0);
+  assert.equal(replyWords(8196), 1500);
+  assert.match(replyLengthNote(2000), /about 1200 words/);
+  assert.match(replyLengthNote(2000), /not the whole chapter/);
+  assert.equal(replyLengthNote(undefined), '');
+});

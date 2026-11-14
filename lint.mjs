@@ -119,15 +119,30 @@ export function lengthCheck(text, target) {
   return [];
 }
 
+/** True when text stops mid-sentence: no closing punctuation, or a quote left open (a reply cut off by the response length). */
+export function endsCutOff(text) {
+  const t = String(text || '').trim().replace(/[*_~`]+$/, '');
+  if (!t) return false;
+  const last = t.split(/\n\s*\n/).pop();
+  const curlyOpen = (last.match(/“/g) || []).length, curlyClose = (last.match(/”/g) || []).length, straight = (last.match(/"/g) || []).length;
+  if (curlyOpen > curlyClose || straight % 2) return true;
+  return !/[.!?…”"’')\]—–-]$/.test(t);
+}
+export function cutOffCheck(text) {
+  if (!endsCutOff(text)) return [];
+  const tail = String(text).trim().split(/\s+/).slice(-8).join(' ');
+  return [{kind: 'CUT OFF', where: 'last line', quote: tail, rule: 'The chapter stops mid-sentence — the narrator’s reply was probably cut off by the response length. Press Continue in the chat (or raise Max Response Length) before revising or sealing.'}];
+}
+
 /** hard = contradicts the book (canon, POV, tense, names); soft = taste. */
-export const SEVERITY = Object.freeze({TENSE: 'hard', POV: 'hard', UNLISTED: 'hard', NAME: 'hard', REPEAT: 'soft', STOCK: 'soft', LENGTH: 'soft'});
+export const SEVERITY = Object.freeze({TENSE: 'hard', POV: 'hard', UNLISTED: 'hard', NAME: 'hard', REPEAT: 'soft', STOCK: 'soft', LENGTH: 'soft', 'CUT OFF': 'hard'});
 /** All exact checks. `book` = {tense, pov, knownNames, castNames, targetWords, stock}. */
 export function exactLint(text, book = {}) {
   const paras = paragraphs(text);
   return [
     ...povSlips(paras, book.pov), ...tenseSlips(paras, book.tense),
     ...unknownNames(paras, book.knownNames || []), ...nameDrift(paras, book.castNames || []),
-    ...repetition(paras), ...stockPhrases(paras, book.stock || STOCK_PHRASES), ...lengthCheck(text, book.targetWords),
+    ...repetition(paras), ...stockPhrases(paras, book.stock || STOCK_PHRASES), ...lengthCheck(text, book.targetWords), ...cutOffCheck(text),
   ].map(f => ({...f, severity: SEVERITY[f.kind] || 'soft'}));
 }
 
@@ -146,7 +161,7 @@ Check for exactly these kinds of problem:
 - PERIOD: things that do not exist or fit in the story's time and setting (technology, money, slang, brands, customs).
 - RULE: anything the writer said the story must or must never do.
 - CONTINUITY: anything that contradicts a sealed note's MUST NOT DRIFT or another established fact.
-- PLAN: what the outline plans for THIS ${unit.toLowerCase()} that the text has not done yet — each planned event or turn that hasn't happened, and whether the text reaches the ${unit.toLowerCase()}'s planned ending. For these there is no line to quote: quote the planned event from the outline instead and leave out the line number, e.g. - [PLAN] [hard] "Tom comes back up at dusk" — planned for this ${unit.toLowerCase()}, hasn't happened yet (the outline). Use hard for a missing event, soft for an ending that is close but not reached. If everything planned has happened, write no PLAN lines.
+- PLAN: what the outline plans for THIS ${unit.toLowerCase()} that the text has not done yet — each planned event or turn that hasn't happened, and whether the text reaches the ${unit.toLowerCase()}'s planned ending. For these there is no line to quote: quote the planned event from the outline instead and leave out the line number, e.g. - [PLAN] [hard] "<the planned event, quoted from the outline>" — planned for this ${unit.toLowerCase()}, hasn't happened yet (the outline). Use hard for a missing event, soft for an ending that is close but not reached. If everything planned has happened, write no PLAN lines.
 Each line of the chapter is numbered ("12| …"). Write one line per problem, exactly like this:
 - [KIND] [hard|soft] line N: "exact quote from that line, under 20 words" — what it breaks, naming the source (e.g. Ben's profile, the outline for Chapter 3, the writer's rule, the Chapter 1 seal)
 Mark it hard if it contradicts canon (the book's facts, the outline, a seal, the writer's rules), soft if it is a matter of taste.

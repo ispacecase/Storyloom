@@ -4,13 +4,36 @@
  * and writing a minimal .docx (a zip of XML files; stored, not compressed — Word and Google Docs open it).
  */
 
+import {endsCutOff} from './lint.mjs';
+
+/** Drop the unfinished end of a reply that was cut off by the response limit: an unclosed line of dialogue, then any half sentence. */
+export function cropCutOff(text) {
+  let t = String(text || '').trim();
+  if (!endsCutOff(t)) return t;
+  const paras = t.split(/\n\s*\n/), last = paras.pop();
+  let p = last;
+  const open = (() => { // the opening quote that is never closed
+    let curly = -1, straight = -1;
+    for (let i = 0; i < p.length; i++) {
+      const ch = p[i];
+      if (ch === '“') curly = i; else if (ch === '”') curly = -1;
+      else if (ch === '"') straight = straight < 0 ? i : -1;
+    }
+    return Math.max(curly, straight);
+  })();
+  if (open >= 0) p = p.slice(0, open).trimEnd();
+  if (endsCutOff(p)) { const m = p.match(/^[\s\S]*[.!?…][”"’')\]]*/); p = m ? m[0] : ''; }
+  return [...paras, p].filter(x => x.trim()).join('\n\n').trim();
+}
+
 /** The story prose of one chapter's chat: the narrator's messages (the swipe that's showing), without the chapter heading greeting. */
 export function chapterProse(chat, {start = 0, end = null, unit = 'Chapter'} = {}) {
   const msgs = (chat || []).slice(start, end ?? undefined);
   const heading = new RegExp(`^\\s*${unit}\\s+\\d+\\b[^\\n]{0,120}$`, 'i');
   return msgs
     .filter(m => m && !m.is_user && !m.is_system && String(m.mes || '').trim())
-    .map(m => String(m.mes).trim())
+    .map(m => cropCutOff(String(m.mes).trim()))
+    .filter(Boolean)
     .filter((t, i) => !(i === 0 && heading.test(t)))
     .join('\n\n');
 }

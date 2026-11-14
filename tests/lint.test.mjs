@@ -97,3 +97,13 @@ test('the plan check lists planned events that have not happened, quoting the ou
   const f = parseFindings('- [PLAN] [hard] "Tom comes back up at dusk" — planned for this chapter, hasn’t happened yet (the outline)');
   assert.deepEqual(f.map(x => [x.kind, x.severity, x.where, x.quote]), [['PLAN', 'hard', '', 'Tom comes back up at dusk']]);
 });
+
+test('a chapter that stops mid-sentence is flagged', async () => {
+  const {endsCutOff, exactLint} = await import('../lint.mjs');
+  assert.equal(endsCutOff('She pulled her coat straight. "There\'s ice cream in the little freezer, the top one, if she asks. Not before tea'), true);
+  assert.equal(endsCutOff('She went back down for the tea.'), false);
+  assert.equal(endsCutOff('“Not before tea,” she said.'), false);
+  assert.equal(endsCutOff('“Not before tea.”'), false);
+  assert.equal(endsCutOff('and then she'), true);
+  assert.equal(exactLint('One.\n\nAnd then she').some(f => f.kind === 'CUT OFF' && f.severity === 'hard'), true);
+});
