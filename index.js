@@ -26,7 +26,7 @@ import { castNames, characterProfilesInstruction, validateCharacters, characterT
 import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
-import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, lastPage, capsSection } from './memory.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, lastPage, capsSection, tokensFor } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
@@ -687,10 +687,19 @@ async function applyMemory() {
   applyReplyLength(!!(book&&d), u);
 }
 /** Tell the narrator how many words fit in one reply (from the current Max Response Length), so it doesn't try to write the whole chapter and get cut off. */
+/** Under the words-per-reply box: whether the Max Response Length fits that many words plus thinking. */
+function replyWordsHint() {
+  const h=document.getElementById('sl-reply-words-hint'); if(!h)return;
+  const c=context(), want=replyTarget(), max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
+  if(!want){h.textContent='Auto: sized to fit your Max Response Length.';h.classList.remove('is-warning');return;}
+  const need=tokensFor(want);
+  h.textContent=max && need>max?`Your Max Response Length is ${max.toLocaleString()} tokens; ${want.toLocaleString()} words plus thinking needs about ${need.toLocaleString()}. Raise it, or replies will be cut off.`:`Needs about ${need.toLocaleString()} tokens with thinking${max?` — your limit (${max.toLocaleString()}) is enough`:''}.`;
+  h.classList.toggle('is-warning',!!max && need>max);
+}
 function applyReplyLength(on=null, unit='Chapter') {
   const c=context();
   if(on===null){try{const d=data(); on=!!(d.book && c.chatMetadata?.world_info===d.book); unit=tpl(d).unit;}catch{on=false;}}
-  const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit):'';
+  const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,replyTarget()):'';
   c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,0);
 }
 let memoryTimer;
@@ -989,6 +998,7 @@ async function exportBook() {
 
 /* ---------- Log: what Storyloom did, what failed and why (Extensions → Storyloom → Log) ---------- */
 const LOG_KEY='storyloom-log';
+const replyTarget=()=>{try{return Math.max(0,Math.round(Number(context().extensionSettings.storyloom?.replyWords)||0));}catch{return 0;}};
 let sentEffortLogged=false;
 const sendEffort=()=>{try{return context().extensionSettings.storyloom?.sendEffort!==false;}catch{return true;}};
 const shortThinking=()=>{try{return context().extensionSettings.storyloom?.shortThinking!==false;}catch{return true;}};
@@ -2613,12 +2623,14 @@ function renderExtSettings() {
   const full=document.getElementById('sl-log-full'); if(full)full.checked=fullLog();
   const st=document.getElementById('sl-short-thinking'); if(st)st.checked=shortThinking();
   const se=document.getElementById('sl-send-effort'); if(se)se.checked=sendEffort();
+  const rw=document.getElementById('sl-reply-words'); if(rw && document.activeElement!==rw)rw.value=replyTarget()||''; replyWordsHint();
 }
 function buildExtSettings(openButton,panel) {
   const host=document.querySelector('#extensions_settings2, #extensions_settings'); if(!host)return;
   const wrap=document.createElement('div'); wrap.id='storyloom-ext'; wrap.className='storyloom-ext';
   wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
+    <div class="storyloom-row"><label title="How long each of the narrator’s replies should be. Storyloom tells the narrator to aim for this many words per reply. Blank: Storyloom sizes replies to fit your Max Response Length (at most about 1,500 words).">Words per narrator reply <input id="sl-reply-words" class="text_pole" type="number" min="0" step="100" placeholder="auto" style="width:7em"></label><small id="sl-reply-words-hint" class="storyloom-hint"></small></div>
     <label class="checkbox_label" title="SillyTavern ignores its own Reasoning Effort setting on Custom (OpenAI-compatible) endpoints such as Venice, unless the model is one of OpenAI’s. This sends it anyway, through the request’s body — only when it is set to something other than Auto, and never over a reasoning_effort you put in Include Body yourself."><input id="sl-send-effort" type="checkbox"> Send SillyTavern’s Reasoning Effort to Custom endpoints (Venice and others) in the story chat</label>
     <label class="checkbox_label" title="Thinking models (deepseek and others) can spend a whole reply thinking and write nothing. This asks them for low reasoning effort on Storyloom’s own work — Lint, Editor, Reader, Seal, planning, the Assistant. Your story chat keeps your preset’s setting."><input id="sl-short-thinking" type="checkbox"> Keep Storyloom’s own thinking short (low reasoning effort; never your story chat)</label>
     <details id="sl-team" open><summary>Chapter team</summary><p class="storyloom-hint">The people who work on each chapter after it’s written: Lint → Editor → Reader → Revise → Seal (Memory tab). Switch a role off to skip its step. Each can use its own model — a fast, cheap one for the Checker, a stronger one for the Editor. If a role’s model fails or answers in a form Storyloom can’t read, Storyloom asks its own connection once and says so in the log. Their jobs are fixed so the steps can’t break; their personalities are yours to change.</p>${teamMarkup()}</details>
@@ -2656,6 +2668,7 @@ function buildExtSettings(openButton,panel) {
   wrap.querySelector('#sl-narrator-template-save').onclick=()=>{const rows=parseNarratorTemplate(tplBox.value);if((st().narratorTemplate??null)!==narratorTemplateText(rows))backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate??null});st().narratorTemplate=narratorTemplateText(rows);saveSettings();tplBox.value=st().narratorTemplate;toastr?.success?.(`Narrator template saved (${rows.length} headings).`);logEvent('info','Settings','narrator template saved');};
   wrap.querySelector('#sl-narrator-template-reset').onclick=()=>{if(st().narratorTemplate!=null)backup({kind:'narratorTemplate',label:'Narrator template',before:st().narratorTemplate});delete st().narratorTemplate;saveSettings();tplBox.value=narratorTemplateText();toastr?.success?.('Narrator template reset.');};
   wrap.querySelector('#sl-log-filter').onchange=renderLog;
+  wrap.querySelector('#sl-reply-words').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};const v=Math.max(0,Math.round(Number(e.target.value)||0));c.extensionSettings.storyloom.replyWords=v||null;e.target.value=v||'';saveSettings();replyWordsHint();applyReplyLength();logEvent('info','Settings',`words per narrator reply: ${v||'auto'}`);};
   wrap.querySelector('#sl-send-effort').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.sendEffort=e.target.checked;saveSettings();logEvent('info','Settings',`send Reasoning Effort to Custom endpoints ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-short-thinking').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.shortThinking=e.target.checked;saveSettings();logEvent('info','Settings',`short thinking for Storyloom’s own calls ${e.target.checked?'on':'off'}`);};
   wrap.querySelector('#sl-log-full').onchange=e=>{const c=context();c.extensionSettings.storyloom ??= {};c.extensionSettings.storyloom.logFull=e.target.checked;saveSettings();};

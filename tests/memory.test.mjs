@@ -93,3 +93,11 @@ test('hand-off sections are read back whole, lower-case labels included', async 
   assert.equal(capsSection(prev, 'LAST PAGE'), 'Out past the glass.\n\nHer thumb had stopped.');
   assert.equal(capsSection(prev, 'MISSING'), '');
 });
+
+test('a chosen words-per-reply is asked for, not capped', async () => {
+  const {replyLengthNote, tokensFor} = await import('../memory.mjs');
+  assert.match(replyLengthNote(8196, 'Chapter', 3000), /aim for about 3000 words/);
+  assert.doesNotMatch(replyLengthNote(8196, 'Chapter', 3000), /no more/);
+  assert.match(replyLengthNote(2000, 'Chapter', 0), /about 1200 words, no more/);
+  assert.equal(tokensFor(3000), 5550);
+});
