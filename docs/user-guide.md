@@ -1,4 +1,4 @@
-<p align="center"><img src="../assets/storyloom-logo-clear.png" alt="Storyloom logo" width="200"></p>
+<p align="center"><img src="../assets/storyloom-logo.png" alt="Storyloom logo" width="200"></p>
 
 # Storyloom user guide
 
