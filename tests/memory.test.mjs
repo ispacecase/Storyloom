@@ -65,3 +65,31 @@ test('the narrator is told how much fits in one reply', async () => {
   assert.match(replyLengthNote(2000), /not the whole chapter/);
   assert.equal(replyLengthNote(undefined), '');
 });
+
+test('the seal asks for where things stand and everything that happened', () => {
+  const p = chapterEndInstruction({unit: 'Chapter', number: 1, transcript: 'x'});
+  assert.match(p, /WHERE THINGS STAND/);
+  assert.match(p, /conditions: weather, light/);
+  assert.match(p, /WHAT HAPPENED: every significant moment/);
+  assert.match(p, /if in doubt, include it/);
+  assert.doesNotMatch(p, /Do not include: the sequence of events \(that is SUMMARY\)/);
+  assert.match(MEMORY_ITEMS[1].header, /WHERE THINGS STAND is still true/);
+});
+
+test('the last page is the chapter’s final paragraphs, word for word', async () => {
+  const {lastPage} = await import('../memory.mjs');
+  const long = Array.from({length: 160}, (_, i) => `w${i}`).join(' ');
+  assert.equal(lastPage(`First.\n\n${long}\n\nIt was still raining when she shut the door.`), `${long}\n\nIt was still raining when she shut the door.`);
+  assert.equal(lastPage('Only one short paragraph.'), 'Only one short paragraph.');
+  assert.match(lastPage(Array.from({length: 600}, (_, i) => `w${i}`).join(' ')), /^…w150 /);
+  assert.equal(lastPage(''), '');
+});
+
+test('hand-off sections are read back whole, lower-case labels included', async () => {
+  const {capsSection} = await import('../memory.mjs');
+  const prev = 'SUMMARY: s\nWHERE THINGS STAND:\n- when: Day 1\n- Mara: kitchen\nWHAT HAPPENED:\n- Woke.\n- Mara: cut thumb.\nCONTRADICTION: none.\n\nLAST PAGE (the chapter’s final words, exactly):\nOut past the glass.\n\nHer thumb had stopped.';
+  assert.equal(capsSection(prev, 'WHERE THINGS STAND'), '- when: Day 1\n- Mara: kitchen');
+  assert.equal(capsSection(prev, 'WHAT HAPPENED'), '- Woke.\n- Mara: cut thumb.');
+  assert.equal(capsSection(prev, 'LAST PAGE'), 'Out past the glass.\n\nHer thumb had stopped.');
+  assert.equal(capsSection(prev, 'MISSING'), '');
+});

@@ -160,7 +160,7 @@ Check for exactly these kinds of problem:
 - TIMELINE: times, days, durations or order of events that do not fit the timeline or this ${unit.toLowerCase()}'s place in it.
 - PERIOD: things that do not exist or fit in the story's time and setting (technology, money, slang, brands, customs).
 - RULE: anything the writer said the story must or must never do.
-- CONTINUITY: anything that contradicts a sealed note's MUST NOT DRIFT or another established fact.
+- CONTINUITY: anything that contradicts a sealed note's MUST NOT DRIFT, how the previous ${unit.toLowerCase()} left things (WHERE THINGS STAND: time, weather, where people are and what shape they are in, who knows what, things left in a state, promises) unless the text shows time passing or the change happening, or another established fact.
 - PLAN: what the outline plans for THIS ${unit.toLowerCase()} that the text has not done yet — each planned event or turn that hasn't happened, and whether the text reaches the ${unit.toLowerCase()}'s planned ending. For these there is no line to quote: quote the planned event from the outline instead and leave out the line number, e.g. - [PLAN] [hard] "<the planned event, quoted from the outline>" — planned for this ${unit.toLowerCase()}, hasn't happened yet (the outline). Use hard for a missing event, soft for an ending that is close but not reached. If everything planned has happened, write no PLAN lines.
 Each line of the chapter is numbered ("12| …"). Write one line per problem, exactly like this:
 - [KIND] [hard|soft] line N: "exact quote from that line, under 20 words" — what it breaks, naming the source (e.g. Ben's profile, the outline for Chapter 3, the writer's rule, the Chapter 1 seal)

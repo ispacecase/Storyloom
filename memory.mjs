@@ -10,8 +10,8 @@ export const MEMORY_ITEMS = Object.freeze([
     header: 'STORY SO FAR (already happened and settled — do not repeat these events or contradict them):',
     place: {where: 'chat-start', depth: 0, role: 'system'}},
   {key: 'previously', title: 'Storyloom Memory — Previously', label: 'Previously',
-    hint: 'A summary of the last chapter, so a fresh chat knows exactly where things left off.',
-    header: 'PREVIOUSLY (summary of the last chapter):',
+    hint: 'How the last chapter ended: where things stand (time, weather, where everyone is and how they are, who knows what, things left in a state, promises), everything that happened, a summary, and its last page word for word — so the next chapter carries straight on.',
+    header: 'PREVIOUSLY — how the last {unit} ended. Everything under WHERE THINGS STAND is still true when this {unit} begins, unless the story shows time passing or it changing. LAST PAGE is its final words: carry on from there, never repeat it.',
     place: {where: 'chat-start', depth: 0, role: 'system'}},
   {key: 'chapter', title: 'Current Chapter', label: 'This chapter',
     hint: 'The plan for the chapter you are on, from the outline, with its target length and a line for each later chapter. Updated automatically when you change chapter.',
@@ -86,8 +86,18 @@ WHAT CHANGED: what is new in ${focus} against the previous seal — deltas only.
 WHAT THE NARRATOR NOW KNOWS: ${narrator}'s knowledge, and where that reading was wrong, in the page's terms. 60 words max.
 MUST NOT DRIFT: page-specific facts a later ${u} could contradict or must carry — times, standing instructions, promises, objects left somewhere in a state, who was told what, holes opened. Exact wording; only these. 100 words max.
 OPEN THREADS: bullets, eight max, twelve words each.
+WHERE THINGS STAND: the state of the story at the last line, so the next ${u} begins in the same world. One short line each, starting with a lower-case label, e.g. "- when: …":
+- when: day, time of day, how much time the ${u} covered
+- conditions: weather, light, temperature, season, sounds — anything in the air or the surroundings
+- each person on or near the page: where they are, what they are doing, what shape they are in (hurt, tired, wet, drunk, dressed for…)
+- between people: who is angry, hurt, owed, avoiding, unresolved
+- knowledge: who knows what, who was told what, who is lying or hiding something
+- places and things left in a state: doors, vehicles, letters, food, weapons, money — anything a later page could pick up
+- promises, plans, appointments and standing instructions
+WHAT HAPPENED: every significant moment of the ${u} in order, one line each — what was done, said, decided, discovered, noticed or went wrong. Anything a later page could refer back to belongs here.
+For WHERE THINGS STAND and WHAT HAPPENED: if in doubt, include it. A missing fact gets contradicted later; an extra line costs nothing. Only what is on the page.
 CONTRADICTION: none — or one line, only if this page conflicts with an earlier sealed note.
-Do not include: the sequence of events (that is SUMMARY); traits or places the character and place entries already fix, unless this ${u} changed them; dialogue beyond a six-word handle, and only for lines a later scene turns on (a standing instruction, a promise, a lie); a body inventory; anything interpreted rather than read; anything already in an earlier seal unless this ${u} moved it.
+Do not include: the sequence of events in SUMMARY (it goes under WHAT HAPPENED); traits or places the character and place entries already fix, unless this ${u} changed them; dialogue beyond a six-word handle, and only for lines a later scene turns on (a standing instruction, a promise, a lie); a body inventory; anything interpreted rather than read; anything already in an earlier seal unless this ${u} moved it.
 Only what is on the page. If the page fights an earlier seal, record the page's version and flag it under CONTRADICTION — never silently choose, never repair canon.
 2. "${MEMORY_ITEMS[0].title}" — the complete updated story-so-far ledger: everything from the current version below, plus what this ${u} settled. Keep it as a list grouped by ${u}; never drop earlier items.
 3. Only if this ${u} changed a character's situation (injury, relationship, knowledge, location, possessions): a block with that character's exact entry title containing ONLY their current state as short lines — not the rest of their profile; the extension adds it to their existing entry. Existing character entries: ${castTitles.join(', ') || 'none'}.
@@ -131,4 +141,33 @@ export function replyLengthNote(maxTokens, unit = 'Chapter') {
   const w = replyWords(maxTokens);
   if (!w) return '';
   return `REPLY LENGTH: this reply has room for about ${w} words, no more. Write one passage of the ${unit.toLowerCase()} that fits in that — not the whole ${unit.toLowerCase()} — and finish your last sentence before you reach it. The ${unit.toLowerCase()}'s full length comes from many replies.`;
+}
+
+/** The last page of a chapter, word for word: its final paragraphs, at least ~150 words (at most 3 paragraphs / ~450 words). */
+export function lastPage(text, {min = 150, max = 450} = {}) {
+  const paras = String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean);
+  const out = [];
+  let words = 0;
+  for (let i = paras.length - 1; i >= 0 && out.length < 3; i--) {
+    const w = (paras[i].match(/\S+/g) || []).length;
+    if (out.length && words + w > max) break;
+    out.unshift(paras[i]); words += w;
+    if (words >= min) break;
+  }
+  if (words > max && out.length === 1) { const all = out[0].split(/\s+/); return '…' + all.slice(-max).join(' '); }
+  return out.join('\n\n');
+}
+
+/** A section under an UPPER-CASE heading ("WHERE THINGS STAND:", "LAST PAGE (…):"), up to the next upper-case heading. Lower-case labels inside ("- when: …") stay in. */
+export function capsSection(text, label) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const head = new RegExp(`^[\\s*_#-]*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[^:\\n]{0,80}:\\s*(.*)$`);
+  const start = lines.findIndex(l => head.test(l));
+  if (start < 0) return '';
+  const out = [lines[start].match(head)[1]];
+  for (const l of lines.slice(start + 1)) {
+    if (/^[\s*_#]*[A-Z][A-Z &/'’-]{2,40}(?:\s*\([^)\n]*\))?\s*:/.test(l)) break;
+    out.push(l);
+  }
+  return out.join('\n').trim();
 }

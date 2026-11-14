@@ -26,7 +26,7 @@ import { castNames, characterProfilesInstruction, validateCharacters, characterT
 import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
-import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote } from './memory.mjs';
+import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody, replyLengthNote, lastPage, capsSection } from './memory.mjs';
 import { planLinkSync, resolveLink, linkBookName, findCharacterEntry, linksFor } from './links.mjs';
 import { NOVEL, BUILT_IN, templateToText, parseTemplate, requiredOf } from './templates.mjs';
 import { requiredTitles, reviewInstruction, REVIEW_PROTECTED, PROPOSAL_TITLE, proposalInstruction, parseProposal, validateProposal, approvedBrief } from './interview.mjs';
@@ -1485,7 +1485,8 @@ async function sealChapter({auto=false}={}) {
   const result=await interact(chapterEndInstruction({unit:t.unit,number:n,transcript:text,storySoFar:findEntry(book,sofarTitle)?.content||'',castTitles,sealedNotes,focus:facts.focus||'the focus character',narrator:`${narr?.who||'the narrator'}${note.pov?` (${note.pov})`:facts.pov?` (${facts.pov})`:''}`,title:facts.chapterTitle}),false,null,null,'chapter-end',false,{silentUser:true,mergeState:true,holdForAuthor:'allExcept',keep:[sumTitle,sofarTitle],as:{profile:rs.seal.profile,persona:rs.seal.persona,sampling:ROLES.seal.sampling,label:'Seal'}});
   const summary=(result.updates||[]).find(u=>u.title.trim().toLocaleLowerCase()===sumTitle.toLocaleLowerCase());
   if(!summary){logEvent('error','Seal','no seal note came back');throw Error(`Seal didn’t return the ${t.unit.toLowerCase()} seal note. Nothing was moved on; try again.`);}
-  await saveMemoryItem(MEMORY_ITEMS[1],summary.content);
+  const tail=lastPage(chapterParts(c.chat).slice(-6).join('\n\n'));
+  await saveMemoryItem(MEMORY_ITEMS[1],`${summary.content.trim()}${tail?`\n\nLAST PAGE (the ${t.unit.toLowerCase()}’s final words, exactly):\n${tail}`:''}`);
   markDone(teamState(d),'seal'); recordChapterChat(d,n,c); await persist();
   logEvent('info','Seal',`${t.unit} ${n} sealed`);
   status(`${t.unit} ${n} is sealed.${result.held?.length?' Character updates are waiting under Suggestions.':''}`);
@@ -1774,6 +1775,7 @@ async function bookFacts(d) {
     `THE OUTLINE AROUND ${t.unit.toUpperCase()} ${n} (events planned for other ${t.unit.toLowerCase()}s must not happen here):\n${laterChapters(outlineBody(outline),n,t.unit)}`,
     `CHARACTERS (only these people exist on the page):\n${characters.map(e=>`${e.comment}\nPERSONALITY: ${sectionOf(e.content,'PERSONALITY').slice(0,600)}\nVOICE AND MANNERISMS: ${sectionOf(e.content,'VOICE AND MANNERISMS').slice(0,600)}\nCURRENT STATE: ${sectionOf(e.content,'CURRENT STATE').slice(0,400)}`).join('\n\n').slice(0,9000)}`,
     `THE WRITER'S RULES AND ANSWERS:\n${answers.slice(0,3000)}`,
+    (()=>{const prev=findEntry(book,MEMORY_ITEMS[1].title)?.content||''; const stand=capsSection(prev,'WHERE THINGS STAND'), happened=capsSection(prev,'WHAT HAPPENED'), page=capsSection(prev,'LAST PAGE'); return n>1&&(stand||happened)?`HOW THE PREVIOUS ${t.unit.toUpperCase()} ENDED (still true at the start of ${t.unit} ${n} unless the text shows time passing or a change):\nWHERE THINGS STAND:\n${stand.slice(0,3000)}\nWHAT HAPPENED:\n${happened.slice(0,3000)}${page?`\nLAST PAGE:\n${page.slice(0,3000)}`:''}`:'';})(),
     seals.length?`SEALED ${t.unit.toUpperCase()}S — MUST NOT DRIFT:\n${seals.map(e=>`${e.comment}: ${sectionOf(e.content,'MUST NOT DRIFT')}`).join('\n').slice(0,5000)}`:'',
   ].filter(Boolean).join('\n\n');
   return {pov,tense,castNames:castNamesAll,knownNames,target,facts,seals,focus,unit:t.unit,chapterTitle:(d.outlineChapters||[]).find(c=>c.number===n)?.title||''};
