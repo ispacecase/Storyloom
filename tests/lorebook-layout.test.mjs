@@ -108,3 +108,13 @@ test('outline edits merge by chapter: changed and new chapters replace or add, t
   assert.deepEqual(chapterList(mergeOutline(old, 'REMOVE Chapter 3')).map(c => c.number), [1, 2]);
   assert.equal(mergeOutline(old, 'nothing structured'), 'nothing structured');
 });
+
+test('lint sees every later chapter, in full while it fits and as gists after that', async () => {
+  const {laterChapters} = await import('../lorebook-layout.mjs');
+  const outline = Array.from({length: 20}, (_, i) => `Chapter ${i + 1} — T${i + 1}\n\nEvents: Event ${i + 1} happens. ${'x'.repeat(800)}`).join('\n\n');
+  const text = laterChapters(outline, 3, 'Chapter', 3000);
+  assert.match(text, /EARLIER CHAPTERS[\s\S]*- Chapter 1: T1/);
+  assert.match(text, /LATER CHAPTERS — none of this may happen[\s\S]*Chapter 4 — T4\n\nEvents: Event 4 happens/);
+  assert.match(text, /Chapter 20 — T20 — Event 20 happens\./);
+  assert.doesNotMatch(text, /Event 3 happens/);
+});

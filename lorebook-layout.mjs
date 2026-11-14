@@ -18,7 +18,7 @@ export function chapterList(outline,unit='Chapter') {
 }
 
 /** One line saying what a later chapter is about: its title plus the first sentence of its Events line. */
-function gist(chapter) {
+export function gist(chapter) {
   const events=(chapter.text.match(/^[\s*_-]*Events\s*:\s*(.+)$/mi)||[])[1]||'';
   const first=events.replace(/\(AI-suggested\)/gi,'').match(/^.*?[.!?](\s|$)/)?.[0]?.trim()||events.slice(0,160);
   return `${chapter.title}${first?` — ${first}`:''}`;
@@ -135,4 +135,20 @@ export function mergeOutline(oldText, editText, unit = 'Chapter') {
   for (const n of removed) byNumber.delete(n);
   const head = preface(edit) || preface(old);
   return [head, ...[...byNumber.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t)].filter(Boolean).join('\n\n');
+}
+
+/**
+ * The outline as a check against "too early": earlier chapters in brief, then every later chapter — in full while it
+ * fits, as a one-line gist after that — so nothing planned for later is missing, however long the outline.
+ */
+export function laterChapters(outline, current, unit = 'Chapter', budget = 14000) {
+  const all = chapterList(outline, unit), earlier = all.filter(c => c.number < current), later = all.filter(c => c.number > current);
+  const out = [];
+  if (earlier.length) out.push(`EARLIER ${unit.toUpperCase()}S (already written):\n${earlier.map(c => `- ${unit} ${c.number}: ${gist(c)}`).join('\n')}`);
+  if (later.length) {
+    let used = 0;
+    const lines = later.map(c => { const full = c.text.trim(); if (used + full.length <= budget) { used += full.length; return full; } return `${unit} ${c.number} — ${gist(c)}`; });
+    out.push(`LATER ${unit.toUpperCase()}S — none of this may happen, be revealed or be known yet in ${unit} ${current}:\n${lines.join('\n\n')}`);
+  }
+  return out.join('\n\n');
 }

@@ -21,7 +21,7 @@ import { planningSystem } from './prompts.mjs';
 import { PROMPT_DEFAULTS, setPromptOverrides } from './prompt-texts.mjs';
 import { PROVIDERS, readKeyOptions, readModels } from './providers.mjs';
 import { castNames, characterProfilesInstruction, validateCharacters, characterTitle, splitExtraCast } from './characters.mjs';
-import { layoutBook, chapterList, directiveForChapter, mergeOutline } from './lorebook-layout.mjs';
+import { layoutBook, chapterList, directiveForChapter, mergeOutline, laterChapters } from './lorebook-layout.mjs';
 import { assistantSystem, parseActions, applyAction, describeAction, formatSnapshot, needsCompaction, compactionPrompt } from './assistant.mjs';
 import { downloadDocs, chunkMarkdown, indexChunks, searchDocsMany, searchTermsPrompt, parseSearchTerms, vectorSource } from './docs-rag.mjs';
 import { MEMORY_ITEMS, WHERE, CHAT_START_DEPTH, memoryKey, injection, transcriptOf, chapterEndInstruction, summaryTitle, mergeCurrentState, outlineBody } from './memory.mjs';
@@ -1539,7 +1539,7 @@ async function bookFacts(d) {
     `WRITING DIRECTIVE: ${String(directive?.content||'').slice(0,1500)}`,
     d.proposal?.fields?`APPROVED PROPOSAL — core: ${d.proposal.fields.core}\nTimeline: ${d.proposal.fields.timeline}`:'',
     (()=>{const plan=chapterList(outlineBody(outline),t.unit).find(x=>x.number===n); return plan?`THIS ${t.unit.toUpperCase()}'S PLAN (${t.unit} ${n} — what it should contain and where it should end):\n${plan.text}`:'';})(),
-    `THE OUTLINE (this is ${t.unit} ${n}; events planned for other ${t.unit.toLowerCase()}s must not happen here):\n${outlineBody(outline).slice(0,9000)}`,
+    `THE OUTLINE AROUND ${t.unit.toUpperCase()} ${n} (events planned for other ${t.unit.toLowerCase()}s must not happen here):\n${laterChapters(outlineBody(outline),n,t.unit)}`,
     `CHARACTERS (only these people exist on the page):\n${characters.map(e=>`${e.comment}\nPERSONALITY: ${sectionOf(e.content,'PERSONALITY').slice(0,600)}\nVOICE AND MANNERISMS: ${sectionOf(e.content,'VOICE AND MANNERISMS').slice(0,600)}\nCURRENT STATE: ${sectionOf(e.content,'CURRENT STATE').slice(0,400)}`).join('\n\n').slice(0,9000)}`,
     `THE WRITER'S RULES AND ANSWERS:\n${answers.slice(0,3000)}`,
     seals.length?`SEALED ${t.unit.toUpperCase()}S — MUST NOT DRIFT:\n${seals.map(e=>`${e.comment}: ${sectionOf(e.content,'MUST NOT DRIFT')}`).join('\n').slice(0,5000)}`:'',
