@@ -2,7 +2,7 @@ import { doNewChat } from '../../../../script.js';
 import { promptManager, getChatCompletionPreset } from '../../../openai.js';
 import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CONTINUE_NUDGE, NEW_CHAT_PROMPT, VALUES, varName, isGeneralNarrator, bookValues, novelPreset, presetPrompts, narrationInstruction, parseNarration } from './novelist.mjs';
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
-import { chapterProse, bookText, bookDocx, fileName } from './export.mjs';
+import { chapterProse, bookText, bookDocx, fileName, cleanReply } from './export.mjs';
 import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction } from './compare.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
@@ -645,11 +645,42 @@ async function askAssistant(text) {
     }
   } finally {assistantBusy=false;renderModelWork(null);}
 }
+/* ---------- Folding: in the side panel, the extra sections fold up; click to open. Full screen shows everything. ---------- */
+const FOLD_KEY='storyloom-folds';
+const readFolds=()=>{try{return JSON.parse(localStorage.getItem(FOLD_KEY)||'{}')||{};}catch{return {};}};
+function addFold(el,key,label) {
+  if(!el || el.previousElementSibling?.dataset?.fold===key)return;
+  const btn=document.createElement('button'); btn.type='button'; btn.className='sl-fold-toggle'; btn.dataset.fold=key;
+  const sync=()=>{const open=readFolds()[key]===true; el.classList.toggle('sl-folded',!open); btn.setAttribute('aria-expanded',String(open)); btn.textContent=`${open?'▾':'▸'} ${typeof label==='function'?label(el):label}`; btn.hidden=el.hidden;};
+  btn.onclick=()=>{const f=readFolds(); f[key]=!(f[key]===true); try{localStorage.setItem(FOLD_KEY,JSON.stringify(f));}catch{} sync();};
+  el.before(btn); sync();
+  new MutationObserver(sync).observe(el,{attributes:true,attributeFilter:['hidden'],childList:true,subtree:true});
+}
+function setupFolds() {
+  const q=s=>document.querySelector(s);
+  addFold(q('#na-workspace > .storyloom-book'),'book','Lorebook and tools');
+  addFold(q('#na-suggestions'),'suggestions',el=>{const n=(el.querySelector('strong,h3,summary')?.textContent||'').match(/\((\d+)\)/)?.[1]; return `Suggestions${n?` (${n} waiting)`:''}`;});
+  addFold(q('#na-team > .storyloom-row'),'booktools','Book tools — setup, settings, compare, export');
+  addFold(q('#na-remembers'),'remembers','What the story AI remembers');
+  addFold(q('#na-assistant > .storyloom-assistant-bar'),'docs','SillyTavern docs');
+}
+let wideView=(()=>{try{return localStorage.getItem('storyloom-wide')==='1';}catch{return false;}})();
+/** Full screen: the panel covers the page and shows Story, Memory and Assistant as tiles side by side. */
+function setWide(on) {
+  wideView=!!on; try{localStorage.setItem('storyloom-wide',wideView?'1':'0');}catch{}
+  const panel=document.getElementById('na-panel'); if(!panel)return;
+  panel.classList.toggle('is-wide',wideView);
+  const b=document.getElementById('na-wide'); if(b){b.textContent=wideView?'⤡ Side panel':'⤢ Full screen'; b.setAttribute('aria-pressed',String(wideView));}
+  renderPanelView();
+}
 function renderTabs() {
   const panel=document.getElementById('na-panel'); if(!panel)return;
+  panel.classList.toggle('is-wide',wideView);
   for(const tab of ['story','memory','assistant'])document.querySelector('#na-tab-'+tab).classList.toggle('is-active',activeTab===tab);
-  document.querySelector('#na-assistant').hidden=settingsOpen || activeTab!=='assistant';
-  document.querySelector('#na-memory').hidden=settingsOpen || activeTab!=='memory';
+  const tiles=wideView && !settingsOpen && !noChatOpen();
+  document.querySelector('#na-assistant').hidden=settingsOpen || (!tiles && activeTab!=='assistant');
+  document.querySelector('#na-memory').hidden=settingsOpen || (!tiles && activeTab!=='memory');
+  if(tiles){document.querySelector('#na-workspace').hidden=false; renderMemory().catch(fail); renderAssistant(); renderDocsStatus(); return;}
   if(activeTab==='memory' && !noChatOpen())renderMemory().catch(fail);
   if(activeTab==='assistant'){renderAssistant();renderDocsStatus();}
 }
@@ -691,7 +722,7 @@ async function applyMemory() {
 function replyWordsHint() {
   const h=document.getElementById('sl-reply-words-hint'); if(!h)return;
   const c=context(), want=replyTarget(), max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
-  if(!want){h.textContent='Auto: sized to fit your Max Response Length.';h.classList.remove('is-warning');return;}
+  if(!want){const a=autoReplyWords(); h.textContent=a?`Auto for this book: about ${a.toLocaleString()} words per reply (a third of a ${(()=>{try{return (Number(data().budget?.perChapter)||0).toLocaleString();}catch{return '';}})()}-word chapter, within what your Max Response Length fits).`:'Auto: sized to fit your Max Response Length.';h.classList.remove('is-warning');return;}
   const need=tokensFor(want);
   let per=0; try{per=Number(data().budget?.perChapter)||0;}catch{}
   if(per && want>per){h.textContent=`This book’s ${(()=>{try{return tpl(data()).unit.toLowerCase();}catch{return 'chapter';}})()}s are planned at about ${per.toLocaleString()} words in total, so the narrator will write less than ${want.toLocaleString()} per reply. Raise WORDS PER in the book’s Story Scale (or ask the Assistant) for longer chapters.`;h.classList.add('is-warning');return;}
@@ -701,7 +732,7 @@ function replyWordsHint() {
 function applyReplyLength(on=null, unit='Chapter') {
   const c=context();
   if(on===null){try{const d=data(); on=!!(d.book && c.chatMetadata?.world_info===d.book); unit=tpl(d).unit;}catch{on=false;}}
-  const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,replyTarget()):'';
+  const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords()):'';
   c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
 }
 let memoryTimer;
@@ -929,7 +960,29 @@ async function explainCutOff(id,m) {
   toastr.warning(msg,'Storyloom: reply stopped mid-sentence',{timeOut:15000,extendedTimeOut:10000});
   logEvent('warn','Narrator',`reply ${id} stopped mid-sentence: ~${used} tokens (${think} thinking) of ${limit||'?'}`,String(m.mes).slice(-200));
 }
+const countCache=new Map();
+/** Under each narrator reply (display only, never sent): words, tokens, thinking tokens, and how much of the response limit it used. */
+async function markCounts() {
+  const c=context(); if(!inBookChat())return document.querySelectorAll('#chat .storyloom-count').forEach(e=>e.remove());
+  const max=Number(c.chatCompletionSettings?.openai_max_tokens)||0;
+  const count=async t=>{t=String(t||''); if(!t)return 0; if(countCache.has(t))return countCache.get(t); let n; try{n=await c.getTokenCountAsync(t);}catch{n=Math.ceil(t.length/4);} countCache.set(t,n); if(countCache.size>500)countCache.delete(countCache.keys().next().value); return n;};
+  for(const el of document.querySelectorAll('#chat .mes[mesid]')) {
+    const m=c.chat?.[Number(el.getAttribute('mesid'))], box=el.querySelector('.mes_text'); if(!box)continue;
+    let tag=el.querySelector('.storyloom-count');
+    if(!m || m.is_user || m.is_system || isHeading(m.mes)){tag?.remove();continue;}
+    const words=(String(m.mes).match(/\S+/g)||[]).length, reply=await count(m.mes), think=await count(m.extra?.reasoning), used=reply+think;
+    const text=`${words.toLocaleString()} words · ${reply.toLocaleString()} tokens${think?` · thinking ${think.toLocaleString()}`:''}${max?` · ${used.toLocaleString()} of ${max.toLocaleString()}${used>=max*0.85?' ⚠ near the limit':''}`:''}`;
+    if(!tag){tag=document.createElement('div');tag.className='storyloom-count';box.after(tag);}
+    tag.textContent=text; tag.classList.toggle('is-warning',!!max && used>=max*0.85);
+  }
+}
+/** Words written so far in this chapter (this chat, from the chapter's start). */
+function chapterWords(d=data(),c=context()) {
+  const start=d.chapterStart?.chatId===c.chatId && d.chapterStart?.chapter===(d.chapter||1)?d.chapterStart.index:0;
+  return (c.chat||[]).slice(start).filter(m=>m && !m.is_user && !m.is_system && !isHeading(m.mes)).reduce((n,m)=>n+(String(m.mes).match(/\S+/g)||[]).length,0);
+}
 function markCutOffs() {
+  markCounts().catch(e=>warnLog('Storyloom counter:',e));
   const c=context(), on=inBookChat();
   for(const el of document.querySelectorAll('#chat .mes[mesid]')) {
     const m=c.chat?.[Number(el.getAttribute('mesid'))];
@@ -1001,6 +1054,15 @@ async function exportBook() {
 /* ---------- Log: what Storyloom did, what failed and why (Extensions → Storyloom → Log) ---------- */
 const LOG_KEY='storyloom-log';
 const replyTarget=()=>{try{return Math.max(0,Math.round(Number(context().extensionSettings.storyloom?.replyWords)||0));}catch{return 0;}};
+/** Words per reply when the writer hasn't set one: about a third of this book's chapter, 1,000–3,000, and no more than Max Response Length fits with thinking. */
+function autoReplyWords() {
+  let per=0; try{per=Number(data().budget?.perChapter)||0;}catch{}
+  if(!per)return 0;
+  const max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
+  const fits=max?Math.max(300,Math.floor((max-1500)*100/135/100)*100):Infinity;
+  return Math.min(fits,Math.max(1000,Math.min(3000,Math.round(per/3/100)*100)));
+}
+const effectiveReplyWords=()=>replyTarget()||autoReplyWords();
 let sentEffortLogged=false;
 const sendEffort=()=>{try{return context().extensionSettings.storyloom?.sendEffort!==false;}catch{return true;}};
 const shortThinking=()=>{try{return context().extensionSettings.storyloom?.shortThinking!==false;}catch{return true;}};
@@ -1235,7 +1297,8 @@ function renderTeam(d=null) {
   const t=teamState(d), rs=teamSettings(), steps=activeSteps(rs), u=tpl(d).unit, n=d.chapter||1, total=d.outlineChapters?.length||0;
   const open=context().characters?.[context().characterId], narr=open?((d.narrators||[]).find(x=>x.avatar===open.avatar)||{name:open.name}):null;
   const und=document.getElementById('na-narrator-undo'); if(und)und.hidden=!d.narratorUndo || d.narratorUndo.avatar!==context().characters?.[context().characterId]?.avatar;
-  document.getElementById('na-team-label').textContent=`${u} ${n}${total?` of ${total}`:''}${narr?` — narrated by ${shortWho(narr)}`:''}`;
+  const written=(()=>{try{return chapterWords(d);}catch{return 0;}})(), per=Number(d.budget?.perChapter)||0;
+  document.getElementById('na-team-label').textContent=`${u} ${n}${total?` of ${total}`:''}${narr?` — narrated by ${shortWho(narr)}`:''}${written?` · ${written.toLocaleString()}${per?` of ~${per.toLocaleString()}`:''} words`:''}`;
   const row=document.getElementById('na-team-steps'); row.replaceChildren();
   const run={lint:stepLint,markup:stepMarkup,reader:stepReader,revise:stepRevise,seal:sealChapter};
   const nextKey=steps.find(s=>!t.done.includes(s.key))?.key||'seal';
@@ -2718,6 +2781,7 @@ function init() {
     <header class="storyloom-header">
       <div class="storyloom-brand"><span class="storyloom-mark" aria-hidden="true">✦</span><div><strong>Storyloom</strong><small id="na-version"></small></div><button id="na-update" type="button" class="storyloom-update" hidden>Update available</button></div>
       <div class="storyloom-header-actions">
+        <button id="na-wide" type="button" title="Full screen: Story, Memory and Assistant side by side" aria-pressed="false">⤢ Full screen</button>
         <button id="na-back" type="button">Back to start</button>
         <button id="na-settings-toggle" type="button" aria-controls="na-settings" aria-expanded="false">Settings</button>
         <button id="na-close" type="button" class="storyloom-close" aria-label="Close Storyloom">×</button>
@@ -2819,6 +2883,8 @@ function init() {
   panel.addEventListener('change',event=>{const l=event.target.closest('label')?.childNodes[0]?.textContent?.trim();const f=event.target.id==='na-book'?'Lorebook for this chat':event.target.id==='na-reference'?'Reference lorebook':l;if(f)lastAction=f;},true);
   for(const provider of PROVIDERS)document.querySelector('#na-provider').add(new Option(provider.name,provider.id));
   document.querySelector('#na-close').onclick=()=>{panel.hidden=true;settingsOpen=false;};
+  document.querySelector('#na-wide').onclick=()=>setWide(!wideView);
+  setupFolds();
   document.querySelector('#na-settings-toggle').onclick=()=>{settingsOpen=!settingsOpen;renderPanelView();};
   document.querySelector('#na-back').onclick=()=>{atStart=!atStart;settingsOpen=false;renderInterview();renderPanelView();};
   document.querySelector('#na-resume-chat').onclick=()=>{atStart=false;renderInterview();renderPanelView();};
@@ -3065,6 +3131,8 @@ function init() {
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED,(id,type)=>{try{
     if(type==='first_message'||type==='quiet')return;
     const m=context().chat[id]; if(!m||m.is_user||m.is_system||!inBookChat())return;
+    const clean=cleanReply(m.mes);
+    if(clean!==m.mes){m.mes=clean.trim(); if(Array.isArray(m.swipes))m.swipes[m.swipe_id??0]=m.mes; const cx=context(); try{cx.updateMessageBlock(id,m);}catch{} cx.saveChat().catch(()=>{}); logEvent('info','Narrator',`removed provider junk (<ds_safety>) from reply ${id}`);}
     if(!isHeading(m.mes) && endsCutOff(m.mes))explainCutOff(id,m).catch(e=>warnLog('Storyloom cut-off check:',e));
   }catch(e){warnLog('Storyloom cut-off check:',e);}});
   c.eventSource.on(c.event_types.MESSAGE_RECEIVED, (id,type)=>{try {

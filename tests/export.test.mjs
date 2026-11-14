@@ -48,3 +48,11 @@ test('a reply cut off by the response limit loses its unfinished end on export',
   assert.equal(cropCutOff('All done.'), 'All done.');
   assert.equal(chapterProse([{mes: 'A whole line.'}, {mes: 'Half a sen'}]), 'A whole line.');
 });
+
+test('provider junk like <ds_safety> is removed from replies', async () => {
+  const {cleanReply} = await import('../export.mjs');
+  assert.equal(cleanReply('<ds_safety>[Internal thinking]\n\nShe went to the window.'), 'She went to the window.');
+  assert.equal(cleanReply('<ds_safety>checking</ds_safety>\nShe went.'), 'She went.');
+  assert.equal(cleanReply('She went. <ds_safety>'), 'She went. ');
+  assert.equal(cleanReply('Nothing odd [here].'), 'Nothing odd [here].');
+});

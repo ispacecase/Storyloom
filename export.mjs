@@ -6,6 +6,14 @@
 
 import {endsCutOff} from './lint.mjs';
 
+/** Provider junk that leaks into a reply, e.g. Venice's uncensored deepseek: "<ds_safety>[Internal thinking]" at the start, or a whole <ds_safety>…</ds_safety> block. */
+export function cleanReply(text) {
+  return String(text || '')
+    .replace(/<ds_safety>[\s\S]*?<\/ds_safety>\s*/gi, '')
+    .replace(/^\s*<\/?ds_safety>\s*(?:\[[^\]\n]{0,40}\]\s*)?/i, '')
+    .replace(/<\/?ds_safety>/gi, '');
+}
+
 /** Drop the unfinished end of a reply that was cut off by the response limit: an unclosed line of dialogue, then any half sentence. */
 export function cropCutOff(text) {
   let t = String(text || '').trim();
@@ -32,7 +40,7 @@ export function chapterProse(chat, {start = 0, end = null, unit = 'Chapter'} = {
   const heading = new RegExp(`^\\s*${unit}\\s+\\d+\\b[^\\n]{0,120}$`, 'i');
   return msgs
     .filter(m => m && !m.is_user && !m.is_system && String(m.mes || '').trim())
-    .map(m => cropCutOff(String(m.mes).trim()))
+    .map(m => cropCutOff(cleanReply(m.mes).trim()))
     .filter(Boolean)
     .filter((t, i) => !(i === 0 && heading.test(t)))
     .join('\n\n');
