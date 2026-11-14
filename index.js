@@ -1221,7 +1221,7 @@ function autoReplyWords() {
   let per=0; try{per=isRP()?0:chapterTarget();}catch{} // roleplay: sessions aren't word counts; replies stay conversational unless you set a number
   if(!per)return 0;
   const max=Number(context().chatCompletionSettings?.openai_max_tokens)||0;
-  const fits=max?Math.max(300,Math.floor((max-1500)*100/135/100)*100):Infinity;
+  const fits=max?replyWords(max):Infinity; // one calculation everywhere
   return Math.min(fits,per);
 }
 const effectiveReplyWords=()=>replyTarget()||autoReplyWords();
