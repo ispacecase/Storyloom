@@ -735,10 +735,16 @@ function replyWordsHint() {
   h.textContent=max && need>max?`Your Max Response Length is ${max.toLocaleString()} tokens; ${want.toLocaleString()} words plus thinking needs about ${need.toLocaleString()}. Raise it, or replies will be cut off.`:`Needs about ${need.toLocaleString()} tokens with thinking${max?` — your limit (${max.toLocaleString()}) is enough`:''}.`;
   h.classList.toggle('is-warning',!!max && need>max);
 }
+/** Whether a message asks for a reply length ("about 200 words", "keep it short", "one paragraph"…). */
+const asksForLength=t=>/\b\d[\d,]*\s*(?:-|to|–)?\s*(?:\d[\d,]*\s*)?words?\b|\b(?:keep (?:it|this)|make (?:it|this)|be|write)\s+(?:short|brief|shorter|longer|long)\b|\b(?:short|brief|shorter|longer)\s+(?:reply|response|passage|one)\b|\b(?:one|a single|two|a)\s+(?:short\s+)?paragraphs?\b|\b(?:a )?(?:few|couple of) (?:lines|sentences)\b/i.test(String(t||''));
 function applyReplyLength(on=null, unit='Chapter') {
   const c=context();
   if(on===null){try{const d=data(); on=!!(d.book && c.chatMetadata?.world_info===d.book); unit=tpl(d).unit;}catch{on=false;}}
-  const note=on?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords()):'';
+  // The writer's own direction wins: if the message being sent (or the last one) asks for a length, Storyloom says nothing.
+  const said=[document.getElementById('send_textarea')?.value||'', (()=>{const m=c.chat?.at(-1); return m?.is_user?m.mes:'';})()].join('\n');
+  const asked=asksForLength(said);
+  const note=on && !asked?replyLengthNote(c.chatCompletionSettings?.openai_max_tokens,unit,effectiveReplyWords()):'';
+  if(on && asked)logEvent('info','Reply length','your message sets the length, so Storyloom’s own length note was left out');
   c.setExtensionPrompt('storyloom_reply_length',note,1,0,false,1); // sent as the user's: a system note is treated as background, and models stop near 1,000 words
 }
 let memoryTimer;

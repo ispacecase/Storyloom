@@ -148,10 +148,10 @@ export function replyWords(maxTokens) {
 }
 export function replyLengthNote(maxTokens, unit = 'Chapter', target = 0) {
   const u = unit.toLowerCase(), want = Math.round(Number(target) || 0);
-  if (want > 0) return `REPLY LENGTH: aim for about ${want} words in this reply — a full passage of the ${u}, not the whole ${u}, and not much shorter than that. Finish your last sentence. The ${u}'s full length comes from many replies.`;
+  if (want > 0) return `REPLY LENGTH: aim for about ${want} words in this reply — a full passage of the ${u}, not the whole ${u}, and not much shorter than that. Finish your last sentence. The ${u}'s full length comes from many replies. If the author's latest message asks for a different length, follow the author.`;
   const w = replyWords(maxTokens);
   if (!w) return '';
-  return `REPLY LENGTH: this reply has room for about ${w} words, no more. Write one passage of the ${u} that fits in that — not the whole ${u} — and finish your last sentence before you reach it. The ${u}'s full length comes from many replies.`;
+  return `REPLY LENGTH: this reply has room for about ${w} words, no more. Write one passage of the ${u} that fits in that — not the whole ${u} — and finish your last sentence before you reach it. The ${u}'s full length comes from many replies. If the author's latest message asks for a different length, follow the author.`;
 }
 /** Tokens a reply of `words` needs, with room for thinking: ~1.35 tokens a word plus `thinking` tokens. */
 export const tokensFor = (words, thinking = 1500) => Math.ceil((Number(words) || 0) * 135 / 100) + thinking;
