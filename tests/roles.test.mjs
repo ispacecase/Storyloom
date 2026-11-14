@@ -85,3 +85,10 @@ test('the narrator draft comes back in five parts, each for its place', () => {
   const p = parseNarrator('=== DESCRIPTION\nWHO NARRATES: Danny\n=== MAIN PROMPT\nYou narrate.\n=== CHARACTER NOTE\nFirst person, past.\n=== POST-HISTORY\nStop at a beat.\n=== NOTES\nCHECKER NOTE: none\nEDITOR NOTE: keep it rough\n=== END');
   assert.deepEqual([p.instructions, p.mainPrompt, p.charNote, p.postHistory, p.checkerNote, p.editorNote], ['WHO NARRATES: Danny', 'You narrate.', 'First person, past.', 'Stop at a beat.', '', 'keep it rough']);
 });
+
+test('missing planned events reach the Editor as “still to write”, not as notes to fix', () => {
+  const m = markupInstruction({parts: ['x'], findings: [{kind: 'PLAN', quote: 'Tom arrives', rule: 'planned'}, {kind: 'VOICE', where: 'line 1', quote: 'x', rule: 'off'}]});
+  assert.match(m, /Still to write[^\n]*"Tom arrives"/);
+  assert.doesNotMatch(m, /- line 1 PLAN/);
+  assert.match(m, /VOICE: "x"/);
+});

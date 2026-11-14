@@ -69,8 +69,9 @@ export const overallLine = text => (String(text || '').match(/^\s*OVERALL\s*:\s*
 
 /** Editor pass 1: mark up the pages. */
 export function markupInstruction({unit = 'Chapter', number = 1, parts = [], facts = '', findings = []}) {
+  const missing = findings.filter(f => f.kind === 'PLAN'); findings = findings.filter(f => f.kind !== 'PLAN');
   return `Mark up ${unit} ${number}. Do not rewrite it — write editing notes pinned to exact passages, the way an editor marks up pages.
-${findings.length ? `The writer approved these findings from the check. Write a note for each one saying how to fix it (they come first):\n${findings.map(f => `- ${f.where || ''} ${f.kind}: "${f.quote}" — ${f.rule}`).join('\n')}\n\nThen add` : 'Write'} any other notes a good line and story editor would make: clarity, pacing, flat or overwritten sentences, dialogue that doesn’t sound like the person, scenes that don’t do their job in the outline. Fewer, better notes beat many small ones. Leave alone what works.
+${missing.length ? `Still to write (the writer will write these in the chat; do not write them and do not make notes asking for them): ${missing.map(f => `"${f.quote}"`).join('; ')}.\n` : ''}${findings.length ? `The writer approved these findings from the check. Write a note for each one saying how to fix it (they come first):\n${findings.map(f => `- ${f.where || ''} ${f.kind}: "${f.quote}" — ${f.rule}`).join('\n')}\n\nThen add` : 'Write'} any other notes a good line and story editor would make: clarity, pacing, flat or overwritten sentences, dialogue that doesn’t sound like the person, scenes that don’t do their job in the outline. Fewer, better notes beat many small ones. Leave alone what works.
 Each line of the chapter is numbered ("12| …"). Write one line per note, exactly like this:
 - [must|suggest] line N: "exact quote from that line, under 20 words" — what should change and why, in one or two sentences
 Mark it must if it breaks the book or the writer's rules, suggest if it is your judgment.

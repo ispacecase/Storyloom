@@ -62,7 +62,7 @@ test('exact lint combines every check', () => {
 
 test('the book-facts check asks for quoted, sourced findings and is read back strictly', () => {
   const ask = lintInstruction({number: 2, chapterText: 'TEXT', facts: 'FACTS'});
-  for (const k of ['GRAMMAR', 'CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY']) assert.ok(ask.includes(`- ${k}:`), k);
+  for (const k of ['PLAN', 'GRAMMAR', 'CHARACTER', 'VOICE', 'CHAPTER ORDER', 'TIMELINE', 'PERIOD', 'RULE', 'CONTINUITY']) assert.ok(ask.includes(`- ${k}:`), k);
   assert.match(ask, /do not rewrite/);
   const found = parseFindings('Here you go.\n- [PERIOD] [hard] line 4: "checked her phone for signal" — the story is set in 1970 (Novel Foundation)\n- [VOICE] [soft] line 9: “I have always believed” — Ben speaks in short, dry lines (Ben\'s profile)\n- [STYLE] "x" — not a kind\nBIGGEST PROBLEM: the phone in 1970.');
   assert.deepEqual(found.map(f => [f.kind, f.severity, f.where, f.quote]), [['PERIOD', 'hard', 'line 4', 'checked her phone for signal'], ['VOICE', 'soft', 'line 9', 'I have always believed']]);
@@ -89,4 +89,11 @@ test('endearments and names only spoken in dialogue are not counted as extra cha
 test('findings are read whether or not the model brackets the severity', () => {
   const f = parseFindings('- [CONTINUITY] hard line 1: "Her father was asleep" — the outline has a hospital bed\n- [VOICE] soft, line 5: "Darling" — not her voice');
   assert.deepEqual(f.map(x => [x.kind, x.severity, x.where]), [['CONTINUITY', 'hard', 'line 1'], ['VOICE', 'soft', 'line 5']]);
+});
+
+test('the plan check lists planned events that have not happened, quoting the outline', () => {
+  const ask = lintInstruction({unit: 'Chapter', number: 2, chapterText: 'TEXT', facts: 'FACTS'});
+  assert.match(ask, /- PLAN: what the outline plans for THIS chapter/);
+  const f = parseFindings('- [PLAN] [hard] "Tom comes back up at dusk" — planned for this chapter, hasn’t happened yet (the outline)');
+  assert.deepEqual(f.map(x => [x.kind, x.severity, x.where, x.quote]), [['PLAN', 'hard', '', 'Tom comes back up at dusk']]);
 });

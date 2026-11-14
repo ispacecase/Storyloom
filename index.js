@@ -978,7 +978,7 @@ function currentNarrator(d,c=context(),{record=false}={}) {
   return n;
 }
 
-const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
+const LINT_LABELS={GRAMMAR:'Grammar',CHARACTER:'Out of character',VOICE:'Voice',['CHAPTER ORDER']:'Wrong chapter',TIMELINE:'Timeline',PERIOD:'Period / setting',RULE:'Your rules',CONTINUITY:'Sealed facts',PLAN:'Not done yet (from the plan)',UNLISTED:'Not in the book',NAME:'Name spelling',POV:'Point of view',TENSE:'Tense',REPEAT:'Repetition',STOCK:'Stock phrasing',LENGTH:'Length'};
 const el=(tag,props={},...kids)=>{const e=Object.assign(document.createElement(tag),props);e.append(...kids.filter(k=>k!=null&&k!==false));return e;};
 function checkList(items,picked,onToggle,render) {
   const ul=el('ul',{className:'storyloom-lint-list'});
@@ -1538,6 +1538,7 @@ async function bookFacts(d) {
     `VOICE: ${String(voice?.content||'').replace(/^\(Storyloom:[^\n]*\)\n?/,'').slice(0,1500)}`,
     `WRITING DIRECTIVE: ${String(directive?.content||'').slice(0,1500)}`,
     d.proposal?.fields?`APPROVED PROPOSAL — core: ${d.proposal.fields.core}\nTimeline: ${d.proposal.fields.timeline}`:'',
+    (()=>{const plan=chapterList(outlineBody(outline),t.unit).find(x=>x.number===n); return plan?`THIS ${t.unit.toUpperCase()}'S PLAN (${t.unit} ${n} — what it should contain and where it should end):\n${plan.text}`:'';})(),
     `THE OUTLINE (this is ${t.unit} ${n}; events planned for other ${t.unit.toLowerCase()}s must not happen here):\n${outlineBody(outline).slice(0,9000)}`,
     `CHARACTERS (only these people exist on the page):\n${characters.map(e=>`${e.comment}\nPERSONALITY: ${sectionOf(e.content,'PERSONALITY').slice(0,600)}\nVOICE AND MANNERISMS: ${sectionOf(e.content,'VOICE AND MANNERISMS').slice(0,600)}\nCURRENT STATE: ${sectionOf(e.content,'CURRENT STATE').slice(0,400)}`).join('\n\n').slice(0,9000)}`,
     `THE WRITER'S RULES AND ANSWERS:\n${answers.slice(0,3000)}`,
