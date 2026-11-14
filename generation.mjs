@@ -6,6 +6,12 @@ import {directPayload} from './providers.mjs';
  */
 export function answerInThinking(thought) {
   const text=String(thought||'');
+  // A chapter revision (=== PART 1 … === END): take the last full attempt.
+  const parts=[...text.matchAll(/^[\s*_#>]*===\s*PART\s*1\s*$/gim)];
+  if(parts.length)return text.slice(parts.at(-1).index).trim();
+  // A narrator draft (=== DESCRIPTION / === NARRATOR …).
+  const desc=[...text.matchAll(/^[\s*_#>]*===\s*(DESCRIPTION|NARRATOR)\s*$/gim)];
+  if(desc.length)return text.slice(desc.at(-1).index).trim();
   const starts=[...text.matchAll(/^[\s*_#>]*=+\s*ENTRY\s*:\s*(.*?)[\s*_=]*$/gim)];
   if(starts.length) {
     const first=starts[0][1].trim().toLocaleLowerCase();
@@ -17,6 +23,12 @@ export function answerInThinking(thought) {
   // Lint findings ("- [KIND] …") or an explicit all-clear written inside the thinking.
   const lines=[...text.matchAll(/^\s*[-*•]\s*\[[A-Z ]+\].*$/gm)];
   if(lines.length)return text.slice(lines[0].index).trim();
+  // Editor / Reader notes ("- [must] line 4: "quote" — note"), from the last list that starts afresh.
+  const notes=[...text.matchAll(/^\s*[-*•]\s*(?:\[?(?:must|suggest)\]?\s*[:,-]?\s*)?line\s*\d+\s*:?\s*[“"]/gim)];
+  if(notes.length)return text.slice(notes[0].index).trim();
+  // Chapter narration settings ("NARRATOR: … / POINT OF VIEW: …").
+  const narr=[...text.matchAll(/^\s*NARRATOR\s*:.+$/gim)].filter(m=>/^\s*POINT OF VIEW\s*:/im.test(text.slice(m.index)));
+  if(narr.length)return text.slice(narr.at(-1).index).trim();
   const clear=text.lastIndexOf('No problems found');
   return clear>=0 ? 'No problems found.' : '';
 }

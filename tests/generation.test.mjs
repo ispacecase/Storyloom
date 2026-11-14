@@ -126,3 +126,13 @@ test('lint findings written inside the thinking are recovered too', async () => 
   assert.match(answerInThinking('Let me check.\n- [PERIOD] [hard] line 6: "smartwatch" — not in 1979\nBIGGEST PROBLEM: x'), /^- \[PERIOD\]/);
   assert.equal(answerInThinking('Checked everything. No problems found.'), 'No problems found.');
 });
+
+test('answers written inside the thinking are recovered for the chapter team and narrator steps', async () => {
+  const {answerInThinking} = await import('../generation.mjs');
+  assert.match(answerInThinking('plan...\n=== PART 1\ndraft\n=== END\nbetter:\n=== PART 1\nfinal\n=== END'), /^=== PART 1\nfinal/);
+  assert.match(answerInThinking('thinking\n- [must] line 3: "Arthur died" — move it\nOVERALL: ok'), /^- \[must\] line 3/);
+  assert.match(answerInThinking('hmm\n- suggest line 2: "x" — y'), /^- suggest line 2/);
+  assert.match(answerInThinking('ok\n=== DESCRIPTION\nWHO NARRATES: Danny\n=== END'), /^=== DESCRIPTION/);
+  assert.match(answerInThinking('NARRATOR: Danny\nPOINT OF VIEW: First\nTENSE: Past'), /^NARRATOR: Danny/);
+  assert.equal(answerInThinking('just rambling about the chapter'), '');
+});

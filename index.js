@@ -1661,7 +1661,7 @@ async function llm(c,prompt,profile,signal,tokens,systemPrompt,direct,{sampling=
           const el=document.getElementById('na-status'); if(el)el.textContent=`The model answered with nothing (${error.message.replace(/^the model /,'')}); asking once more…`;
           showLive({text:'',reasoning:''});
           // The second try asks for the answer directly, so a model that only reasoned last time writes it out.
-          return await generate(c,`${prompt}\n\n${ANSWER_NOW}`,profile,requestSignal,tokens,systemPrompt,direct,progress,sampling);
+          return await generate(c,`${prompt}\n\n${ANSWER_NOW}`,profile,requestSignal,Math.min(16000,Math.max(tokens,Math.round(tokens*1.5))),systemPrompt,direct,progress,sampling); // more room: the first try ran out while thinking
         }
       } catch(error) {
         logEvent(requestSignal.aborted?'info':'error','Model',`${who}: ${requestSignal.aborted?'stopped':'failed'} after ${Math.round((Date.now()-t0)/1000)}s`,String(error?.stack||error?.message||error));
