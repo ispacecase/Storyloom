@@ -52,3 +52,14 @@ test('roleplay: chat wording is fine, but the setup must leave the player’s ch
   assert.match(storyloomPlaces(null, {roleplay: true}).main, /game master/);
   assert.ok(RP_MAIN.includes('Never write {{user}}'));
 });
+
+test('a fix keeps the writer’s text and changes only what the problems need', async () => {
+  const {fixInstruction, parseFix} = await import('../compare.mjs');
+  const p = fixInstruction({place: 'main', yours: 'Write {{char}}\'s next reply in a fictional chat.', storyloom: 'You are a novelist…', problems: [{text: 'Roleplay wording'}], values: {pov: 'Third', tense: 'Past'}});
+  assert.match(p, /Keep everything else word for word/);
+  assert.match(p, /- Roleplay wording/);
+  assert.match(p, /This book is told in: Third, Past/);
+  assert.equal(parseFix('Sure.\n=== FIXED\nYou write the next passage of the book.\n=== END'), 'You write the next passage of the book.');
+  assert.equal(parseFix('**=== FIXED**\nLine one.\nLine two.'), 'Line one.\nLine two.');
+  assert.equal(parseFix('no markers'), null);
+});

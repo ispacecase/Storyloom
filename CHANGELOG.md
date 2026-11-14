@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19 (2026-11-14)
+- **Compare narrators fixes your narrator:** *Fix mine* and *Fix everything* edit your own text to fix only what's flagged, with a change view before anything is saved (and a backup after).
+- The Compare window follows your SillyTavern theme, so its buttons are readable.
+
 ## 0.18 (2026-11-14)
 - **Live memory:** a *Scene now* card refreshed while you write, a running record of the chapter (*Earlier this chapter*), and on-stage characters' lorebook entries sent with every reply.
 - Your own length direction ("about 200 words") overrides Storyloom's reply-length instruction.

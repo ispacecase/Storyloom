@@ -126,3 +126,35 @@ ${PLACES.map(p => block(yours, p.key)).join('\n\n')}
 STORYLOOM'S SETUP
 ${PLACES.map(p => block(storyloom, p.key)).join('\n\n')}`;
 }
+
+/**
+ * Ask the model to fix the writer's own text in one place: change only what the problems need, keep the rest
+ * word for word, and use Storyloom's version only as a reference for what works.
+ */
+export function fixInstruction({place, yours = '', storyloom = '', problems = [], roleplay = false, values = {}}) {
+  const p = PLACES.find(x => x.key === place) || {label: place, what: ''};
+  return `Fix the writer's ${p.label} for ${roleplay ? 'a roleplay run by an AI game master' : 'an AI that writes their novel'}. ${p.what}
+
+Change only what the problems below need. Keep everything else word for word: the writer's wording, ideas, details and order. Don't add anything the problems don't call for, and don't make it longer than it needs to be. If a problem says something is missing, add it in the writer's style in the most natural place. Keep any {{macros}} exactly as they are.
+${values.pov || values.tense ? `This book is told in: ${[values.pov, values.tense].filter(Boolean).join(', ')}.\n` : ''}
+THE PROBLEMS
+${problems.map(x => `- ${x.text}`).join('\n')}
+
+STORYLOOM'S VERSION OF THIS PLACE (only a reference for what works — don't copy it wholesale)
+${String(storyloom || '(empty)').slice(0, 6000)}
+
+THE WRITER'S TEXT
+${String(yours || '(empty)')}
+
+Reply with the whole fixed text between these lines and nothing else:
+=== FIXED
+(the fixed text)
+=== END`;
+}
+
+/** The fixed text from the model's reply, or null. */
+export function parseFix(raw) {
+  const m = String(raw || '').replace(/\r\n?/g, '\n').match(/^[\s*_#>]*===\s*FIXED[\s*_]*$\n([\s\S]*?)(?:^[\s*_#>]*===\s*END\b|(?![\s\S]))/mi);
+  const t = m ? m[1].trim() : '';
+  return t || null;
+}

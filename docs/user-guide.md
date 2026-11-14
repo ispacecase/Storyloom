@@ -164,7 +164,13 @@ It flags problems in yours, such as:
 - story names in the craft layer;
 - Enhance Definitions switched on.
 
-**Use Storyloom's** replaces one place, backing yours up first. **Ask the Assistant what's wrong with mine** gets a short written review.
+Then:
+- **Fix mine** (on each flagged place): Storyloom edits *your* text to fix just what's flagged and keeps everything else word for word. You see a word-by-word change view (struck out = removed, highlighted = new) and **Apply** or **Discard**.
+- **Fix everything** (at the top): fixes every flagged place at once and shows all the changes together, each with a tick box. Switches (like Enhance Definitions) are just switched; empty places get Storyloom's text.
+- **Use Storyloom's**: swaps in Storyloom's whole version of one place instead.
+- **Ask the Assistant what's wrong with mine**: a short written review.
+
+Every change is backed up first; **Restore** in Backups puts yours back.
 
 ## 10. The Assistant
 

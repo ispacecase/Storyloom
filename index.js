@@ -4,7 +4,7 @@ import { PRESET_NAME, NARRATOR_NAME, NARRATOR_CARD, CRAFT_MAIN, POST_HISTORY, CO
 import { addBackup, latestGroup, backupText, BACKUP_KINDS } from './backups.mjs';
 import { chapterProse, bookText, bookDocx, fileName, cleanReply } from './export.mjs';
 import { sceneInstruction, parseScene, sceneNames, foldRange, sessionInstruction, parseSession } from './live.mjs';
-import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction } from './compare.mjs';
+import { PLACES, yourPlaces, storyloomPlaces, findProblems, compareInstruction, fixInstruction, parseFix } from './compare.mjs';
 import { createWorldInfoEntry, createNewWorldInfo, deleteWorldInfo, openWorldInfoEditor, showWorldEditor, reloadEditor } from '../../../world-info.js';
 import { parseAssistant, toBlocks, planWrites, readDirective, replaceDirective } from './operations.mjs';
 import { synchronize, resolveConflict, planInitialLink } from './sync.mjs';
@@ -888,29 +888,67 @@ function narratorComparison() {
 }
 async function compareNames() {try{const d=data(); if(!d.book)return []; return (await bookFacts(d)).castNames||[];}catch{return [];}}
 /** Put Storyloom's version into one place (backing up first). */
-async function useStoryloomPlace(key) {
-  const {c,ch,presetName}=narratorComparison(), place=PLACES.find(p=>p.key===key);
+/** Write one narrator place (card field or preset prompt), backing up the old version first. */
+async function setPlace(key,value,why) {
+  const {ch,presetName}=narratorComparison(), place=PLACES.find(p=>p.key===key);
   if(place.on==='card') {
     backup({kind:'character',label:`${ch.name} (before Compare narrators: ${place.label})`,target:{avatar:ch.avatar},before:charSnapshot(ch)});
-    const f={description:{description:kit().card},cardMain:{system_prompt:''},charNote:{depth_prompt:{prompt:'',depth:4,role:'system'}},cardPost:{post_history_instructions:''}}[key];
+    const dp=ch.data?.extensions?.depth_prompt||{};
+    const f={description:{description:value},cardMain:{system_prompt:value},charNote:{depth_prompt:{prompt:value,depth:dp.depth??4,role:dp.role||'system'}},cardPost:{post_history_instructions:value}}[key];
     await writeCharacter(ch.avatar,f);
     if(key==='description')try{await fillBookValues({quiet:true});}catch(e){warnLog('Storyloom book settings:',e);}
   } else {
-    const ids={main:'main',postHistory:'jailbreak',auxiliary:'nsfw'};
     await changePreset(presetName,p=>{
       const setPrompt=(id,content)=>{p.prompts ??= []; let x=p.prompts.find(q=>q.identifier===id); if(!x){x={identifier:id,name:id,system_prompt:true,role:'system'};p.prompts.push(x);} x.content=content;};
       const enable=(id,on)=>{for(const o of p.prompt_order||[])for(const i of o.order||[])if(i.identifier===id)i.enabled=on;};
-      const k=kit();
-      if(key==='main'){setPrompt('main',k.main);enable('main',true);}
-      if(key==='postHistory'){setPrompt('jailbreak',k.postHistory);enable('jailbreak',true);}
-      if(key==='auxiliary')setPrompt('nsfw','');
-      if(key==='continueNudge')p.continue_nudge_prompt=CONTINUE_NUDGE;
-      if(key==='newChat')p.new_chat_prompt=kit().newChat;
-      if(key==='enhanceDefinitions')enable('enhanceDefinitions',false);
+      if(key==='main'){setPrompt('main',value);enable('main',true);}
+      if(key==='postHistory'){setPrompt('jailbreak',value);enable('jailbreak',true);}
+      if(key==='auxiliary')setPrompt('nsfw',value);
+      if(key==='continueNudge')p.continue_nudge_prompt=value;
+      if(key==='newChat')p.new_chat_prompt=value;
+      if(key==='enhanceDefinitions')enable('enhanceDefinitions',value==='on');
     },`Compare narrators: ${place.label}`);
     try{promptManager?.render?.(false);}catch{}
   }
-  logEvent('info','Compare narrators',`used Storyloom’s ${place.label}${place.on==='card'?` on ${ch.name}`:` in preset “${presetName}”`}`);
+  logEvent('info','Compare narrators',`${why||'changed'}: ${place.label}${place.on==='card'?` on ${ch.name}`:` in preset “${presetName}”`}`);
+}
+async function useStoryloomPlace(key){const {roleplay}=narratorComparison(); return setPlace(key,storyloomPlaces(null,{roleplay})[key],'used Storyloom’s');}
+/** Storyloom's fix for one place: switches are flipped, empty places get Storyloom's text, anything else is edited by the model, changing only what the problems need. */
+async function fixFor(key,problems,signal=null) {
+  const {c,yours,roleplay}=narratorComparison(), theirs=storyloomPlaces(null,{roleplay})[key], mine=String(yours[key]||'');
+  if(key==='enhanceDefinitions')return 'off';
+  if(!mine.trim())return theirs;
+  let d=null,base='',direct=null; try{d=data(); base=d.profile||''; direct=directSnapshot(d,c);}catch{}
+  const raw=await llm(c,fixInstruction({place:key,yours:mine,storyloom:theirs,problems,roleplay,values:readValues(c)}),base,signal,4000,'You fix the prompts a writer uses to make an AI write their story. You change only what is broken and keep the writer’s own words.',direct,{label:'Fix narrator'});
+  const fixed=parseFix(raw); if(!fixed){logEvent('error','Compare narrators','fix came back unreadable',String(raw).slice(0,1500));throw Error('The fix came back in a form Storyloom couldn’t read. Nothing was changed; try again.');}
+  return fixed;
+}
+/** Show proposed fixes as word-by-word changes; returns the keys the writer kept ticked. */
+async function reviewFixes(fixes) {
+  const c=context(), {yours}=narratorComparison(), box=el('div',{className:'storyloom-compare'});
+  box.append(el('h3',{textContent:fixes.length===1?'Fix: '+PLACES.find(p=>p.key===fixes[0].key).label:'Fixes for your narrator'}),el('p',{className:'storyloom-hint',textContent:'Struck-through words go, highlighted words are new; everything else stays yours. Untick anything you don’t want. Each change is backed up first (Extensions → Storyloom → Backups).'}));
+  for(const f of fixes) {
+    const row=el('div',{className:'storyloom-compare-row'}), tick=el('input',{type:'checkbox',checked:true}); tick.dataset.key=f.key;
+    row.append(el('label',{className:'checkbox_label'},tick,el('b',{textContent:' '+PLACES.find(p=>p.key===f.key).label})));
+    const para=el('p',{className:'storyloom-diff'}); for(const x of wordDiff(String(yours[f.key]||'').replace(/\r\n?/g,'\n'),String(f.value).replace(/\r\n?/g,'\n')))para.append(x.op==='same'?document.createTextNode(x.text):el(x.op==='add'?'ins':'del',{textContent:x.text}));
+    row.append(para); box.append(row);
+  }
+  const ok=await new c.Popup(box,c.POPUP_TYPE.CONFIRM,'',{okButton:'Apply',cancelButton:'Discard',wide:true,large:true,allowVerticalScrolling:true}).show();
+  if(ok!==(c.POPUP_RESULT?.AFFIRMATIVE??1))return [];
+  return [...box.querySelectorAll('input[type=checkbox]')].filter(x=>x.checked).map(x=>x.dataset.key);
+}
+async function applyFixes(keys,problemsByKey) {
+  const fixes=[];
+  for(const key of keys){status(`Fixing ${PLACES.find(p=>p.key===key).label}…`); fixes.push({key,value:await fixFor(key,problemsByKey[key]||[])});}
+  status('');
+  const {yours}=narratorComparison(), norm=t=>String(t??'').replace(/\r\n?/g,'\n').trim();
+  const changed=fixes.filter(f=>f.value!=null && norm(f.value)!==norm(yours[f.key])), same=fixes.filter(f=>!changed.includes(f));
+  if(same.length)logEvent('info','Compare narrators',`no change needed (or none found) for: ${same.map(f=>PLACES.find(p=>p.key===f.key).label).join(', ')}`);
+  if(!changed.length){status(`Storyloom didn’t find anything to change in ${same.map(f=>PLACES.find(p=>p.key===f.key).label).join(', ')}. Use “Use Storyloom’s” there if you want its version.`);return 0;}
+  const keep=await reviewFixes(changed);
+  for(const f of fixes)if(keep.includes(f.key))await setPlace(f.key,f.value,'fixed');
+  if(keep.length)status(`Fixed ${keep.length} place${keep.length===1?'':'s'}. The old versions are in Backups.`); else status('Nothing was changed.');
+  return keep.length;
 }
 async function compareNarrators() {
   requireIdle();
@@ -921,7 +959,7 @@ async function compareNarrators() {
     const count=Object.values(problems).flat().filter(x=>x.level==='problem').length;
     box.replaceChildren(
       el('h3',{textContent:`Compare narrators — ${ch.name}`}),
-      el('p',{className:'storyloom-hint',textContent:`Your narrator card (${ch.name})${chat?` and your preset (“${presetName}”)`:''}, next to Storyloom’s, in every place a narrator’s instructions live. ${count?`${count} problem${count===1?'':'s'} found in yours.`:'No problems found in yours.'} Nothing changes unless you press “Use Storyloom’s” — and each one is backed up first (Extensions → Storyloom → Backups).`}));
+      el('p',{className:'storyloom-hint',textContent:`Your narrator card (${ch.name})${chat?` and your preset (“${presetName}”)`:''}, next to Storyloom’s, in every place a narrator’s instructions live. ${count?`${count} problem${count===1?'':'s'} found in yours.`:'No problems found in yours.'} “Fix mine” edits your own text to fix just what’s flagged, and shows you the changes before saving; “Use Storyloom’s” swaps in Storyloom’s version. Nothing changes until you say so, and everything is backed up first (Extensions → Storyloom → Backups).`}));
     for(const p of PLACES) {
       const mine=yours[p.key], theirs=storyloom[p.key], probs=problems[p.key]||[], same=String(mine).trim()===String(storyloomPlaces(null,{roleplay})[p.key]).trim();
       const det=el('details',{className:'storyloom-compare-row',open:probs.some(x=>x.level==='problem')});
@@ -930,6 +968,11 @@ async function compareNarrators() {
       if(probs.length)det.append(el('ul',{className:'storyloom-compare-problems'},...probs.map(x=>el('li',{className:`is-${x.level}`,textContent:x.text}))));
       const col=(title,text)=>el('div',{},el('small',{textContent:title}),el('pre',{textContent:String(text||'').trim()||'(empty)'}));
       det.append(el('div',{className:'storyloom-compare-cols'},col('Yours',mine),col('Storyloom’s',theirs)));
+      if(probs.length && (p.on==='card' || chat)) {
+        const fx=el('button',{type:'button',textContent:'Fix mine',title:'Storyloom edits your text to fix just these problems and shows you the changes first.'});
+        fx.onclick=async()=>{fx.disabled=true;try{await applyFixes([p.key],{[p.key]:probs});render();}catch(e){fail(e);}finally{fx.disabled=false;}};
+        det.append(el('div',{className:'storyloom-row'},fx));
+      }
       if(!same && (p.on==='card' || chat)) {
         const b=el('button',{type:'button',textContent:'Use Storyloom’s'});
         b.onclick=async()=>{b.disabled=true;try{await useStoryloomPlace(p.key);status(`${p.label}: now Storyloom’s. The old one is in Backups.`);render();}catch(e){b.disabled=false;fail(e);}};
@@ -937,6 +980,8 @@ async function compareNarrators() {
       }
       box.append(det);
     }
+    const fixable=PLACES.filter(p=>(problems[p.key]||[]).length && (p.on==='card' || chat)).map(p=>p.key);
+    if(fixable.length){const all=el('button',{type:'button',className:'menu_button',textContent:`Fix everything (${fixable.length} place${fixable.length===1?'':'s'})`,title:'Storyloom fixes every flagged place in your narrator, keeping your own words, and shows all the changes before anything is saved.'}); all.onclick=async()=>{all.disabled=true;try{await applyFixes(fixable,problems);render();}catch(e){fail(e);}finally{all.disabled=false;}}; box.insertBefore(el('div',{className:'storyloom-row'},all),box.children[2]||null);}
     const ask=el('button',{type:'button',textContent:'Ask the Assistant what’s wrong with mine'});
     ask.onclick=()=>askCompare(problems).catch(fail);
     box.append(el('div',{className:'storyloom-row'},ask));

@@ -313,3 +313,13 @@
 #na-panel img.storyloom-mark { object-fit:contain; padding:0; background:transparent; border-radius:0; }
 .storyloom-ext-title { display:inline-flex; align-items:center; gap:.45em; }
 .storyloom-ext-title img { width:1.4em; height:1.4em; }
+/* Compare narrators and its fixes open in SillyTavern's popup: follow the user's theme so buttons are readable. */
+.storyloom-compare button { background:var(--SmartThemeBlurTintColor, #2a2a2a); color:var(--SmartThemeBodyColor, #ddd); border:1px solid var(--SmartThemeBorderColor, #555); border-radius:6px; padding:.35rem .75rem; cursor:pointer; font:inherit; }
+.storyloom-compare button:hover:not(:disabled) { filter:brightness(1.2); }
+.storyloom-compare button:disabled { opacity:.55; cursor:default; }
+.storyloom-compare .storyloom-row { display:flex; flex-wrap:wrap; gap:.4rem; margin:.4rem 0; }
+.storyloom-compare .storyloom-diff { white-space:pre-wrap; font-size:.85em; line-height:1.55; padding:.45rem .6rem; border:1px solid var(--SmartThemeBorderColor, #555); border-radius:8px; margin:.35rem 0; }
+.storyloom-compare .storyloom-diff del { background:rgba(220,80,60,.25); text-decoration:line-through; color:inherit; }
+.storyloom-compare .storyloom-diff ins { background:rgba(80,180,100,.28); text-decoration:none; color:inherit; }
+.storyloom-compare .storyloom-hint { opacity:.8; font-size:.88em; }
+.storyloom-compare button { width:auto; white-space:nowrap; flex:none; }
