@@ -305,3 +305,11 @@
 #na-panel.is-wide .sl-fold-toggle { display:none !important; }
 /* No scroll boxes inside scroll boxes: suggestions, assistant actions and the proposal show at full height; only the panel scrolls. */
 #na-panel .storyloom-suggestions ul, #na-panel .storyloom-suggestions pre, #na-panel .storyloom-sugg-why, #na-panel .storyloom-action pre, #na-panel .storyloom-proposal { max-height:none !important; overflow:visible !important; }
+/* The logo */
+#storyloom-chat-shortcut { background:transparent; padding:0; overflow:hidden; }
+#storyloom-chat-shortcut img { width:1.9rem; height:1.9rem; display:block; }
+#storyloom-chat-shortcut:hover { background:transparent; }
+#storyloom-chat-shortcut:hover img { filter:brightness(1.12); }
+#na-panel img.storyloom-mark { object-fit:contain; padding:0; background:transparent; border-radius:0; }
+.storyloom-ext-title { display:inline-flex; align-items:center; gap:.45em; }
+.storyloom-ext-title img { width:1.4em; height:1.4em; }

@@ -1856,6 +1856,7 @@ async function cloneNarrator(fromAvatar,{name,description,greeting,mainPrompt=nu
 }
 
 /* ---------- Version and updates (installs only change when GitHub does) ---------- */
+const ICON_URL=new URL('assets/storyloom-icon-128.png',import.meta.url).href;
 const EXTENSION_FOLDER=decodeURIComponent(new URL(import.meta.url).pathname.split('/').at(-2));
 let updateCheckedAt=0, updateGlobal=false;
 async function showVersion() {
@@ -2837,7 +2838,7 @@ function renderExtSettings() {
 function buildExtSettings(openButton,panel) {
   const host=document.querySelector('#extensions_settings2, #extensions_settings'); if(!host)return;
   const wrap=document.createElement('div'); wrap.id='storyloom-ext'; wrap.className='storyloom-ext';
-  wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
+  wrap.innerHTML=`<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b class="storyloom-ext-title"><img src="${ICON_URL}" alt="" aria-hidden="true">Storyloom</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
     <div class="sl-open-row"></div>
     <div class="storyloom-row" title="Kept up while you write, not only when you Seal. Each one is a small, quick call to your model every few replies (with Dials, set Storyloom’s thinking to none to keep them fast)."><b>Live memory</b> <label class="checkbox_label"><input id="sl-live-scene" type="checkbox"> Scene now (every <input id="sl-live-scene-every" class="text_pole" type="number" min="1" max="20" style="width:3.5em"> replies)</label> <label class="checkbox_label"><input id="sl-live-session" type="checkbox"> Earlier this chapter (every <input id="sl-live-session-every" class="text_pole" type="number" min="6" max="100" style="width:3.5em"> messages)</label> <label class="checkbox_label"><input id="sl-live-stage" type="checkbox"> Always send the lorebook entries of whoever is in the scene</label></div>
     <div id="sl-dials-row" class="storyloom-row" hidden><b>Dials</b> <label class="checkbox_label" title="Storyloom’s own AI calls (Lint, Editor, Reader, Seal, planning, the Assistant) use the options you set in Dials for SillyTavern’s chat on the same connection. Anything you set for Storyloom itself in Dials (“Settings for: Storyloom”) wins."><input id="sl-dials-same" type="checkbox"> Use the same Dials settings as SillyTavern’s chat</label><button id="sl-dials-open" type="button" class="menu_button">Dials settings…</button></div>
@@ -2924,11 +2925,11 @@ function init() {
   const button = document.createElement('button'); button.className='menu_button'; button.textContent='Storyloom';
   const openPanel=()=>{checkForUpdate().catch(()=>{});setTimeout(()=>upgradeLayout().then(done=>{if(done)status('Storyloom updated this book’s setup: the chapter plan is now sent from the Memory tab instead of the lorebook.');}),300);try{if(noChatOpen()){document.getElementById('na-panel').hidden=false;renderPanelView();status('No book is open. Start a new book, or open a book’s chat.');return;}options();document.getElementById('na-panel').hidden=false;const log=document.getElementById('na-messages');log.scrollTop=log.scrollHeight;if(data().profile==='__direct__')refreshKeys().catch(e=>fail(e));}catch(e){toastr.warning(e.message)}};
   button.addEventListener('click',()=>{openPanel();document.querySelector('#extensions-settings-button .drawer-toggle')?.click();});
-  const shortcut=document.createElement('button');shortcut.type='button';shortcut.id='storyloom-chat-shortcut';shortcut.title='Open Storyloom';shortcut.setAttribute('aria-label','Open Storyloom');shortcut.innerHTML='<i class="fa-solid fa-feather-pointed" aria-hidden="true"></i>';shortcut.addEventListener('click',openPanel);document.getElementById('leftSendForm')?.append(shortcut);
+  const shortcut=document.createElement('button');shortcut.type='button';shortcut.id='storyloom-chat-shortcut';shortcut.title='Open Storyloom';shortcut.setAttribute('aria-label','Open Storyloom');shortcut.innerHTML=`<img src="${ICON_URL}" alt="" aria-hidden="true">`;shortcut.addEventListener('click',openPanel);document.getElementById('leftSendForm')?.append(shortcut);
   const panel = document.createElement('aside'); panel.id='na-panel'; panel.hidden=true;
   panel.innerHTML=`
     <header class="storyloom-header">
-      <div class="storyloom-brand"><span class="storyloom-mark" aria-hidden="true">✦</span><div><strong>Storyloom</strong><small id="na-version"></small></div><button id="na-update" type="button" class="storyloom-update" hidden>Update available</button></div>
+      <div class="storyloom-brand"><img class="storyloom-mark" src="${ICON_URL}" alt="" aria-hidden="true"><div><strong>Storyloom</strong><small id="na-version"></small></div><button id="na-update" type="button" class="storyloom-update" hidden>Update available</button></div>
       <div class="storyloom-header-actions">
         <button id="na-wide" type="button" title="Full screen: Story, Memory and Assistant side by side" aria-pressed="false">⤢ Full screen</button>
         <button id="na-back" type="button">Back to start</button>
